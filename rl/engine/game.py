@@ -1,0 +1,108 @@
+"""Game setup and the driver loop.
+
+`play_game` is the only thing that advances a game, so the fuzz gate, the
+baselines, and the gym wrapper all share one control flow. An agent is any
+callable `(state, table, cfg, seat, actions) -> Action`.
+
+The loop asks whichever seat `acting_seat` names. A seat with an empty action
+list is not being asked; an empty list for the seat that *is* to act is a
+deadlock, and `invariants.check_actions` fails loudly on it rather than letting
+the game spin to the turn cap.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from rl.config import DOMAINS, Config
+from rl.engine import actions as A
+from rl.engine import invariants, phases
+from rl.engine.cardtable import CardTable
+from rl.engine.state import MAX_DECK, N_DOMAINS, N_SEATS, RUNE_RING, GameState
+
+STARTING_HAND = 5
+
+
+def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
+             rune_decks: list[list[int]], battlefields: list[int],
+             seed: int = 0) -> GameState:
+    """Deal a game. `decks` are card ids, `rune_decks` are domain ids.
+
+    Battlefields start **uncontrolled**: each player picked one (486.5) but
+    neither has units there, and 190.4.c is unambiguous that Control requires
+    Units. The opening position therefore has two free points on the table,
+    which is most of why the first few turns are a race rather than a setup.
+    """
+    s = GameState()
+    s.rng = np.random.default_rng(seed)
+
+    for seat in range(N_SEATS):
+        deck = list(decks[seat])
+        s.rng.shuffle(deck)
+        assert len(deck) <= MAX_DECK, "deck larger than MAX_DECK"
+        s.n_deck[seat] = len(deck)
+        s.deck[seat, :len(deck)] = deck
+
+        runes = list(rune_decks[seat])
+        s.rng.shuffle(runes)
+        assert len(runes) <= RUNE_RING, "rune deck larger than the ring buffer"
+        s.rune_deck[seat, :len(runes)] = runes
+        s.rune_head[seat] = 0
+        s.rune_left[seat] = len(runes)
+
+    for i, bf in enumerate(battlefields):
+        s.bf_card[i] = bf
+
+    s.active = 0
+    s.turn = 1
+    for seat in range(N_SEATS):
+        s.active = seat
+        phases.draw(s, STARTING_HAND)
+    s.active = 0
+
+    phases.start_turn(s, table, cfg)
+    return s
+
+
+def random_agent(rng: np.random.Generator):
+    def choose(state, table, cfg, seat, actions):
+        return actions[int(rng.integers(len(actions)))]
+    return choose
+
+
+def play_game(table: CardTable, cfg: Config, state: GameState, agents,
+              check: bool = False, max_steps: int = 20000) -> dict:
+    """Run to termination. Returns a summary dict.
+
+    `check` turns on the invariant suite -- a few array ops per step, so it is
+    off for training and on for the fuzz gate.
+    """
+    steps = 0
+    while not A.is_terminal(state):
+        seat = A.acting_seat(state)
+        if seat < 0:
+            break
+        legal = A.legal_actions(state, table, cfg, seat)
+        if check:
+            invariants.check(state)
+            invariants.check_actions(state, table, cfg, seat, legal)
+        if not legal:
+            # The seat to act has nothing to do; the position is stuck. Only
+            # reachable if the enumerator regressed, and `check_actions` above
+            # would already have fired when checking is on.
+            raise invariants.InvariantError(
+                f"seat {seat} to act with no legal actions on turn {state.turn}")
+        A.apply(state, table, cfg,
+                agents[seat](state, table, cfg, seat, legal))
+        steps += 1
+        if steps > max_steps:
+            raise RuntimeError(f"game exceeded {max_steps} steps")
+
+    return {
+        "winner": int(state.winner),
+        "truncated": bool(state.truncated),
+        "turns": int(state.turn),
+        "steps": steps,
+        "points": state.points.tolist(),
+        "hash": state.state_hash(),
+    }
