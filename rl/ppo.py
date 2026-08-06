@@ -323,6 +323,9 @@ def main(argv=None) -> int:
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-games", type=int, default=100)
     p.add_argument("--out", default="rl/runs/ppo")
+    p.add_argument("--init", default=None,
+                   help="checkpoint to warm-start from -- this is how the "
+                        "victory-score curriculum (§1.3) is annealed 3 -> 5 -> 8")
     a = p.parse_args(argv)
 
     torch.manual_seed(a.seed)
@@ -332,6 +335,18 @@ def main(argv=None) -> int:
     deal = v0_deal(table)
 
     tr = Trainer(table, cfg, deal, hp, device=a.device, seed=a.seed)
+    if a.init:
+        ck = torch.load(a.init, map_location=a.device, weights_only=False)
+        # The observation layout is baked into the first and last layers, so a
+        # checkpoint from a different encoder would load into the wrong shapes
+        # or, worse, the right shapes with different meanings.
+        assert ck["shapes"] == tr.vec.shapes(), (
+            f"checkpoint was trained on a different observation layout:\n"
+            f"  ckpt {ck['shapes']}\n  here {tr.vec.shapes()}")
+        tr.net.load_state_dict(ck["net"])
+        print(f"warm-started from {a.init} (iter {ck.get('iter')}, "
+              f"eval {ck.get('eval')})")
+
     print(f"PPO: victory={a.victory} envs={hp.n_envs} rollout={hp.rollout} "
           f"device={a.device} params={count_params(tr.net):,}")
     print(f"     exit criteria: >=90% vs random, >=65% vs greedy")

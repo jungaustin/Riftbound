@@ -19,14 +19,24 @@ Built and tested so far:
 | `rl/obs.py` | Observation encoder: canonical, attribute-based, leak-tested |
 | `rl/env.py` | `RiftboundEnv` — AEC-shaped, index actions, per-seat rewards |
 | `rl/vec.py` | Synchronous vector env with auto-reset; observation batching |
-| `rl/tests/` | 20 combat assertions; `fuzz.py` (M1 gate); `test_env.py` (Phase 3) |
+| `rl/nets.py` | DeepSets trunk, candidate-scoring action head, asymmetric critic |
+| `rl/ppo.py` | Self-play PPO; per-seat GAE; complete-episode harvesting |
+| `rl/eval.py` | Seat-swapped duels against the Phase 2 baselines |
+| `rl/tests/` | 20 combat assertions; `fuzz.py` (M1 gate); `test_env.py` (Phase 3); `test_ppo.py` (Phase 4) |
 
 **Build order (v0 = units only, no spells):** phase machine (done) -> move
 declaration / Showdown / Combat (done) -> Conquer + Hold scoring (done) -> random
 agent (done) -> 100k fuzz (M1 gate, **passed**) -> greedy baseline + replay viewer
-(done) -> gym (done) -> **PPO (next)**. The effect DSL comes *after* combat, so its
-hooks are derived from what combat actually needs rather than guessed. Keywords
-are flag checks, not DSL (§3).
+(done) -> gym (done) -> PPO (done, **Phase 4 exit met**) -> **effect DSL + Reactions
+(next)**. The effect DSL comes *after* combat, so its hooks are derived from what
+combat actually needs rather than guessed. Keywords are flag checks, not DSL (§3).
+
+**The agent now plays a game that is missing its interactive layer.** v0 is
+units-only, so there are no `[Reaction]` windows, no `[Hidden]` plays, and
+`combat.run_combat` never yields priority. Phases 5-7 (recurrence, belief,
+bluffing) all measure things that only exist once those land — a belief head has
+nothing to infer when the Facedown Zone is always empty. So the effect DSL is
+the next real work, not more training.
 
 **Phase 1/2/3 gates, all green.** M1: 100k random games at victory 8, invariants
 on — 0 exceptions, 0 truncations, bit-identical replay under seed, 82 games/s,
@@ -1188,11 +1198,70 @@ max 10 against a cap of 64. That is v0 being units-only with small hands; expect
 it to grow when spells and target selection land, which is when the cap earns
 its assertion.
 
-### Phase 4 — PPO, no recurrence, no belief (2–3 weeks)
+### Phase 4 — PPO, no recurrence, no belief (2–3 weeks) — **EXIT MET**
 
 Feed-forward only. Candidate-scoring action head. Beat random, then greedy.
 
 **Exit:** ≥90% vs random, ≥65% vs greedy.
+
+**Result — met at the full victory score, 582k parameters, ~1,400 transitions/sec
+on one CPU core-set (M1 Max).** Trained at `victory_score=3` per the §1.3
+curriculum, 205k transitions (100 iterations x 2048), ~4 minutes:
+
+| Measured at | vs random | vs greedy |
+|---|---|---|
+| victory 3 (trained here) | 97.5% | 77.0% |
+| victory 5 (zero-shot) | 98.0% | 79.0% |
+| **victory 8 (zero-shot)** | **96.0%** | **74.5%** |
+
+**The curriculum transferred with no retraining at all**, which was not
+guaranteed and is worth recording as a design win rather than luck: `globals`
+encodes points as `points / victory_score` and turn as `turn / turn_cap`, so
+"I am two thirds of the way to winning" is the same input vector whether the
+target is 3 or 8. Encoding a raw point count would have made the victory-3
+policy actively wrong at victory 8 — it would have tried to close out games
+five points early.
+
+**Annealing to victory 8 bought nothing measurable.** A second run warm-started
+from the victory-3 checkpoint and trained at victory 8 for 40k transitions was
+then compared against it at 1,000 games per matchup:
+
+| Checkpoint | vs random | vs greedy |
+|---|---|---|
+| trained at victory 3 only | 96.0% ± 1.2% | 76.3% ± 2.6% |
+| annealed at victory 8 | 96.5% ± 1.1% | 77.6% ± 2.6% |
+
+Both gaps sit well inside the 95% intervals, so the honest reading is that the
+anneal is *not yet* demonstrated to help — not that it helped a little. Two
+plausible explanations, and they need different responses: either the curriculum
+really does transfer completely (in which case §1.3's 3 → 5 → 8 schedule is
+unnecessary overhead for v0), or greedy is too weak to resolve the difference
+(in which case the anneal may matter and this measurement simply cannot see it).
+The second is more likely, and it is the same limitation as the caveat below —
+which is why Phase 5's Elo ladder and the §1.4 exploitability probe, not more
+baseline duels, are what should settle it. Do not delete the anneal step on this
+evidence.
+
+Training curve was healthy rather than lucky: normalized entropy fell smoothly
+0.85 → 0.19, explained variance rose 0.00 → 0.61, KL held at 0.002–0.004 and
+clip fraction at 2–4%. Policy collapse would look like entropy crashing to zero
+with KL spiking; that did not happen. Victory-3 play saturates at ~97%/77% by
+iteration 100, which is unsurprising — those games last **2.3 turns and 12
+decisions**, so there is not much policy there to find.
+
+**Caveat to carry forward.** Greedy is a deliberately shallow baseline (three
+rules, §Phase 2), so 74.5% against it is a floor on competence, not evidence of
+strong play. The meaningful measurements are Phase 5's Elo against held-out
+checkpoints and the §1.4 best-response exploitability probe — a policy can beat
+greedy handily and still be trivially exploitable.
+
+**One bug worth remembering, found by a test rather than by a bad run.** A
+trailing minibatch of size 1 makes the advantage `std()` undefined; the NaN
+reached every parameter through a single Adam step and the run kept printing
+plausible numbers indefinitely. Minibatches are now even splits
+(`torch.tensor_split`) and the loss is asserted finite before stepping. This is
+the failure mode the §4 debug list cannot help with, because nothing looks
+wrong.
 
 **Debug order when it fails** — check in this sequence, every time:
 1. Action mask alignment (is `legal_actions[i]` the same action the net scored at
