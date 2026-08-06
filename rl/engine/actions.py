@@ -246,19 +246,11 @@ def apply(state: GameState, table: CardTable, cfg: Config,
     k = action.kind
 
     if k == A_PASS:
-        if state.showdown_bf >= 0:
-            if combat.showdown_pass(state):
-                # Both players passed, so the Showdown Step is over and Combat
-                # must advance to the Damage Step. `run_combat` currently drives
-                # steps 2-3 itself and never yields, so nothing can reach this
-                # line in v0 -- but the moment a Reaction becomes playable it
-                # will, and a silently-ignored resolution would show up as two
-                # players passing priority back and forth forever. Fail here
-                # instead, where the message names the fix.
-                raise NotImplementedError(
-                    "showdown resolved by mutual pass, but combat is not yet "
-                    "resumable -- split run_combat into a resumable state "
-                    "machine when Reaction-speed play lands (Phase 1.5)")
+        if state.showdown_bf >= 0 and combat.showdown_pass(state):
+            # Both players passed in succession, so the Showdown Step is over
+            # and Combat resumes at the Damage Step.
+            return combat.advance_combat(
+                state, table, cfg, {"combat_at": int(state.showdown_bf)})
         return {}
 
     if k == A_PLAY:

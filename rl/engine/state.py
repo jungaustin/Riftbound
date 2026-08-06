@@ -18,6 +18,8 @@ rules need.
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 
 from rl.config import DOMAINS
@@ -177,10 +179,18 @@ class GameState:
         return s
 
     def state_hash(self) -> int:
-        """Stable hash over everything that defines the position.
+        """Stable digest over everything that defines the position.
 
         Used to prove determinism: same seed twice must produce an identical
         hash trace. Excludes `rng`, which is an object, not state.
+
+        **blake2b, not the builtin `hash()`.** Python salts the hashing of
+        bytes per process (PYTHONHASHSEED), so `hash()` produced a value that
+        was consistent *within* one run and meaningless across runs. Every
+        comparison in the test suite happens inside a single process, so the
+        determinism checks were sound -- but the printed number could not be
+        recorded as a regression fingerprint, which is most of why you would
+        want one. This digest can.
         """
         parts = []
         for name in GameState.__slots__:
@@ -190,7 +200,9 @@ class GameState:
             # 8 bytes, not 4: `decl_mask` is a bitmask over MAX_PERMS rows.
             parts.append(v.tobytes() if isinstance(v, np.ndarray)
                          else int(v).to_bytes(8, "little", signed=True))
-        return hash(b"".join(parts))
+        return int.from_bytes(
+            hashlib.blake2b(b"".join(parts), digest_size=8).digest(),
+            "little", signed=True)
 
     # ---- the four states (rules 308-310) ---------------------------------
 

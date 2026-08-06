@@ -302,29 +302,59 @@ def _clear_foreign_hidden(state: GameState, i: int, holder: int) -> None:
 
 def run_combat(state: GameState, table: CardTable, cfg: Config,
                bf: int, attacker: int) -> dict:
-    """Initiate Combat at `bf` and run it to completion.
+    """Initiate Combat at `bf` and run it as far as the rules allow unattended.
 
-    In v1 no card is playable at Reaction speed, so the Combat Showdown Step has
-    no decisions in it and is skipped. `open_showdown` / `showdown_pass` exist
-    for when `[Ambush]` and Reactions arrive -- do NOT collapse this into a
-    single function, and never auto-pass once a Reaction is affordable
-    (PLAN.md §5.3 gotcha 3): that priority window is the entire interactive
-    layer of the game.
+    Combat is a *resumable* state machine, not a function that plays itself out.
+    It runs forward until either the Combat ends or a player has a real decision
+    to make, and in the second case it returns with `state.showdown_bf >= 0` so
+    the action layer can ask them. `advance_combat` picks it back up.
+
+    That structure exists for one reason: the Combat Showdown Step is where
+    `[Reaction]` cards and every live `[Hidden]` card are played, and that window
+    is the entire interactive layer of the game (PLAN.md §5.3 gotcha 3). A
+    version that resolves Combat in one call cannot represent a combat trick.
     """
     log: dict = {"combat_at": bf}
     open_showdown(state, bf, attacker)
+    return advance_combat(state, table, cfg, log)
 
-    # Step 1: Combat Showdown. Nothing to decide yet.
-    while showdown_responses(state, table, cfg, state.priority):
-        raise NotImplementedError("Reaction-speed play is Phase 1.5")
 
-    # Steps 2-3, possibly repeating if the result is "No Result" (466.3.d.1).
-    for _ in range(N_SEATS * 4):           # guard: cannot cycle forever
+def window_is_live(state: GameState, table: CardTable, cfg: Config) -> bool:
+    """Is this priority window an actual decision for anybody?
+
+    A window in which *neither* player can play anything and no Chain Item is
+    pending cannot change the game, so skipping it is not the same as
+    auto-passing a real decision -- the distinction PLAN.md §5.3 gotcha 3 turns
+    on. Both seats are checked, not just the one holding priority: a window is
+    live if *anyone* can act in it.
+
+    This is what keeps v0 bit-identical. With no Reaction-speed cards yet,
+    `showdown_responses` is empty for both seats, so combat still resolves in
+    one call and the Phase 1-4 gate numbers do not move.
+    """
+    if not state.is_open:
+        return True                        # a Chain Item is pending (312.2.c/d)
+    return any(showdown_responses(state, table, cfg, s) for s in range(N_SEATS))
+
+
+def advance_combat(state: GameState, table: CardTable, cfg: Config,
+                   log: dict | None = None) -> dict:
+    """Run Combat forward until somebody must decide, or until it ends."""
+    log = {"combat_at": state.showdown_bf} if log is None else log
+    guard = 0
+    while state.showdown_bf >= 0:
+        guard += 1
+        assert guard <= N_SEATS * 8, "combat failed to terminate"
+
+        if state.showdown_step == SD_PRIORITY:
+            if window_is_live(state, table, cfg):
+                return log                 # yield; the action layer takes over
+            state.passes = 0
+
+        bf, attacker = state.showdown_bf, int(state.attacker)
+        # Steps 2-3, repeating while the result is "No Result" (466.3.d.1).
         log.setdefault("rounds", []).append(damage_step(state, table, cfg, bf))
-        if resolution_step(state, table, cfg, bf, attacker, log):
-            break
-    else:
-        raise AssertionError("combat failed to terminate")
+        resolution_step(state, table, cfg, bf, attacker, log)
     return log
 
 
