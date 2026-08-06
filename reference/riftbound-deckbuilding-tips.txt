@@ -1,0 +1,655 @@
+===============================================================================
+RIFTBOUND TCG - DECKBUILDING TIPS COMPILED FROM ONLINE SOURCES
+With the reasoning behind each tip
+===============================================================================
+
+Compiled: July 29, 2026
+Current set: Unleashed (Set 3). Vendetta (Set 4) releases July 31, 2026.
+
+ABOUT THIS DOCUMENT
+-------------------
+This gathers deckbuilding advice from eight sources, including Riot's own
+official primer written by Game Director Dave Guskin. Every tip is paired with
+the stated or implied reasoning, because a rule of thumb you don't understand
+is a rule of thumb you'll misapply.
+
+Where sources disagree or where advice has gone stale, that is flagged
+explicitly rather than smoothed over. See Section 11.
+
+Full source list at the end (Section 13).
+
+
+===============================================================================
+SECTION 1 - THE FIXED NUMBERS
+===============================================================================
+
+Riftbound locks most of its deck sizes. Learn these first; the strategy only
+matters once the deck is legal.
+
+  Main Deck ............ exactly 40 cards (Constructed format)
+  Rune Deck ............ exactly 12 cards
+  Legend ............... 1 card (Legend Zone, outside both decks)
+  Chosen Champion ...... 1 card (Champion Zone, outside both decks)
+  Battlefields ......... 3 unique cards, selected pre-game
+  Sideboard ............ 0 or up to 10 cards (see Section 9 - this changed
+                         on July 24, 2026, and most guides online still
+                         say 8)
+
+Total physical cards you bring: 57, plus sideboard.
+
+A nuance worth knowing: the general rules permit a "regular" deck of at least
+40 main deck cards, but the Constructed format narrows that to exactly 40.
+Riot's primer notes you technically can go above 40 and advises against it.
+
+  WHY 40 AND NOT MORE: Every card above 40 dilutes your access to your best
+  cards - specifically your Champion copies and Signature cards. A bigger deck
+  is a worse deck because it draws its good cards less often. This is the
+  single most common instinct new players have to unlearn.
+
+  WHY THE CHAMPION SLOT MATTERS: One copy of your Chosen Champion starts on
+  the table in the Champion Zone, and that copy counts against your 3-copy
+  limit. So the Champion is effectively a card you are guaranteed to have
+  every single game. Build around it accordingly.
+
+
+===============================================================================
+SECTION 2 - STEP ONE: CHOOSE THE LEGEND
+===============================================================================
+
+Every source agrees the Legend is the first decision, not a later one.
+
+  WHY IT'S FIRST: The Legend does three things simultaneously - it sets your
+  Domain Identity (the only two rune colors you may ever use), it dictates
+  which Champion and Signature cards are legal for you, and it grants an
+  always-on Legend Ability. Changing your Legend later means rebuilding the
+  deck from scratch, which in a paper TCG means rebuying it too.
+
+THE SIX DOMAINS AND WHAT EACH IS GOOD AND BAD AT
+------------------------------------------------
+Riot's primer is unusually candid about each domain's designed weaknesses.
+This is the most useful section of the official guide, because knowing what a
+domain CAN'T do tells you what your deck will need to cover.
+
+FURY (Red) - aggression, passion, conquering
+  Strong at: damage-based removal, Accelerate and other ways to enter ready,
+             payoffs for conquering
+  Weak at:   drawing lots of cards; killing units directly, especially units
+             sitting safely in their base out of combat
+
+CALM (Green) - balance, meditation, holding
+  Strong at: defensive combat tricks, moving enemy units, negating
+             interaction (counterspell and stun effects)
+  Weak at:   being genuinely aggressive; interacting without using its units
+
+MIND (Blue) - innovation, outsmarting, curiosity
+  Strong at: long-term planning, shrinking effects, card draw, hidden and
+             gear synergies
+  Weak at:   moving units; raw unit efficiency
+
+BODY (Orange) - physical superiority, agility, the wilds
+  Strong at: resource ramp, efficient high-impact units, winning combats
+  Weak at:   efficient card draw; non-combat spells
+
+CHAOS (Purple) - unpredictability, rebellion, trickiness
+  Strong at: position and trash manipulation, hidden tricks, card filtering
+  Weak at:   permanently removing a threat; granting permanent buffs
+
+ORDER (Yellow) - unity, community, sacrifice
+  Strong at: generating many small units, death triggers, killing units
+             directly
+  Weak at:   handling small units; moving units
+
+  HOW TO USE THIS: Your two domains will share some blind spots. A Calm/Mind
+  deck, for example, is doubly weak at aggression and at unit efficiency - so
+  it needs a game plan that wins slowly and a reason its cheap units are
+  acceptable. A Fury/Body deck has almost no card draw between its two
+  domains, so it must win before running out of gas. Identify the overlapping
+  weakness early; it defines your deck's real losing condition.
+
+TIP: Pick a Legend whose ability matches how you actually enjoy playing.
+  WHY: Multiple sources make the point that most Legends are viable when built
+  correctly, so the limiting factor is usually pilot familiarity rather than
+  raw power. A Legend you understand deeply beats a stronger Legend you don't.
+
+TIP: Read the Legend Ability as a statement of archetype.
+  WHY: The ability usually telegraphs the intended plan. Token generation
+  points toward swarm and aggro. Rune channeling points toward ramp and a
+  late-game plan. Card draw on an empty hand points toward emptying your hand
+  fast. Cheap recurring buffs point toward either going wide or building one
+  enormous threat, depending on which Champion you pair with it.
+
+TIP: But don't treat the telegraphed archetype as mandatory.
+  WHY: Sources note that Legends with the same domain pair can support
+  genuinely different strategies, and that creative builds are rewarded when
+  fundamentals are solid. Two Legends sharing a domain pair and even a similar
+  ability can want different curves - a buff aimed at a lone defender implies
+  a defensive midrange deck, while a smaller buff usable on anything leaves
+  the aggressive door open.
+
+
+===============================================================================
+SECTION 3 - STEP TWO: CHOOSE THE CHOSEN CHAMPION
+===============================================================================
+
+Each Legend has multiple Champion Unit versions, typically one per domain.
+Exactly one goes in the Champion Zone.
+
+TIP: Choose the Champion whose ability matches the deck shape you want, then
+build toward it - not the one with the biggest numbers.
+  WHY: Riot's primer illustrates this with two versions of the same champion.
+  One version boosts other already-buffed units, which pushes you toward a
+  wide board of many units that buff themselves. The other version can stack
+  unlimited buffs on itself, which pushes you toward one enormous threat and
+  concentrating every buff on it. Same Legend, same ability, opposite
+  decklists. The Chosen Champion is the fork in the road.
+
+TIP: Run extra copies of your Chosen Champion in the main deck.
+  WHY: You built the strategy around having access to it, and opponents will
+  remove it. Extra copies are insurance on your own game plan. Remember the
+  table copy counts toward the 3 maximum.
+
+TIP: You may also run other Champion Units, including ones with different
+tags, as long as they fit your Domain Identity.
+  WHY: This is a common misreading of the rules. Only the CHOSEN Champion
+  must share a tag with your Legend. Your main deck can include up to 3 copies
+  of any Champion Unit that is color-legal, and you can mix multiple Champion
+  Units that share your tag to blend strategies.
+
+TIP: Know the turn your Champion is supposed to arrive, and don't just deploy
+it as soon as you can afford it.
+  WHY: Because the Chosen Champion is always available, the decision is
+  purely about timing rather than drawing it. Guides identify "comes down at
+  the right moment" as a property of a good Champion alongside curve fit and
+  immediate board impact. Deploying it into removal on turn three when it
+  wins the game on turn six is a real and common way to lose.
+
+
+===============================================================================
+SECTION 4 - STEP THREE: SIGNATURE CARDS
+===============================================================================
+
+Signature cards are Spells or Units tied to a Champion Tag. Limit: 3 total per
+matching Champion Tag. They can never go in the Champion Zone.
+
+TIP: Default to the maximum 3 copies of your Signature card, and require a
+specific reason to run fewer.
+  WHY: Riot's primer states plainly that Signature cards are more powerful
+  than other cards of comparable cost, and that they're designed to plug into
+  that champion's specific strategy. They are among the highest-value slots in
+  the deck. If your list doesn't want them, that's usually a signal your build
+  has drifted away from the Legend's plan.
+
+TIP: Count your Signature cards toward your interactive-spell quota.
+  WHY: Many Signature spells already do the swing-a-combat job described in
+  Section 5. If yours does, you need fewer other interactive spells - don't
+  double-count the requirement and end up spell-heavy.
+
+WATCH OUT: A Signature card with the wrong tag, or a 4th copy, makes the deck
+illegal. So does putting a Signature Unit in the Champion Zone.
+
+
+===============================================================================
+SECTION 5 - STEP FOUR: FILLING THE MAIN DECK
+===============================================================================
+
+This is where the concrete numeric guidance lives. Sources broadly converge.
+
+TIP: Play at least 9 cheap units, roughly in the 2-4 cost range.
+  WHY (Riot's stated reason): You cannot win without fighting for battlefield
+  control, and you need enough cheap bodies that you reliably draw one by your
+  first or second turn. Riftbound.gg gives a similar figure at 9-12 low-cost
+  units. The exception Riot names: if your Legend Ability itself helps you
+  contest battlefields early, you can afford fewer.
+
+TIP: Play at least 6 interactive spells.
+  WHY: Showdowns in Riftbound are frequently decided by a single card. An
+  interactive spell is anything that improves your unit, weakens theirs, or
+  removes theirs outright. Six-plus is the threshold Riot gives for reliably
+  having drawn one by mid-game. Riftbound.gg suggests 6-9 low-to-medium cost
+  spells with a couple of expensive powerful ones on top.
+
+TIP: When in doubt, cut a spell and add a unit.
+  WHY: Every source repeats this. Units are what physically hold battlefields
+  and therefore what scores points. Spells and gear support board presence;
+  they don't create it. It is very easy to fall in love with a pile of clever
+  spells and build a deck that cannot actually stand on a battlefield.
+
+TIP: Don't load up on expensive finishers.
+  WHY: The win condition in Riftbound is claiming and holding battlefields,
+  which is a board-presence problem, not a haymaker problem. A deck stuffed
+  with high-cost closers loses the battlefields before the closers arrive.
+
+TIP: Have a specific, named win condition and confirm you can actually
+execute it.
+  WHY: Mobalytics frames the requirement as being able to either hold a
+  battlefield or score several on one turn. Riot frames it the same way. In
+  practice that means either substantial defensive units and protective
+  spells, or an aggressive force you can assemble in the late game. Both are
+  valid; having neither is not. Check for this explicitly at the end of
+  building, because it is easy to assemble 40 reasonable cards with no plan.
+
+TIP: Include some card draw, whatever your colors.
+  WHY: Mobalytics notes some domains have far better access than others, but
+  advises every deck include something. Cross-reference the domain weaknesses
+  in Section 2 - if both your domains are listed as poor at card draw, this
+  becomes a real constraint on how long a game you can afford to play.
+
+TIP: Include ways to come back from behind, or to redeploy a stuck army.
+  WHY: Riot's worked example calls this out as addressing a specific
+  archetype weakness. A slow build-up deck struggles against faster decks and
+  against wider decks. Cards that let units enter ready immediately let you
+  pressure a battlefield from a losing position, and let you move on from an
+  army that is pinned defending one location when the points are elsewhere.
+  Identify your deck's characteristic way of losing, then dedicate slots to it.
+
+A CAUTION ON RATIO FRAMEWORKS
+-----------------------------
+One competitive guide (Card Brawlers) proposes a distribution of 20-24 core
+strategy cards, 12-16 support cards, 8-12 disruption cards, and 2-4 tech
+cards, described as derived from tournament results.
+
+Treat this as a way of thinking, not arithmetic. The minimums alone sum to 42,
+which already exceeds the legal 40-card main deck, so the categories must be
+overlapping rather than exclusive. The useful takeaway is the proportions:
+roughly half your deck advancing your plan, a quarter enabling it, a quarter
+interacting with the opponent, and a small number of meta-specific answers.
+
+
+===============================================================================
+SECTION 6 - STEP FIVE: THE RUNE DECK
+===============================================================================
+
+Twelve runes, split between your two domains in any ratio you like. This is
+the part sources warn about most emphatically.
+
+FIRST, THE MECHANIC THAT DRIVES EVERYTHING
+------------------------------------------
+You channel 2 runes per turn. Each rune can be exhausted for Energy or
+recycled for Power. Energy is generic - any rune produces it. Power is
+color-specific - to pay a Fury Power cost you must recycle a Fury rune. There
+are no substitutes.
+
+  THEREFORE: Your rune ratio needs to serve your POWER costs specifically,
+  not your general color balance. A deck can be half Mind cards by count and
+  still want only four Mind runes, if none of those Mind cards demand Mind
+  Power.
+
+TIP: Start at 6/6, then adjust based on play experience.
+  WHY: It's the neutral default and the recommendation in Riot's primer, the
+  Riftbound wiki, and riftbound.gg. It works when Power costs are genuinely
+  balanced across both domains. It is more punishing than a skewed base when
+  your channel draws come in the wrong order.
+
+TIP: Count your actual Power costs by color, then skew the base to match.
+  WHY: This is the concrete method every guide converges on. Go through all
+  40 cards, tally which color each Power symbol demands, and tilt the 12
+  accordingly. Runes & Rift gives the example that roughly 15 cards demanding
+  Fury Power justifies 7 or 8 Fury runes. Standard skews are 7/5 and 8/4.
+  Too few of a color produces unplayable hands and wasted turns.
+
+TIP: A deliberate design pattern - put your zero-Power cards in one domain
+and your Power-hungry cards in the other, then skew hard, around 8/4.
+  WHY: This is Riot's own suggestion and it is more actionable than generic
+  balance advice. If one domain's contribution to your deck costs no Power at
+  all, those cards are castable off any rune, and you can commit almost your
+  whole rune base to the domain that actually needs specific colors. You get
+  consistency in both directions instead of hedging.
+
+TIP: Don't skew so hard that your secondary color becomes unfindable.
+  WHY: Danireon raises a point the other guides miss - the ratio also
+  constrains your channeling CHOICES each turn. At a 10/2 split you will
+  almost always channel the dominant color, which is reliable, but it leaves
+  you helpless in the games where you need the secondary domain and simply
+  cannot find it in the deck.
+
+TIP: Balance Power-hungry cards with efficient no-Power cards.
+  WHY: The strongest cards often carry Power costs, but a deck full of them
+  stalls. Runes & Rift's framing: the more zero-Power cards you include, the
+  smoother the curve feels across the whole game.
+
+TIP: Plan recycling a turn ahead.
+  WHY: Rift Mana flags a consequence that isn't obvious from the card text -
+  recycling reduces your total rune count, so a big Power turn leaves you with
+  fewer resources the following turn. Before committing to a Power-heavy play,
+  ask what next turn looks like.
+
+TIP: Consider Seal cards for a domain you're heavily invested in.
+  WHY: Riot's primer notes Seals help pay a domain's recycle costs repeatedly
+  over multiple turns, so they scale with how many cards in that domain demand
+  Power. The more concentrated your Power needs, the better Seals get.
+
+
+===============================================================================
+SECTION 7 - STEP SIX: BATTLEFIELDS
+===============================================================================
+
+Three unique battlefields, chosen before the game. Only one is live per game.
+In best-of-one it's randomly selected from your three; in best-of-three you
+actively choose, and no battlefield may be used twice in a match.
+
+RULES DETAIL (verified against Core Rules RUP4, 2026-07-16, 2026-08-05):
+  The two sanctioned 1v1 modes differ here and the difference is load-bearing.
+    - Duel (485), Bo1: each player selects one of their three AT RANDOM
+      (485.5). The other two are removed.
+    - Match (486), Bo3: each player CHOOSES one (486.5), placed
+      simultaneously. Battlefields used in a game someone WON are removed for
+      the rest of the match. If a game had no winner, they may be re-used
+      (486.5.a). In the Bo5 variant a battlefield may be presented a second
+      time once all three have been presented, never a third (486.6.a).
+
+  THE BATTLEFIELD IS COMMITTED BEFORE TURN ORDER AND BEFORE YOUR HAND. Setup
+  order is 110-118: legend (111), chosen champion (112), battlefields per mode
+  (113), shuffle (114), TURN ORDER by fair random method (115), draw 4 (116),
+  mulligan up to 2 (117), begin (118). So game 1's presentation is blind to
+  who is on the play, and can never be tuned to a keepable opening hand.
+
+  The only mechanical asymmetry between the seats: the player going second
+  channels an extra rune on their first Channel Phase (485.7, 486.7). Going
+  first buys tempo; going second buys a rune of slack.
+
+  NOT IN THE RULES, though widely repeated - treat as table/tournament
+  convention and confirm against the event document:
+    - "placed face down, then revealed simultaneously." The rules say only
+      "placed simultaneously" (485.5, 486.5).
+    - "the loser of the previous game decides who goes first." Rule 115 says
+      fair random method, and 486 adds no game-2 exception. If this convention
+      does NOT apply, every game is blind to turn order and a neutral pick is
+      worth more than a seat-specific one.
+
+TIP: Give each of the three a ROLE, don't make three independent picks.
+  WHY: In Match play you choose which to present each game, so the set should
+  cover the three situations you can be in.
+    1. GO-FIRST / proactive - rewards already having a body down and
+       contesting early; converts a tempo lead into points. Allowed to be bad
+       from behind, because you only present it knowing you're on the play.
+    2. GO-SECOND / reactive - stabilises, accelerates resources, or rewards
+       catching up; pairs with the extra rune the second player channels.
+       This is the one that must be good from behind.
+    3. NEUTRAL - the game-1 presentation, made blind. Leans on your deck's
+       structural synergy, gives a generic opposing deck as little as
+       possible, and doesn't care who is on the play. "Blank for them,
+       quietly good for me" beats "very strong for whoever is ahead."
+  Sequence in a Bo3: neutral in game 1, then the seat-matching one in games
+  2-3 - assuming the loser-chooses convention above actually applies.
+
+TIP: Ask three questions, in this order (Riot's framework):
+  1. Which battlefields most support my strategy?
+  2. Which would be disastrous for me if my OPPONENT controlled them?
+  3. Which are slightly better for me than for my opponent?
+
+  WHY THE SECOND QUESTION MATTERS MOST: Battlefield effects apply to BOTH
+  players. This is the mistake to avoid. A battlefield that supercharges your
+  plan may supercharge your opponent's more. Runes & Rift puts it well - pick
+  the ones you will use better than your opponent, not the ones you like.
+
+TIP: Factor in turn order.
+  WHY: Rift Mana raises a consideration absent from the beginner guides -
+  some battlefields are substantially stronger for the player going first,
+  while others are turn-order neutral. Since you don't control who goes first,
+  a spread that includes neutral options is more robust than three
+  first-player-dependent picks.
+
+TIP: Use battlefields to patch your deck's holes, not just amplify strengths.
+  WHY: Runes & Rift specifically suggests covering weak spots - a battlefield
+  granting draw or extra rune channeling can substitute for deck slots you
+  couldn't spare. Cross-reference Section 2: if both your domains are bad at
+  card draw, a draw battlefield is doing real work.
+
+TIP: In best-of-three, plan the SET of three, not three independent picks.
+  WHY: Because you must win with two different battlefields to win a match,
+  your three picks need to cover different game shapes. Riftbound.gg frames
+  this as deciding which is best for games one and two and which is best for
+  the tiebreaker. A trio of near-identical battlefields wastes the format.
+
+TIP: Battlefields are colorless and unrestricted.
+  WHY: Origins alone offers 20 colorless battlefields usable by any deck.
+  There is no Domain Identity restriction here, so this is the one part of
+  deckbuilding where the entire pool is open to you. Use that.
+
+
+===============================================================================
+SECTION 8 - CONSISTENCY AND THE THREE-COPY LIMIT
+===============================================================================
+
+Maximum 3 copies of any card by full name.
+
+TIP: Run as many cards at 3 copies as is reasonable.
+  WHY: Consistency wins card games. Runes & Rift's illustration: 13 different
+  cards at 3 copies each (39 cards) plus one Champion is an extremely
+  consistent deck - it mulligans well, curves smoothly, and repeats its good
+  early games. The more singletons you run, the more your deck plays
+  differently every time you shuffle.
+
+TIP: But audit your copy distribution before finalising.
+  WHY: Danireon raises the counterweight - a deck maxed out on everything is
+  one-dimensional and can fold entirely to a single counter-strategy. Some
+  archetypes want a wider spread of unique names for matchup flexibility.
+  Count how many cards sit at 3, how many at 1 or 2, and make that
+  distribution a deliberate choice rather than an accident.
+
+TIP: A few 1-of tech cards are fine; a deck built from 1-ofs is not.
+  WHY: The surprise value of a singleton is real but small, and it is paid for
+  with consistency across every game you play. The 40 slots are fixed - how
+  you distribute them is where deckbuilding actually happens.
+
+
+===============================================================================
+SECTION 9 - THE SIDEBOARD
+===============================================================================
+
+IMPORTANT CURRENCY NOTE: The sideboard maximum increased from 8 to 10 cards
+effective July 24, 2026. Most guides online, including riftbound.gg's
+otherwise excellent Deckbuilding 101, still state "exactly 8 or 0." Main deck,
+rune, battlefield, Domain Identity, and copy-limit rules all still apply to
+sideboard cards.
+
+TIP: Copy limits span deck AND sideboard combined.
+  WHY: This catches people at deck checks. If you run 3 copies of a card in
+  the main deck, you cannot add a 4th to the sideboard. Two main plus one
+  sideboard is legal.
+
+TIP: Sideboard against the specific decks you expect to face.
+  WHY: Riftbound.gg's advice is to target the top-tier Legends you'll actually
+  sit across from. Generic "good cards" in a sideboard are wasted slots -
+  their job is to convert bad matchups, and a card that's mildly useful
+  everywhere converts nothing.
+
+TIP: Battlefields are legal sideboard cards.
+  WHY: Competitive lists do include them, and the sideboard rules explicitly
+  note battlefield rules still apply. This is easy to overlook.
+
+TIP: Run zero sideboard cards if you only play best-of-one.
+  WHY: Sideboarding isn't permitted in best-of-one at all, so the slots do
+  nothing. The rules allow 0 as a legal choice for exactly this reason.
+
+TIP: Situational-but-powerful cards belong here, not in the main deck.
+  WHY: Cards with a fantastic power-to-cost ratio against one narrow target
+  are dead draws in most matchups. That profile is precisely what a sideboard
+  slot is for. Vendetta's Decree cycle - one spell per domain, each especially
+  effective against its opposite domain - is a clean example of the pattern.
+
+
+===============================================================================
+SECTION 10 - THE LEGALITY CHECKLIST
+===============================================================================
+
+Run this before any event. Each of these makes a deck illegal, not merely bad.
+
+  [ ] Main deck contains exactly 40 cards
+  [ ] Rune deck contains exactly 12 runes
+  [ ] Sideboard contains 0 cards, or no more than 10
+  [ ] 1 Legend in the Legend Zone
+  [ ] 1 Champion Unit in the Champion Zone, sharing a tag with the Legend
+  [ ] 3 unique battlefields selected
+  [ ] Every card matches the Legend's Domain Identity
+  [ ] For dual-symbol cards, BOTH symbols fall within your identity
+  [ ] Every rune matches one of your two domains
+  [ ] No more than 3 copies of any card name, counting main deck + sideboard,
+      and counting the Champion Zone copy
+  [ ] No more than 3 Signature cards per matching Champion Tag
+  [ ] No Signature Unit sitting in the Champion Zone
+  [ ] No cards currently on the Standard ban list
+
+  ON THE OFF-COLOR RULE: A single off-color card makes the whole deck illegal.
+  Sources identify this as the mistake that catches new players most often,
+  particularly on dual-symbol cards where people check only one symbol.
+
+  ON BANS: [CORRECTED 2026-08-05 against Riot's official Banned Cards page.
+  This passage previously listed only three bans -- Stealthy Pursuer, The
+  Arena's Greatest, Aspirant's Climb -- and was badly incomplete.]
+
+  As of July 24, 2026 the Constructed ban list is TEN cards, and Riot bans
+  outright rather than restricting (there is no restricted list):
+
+    Battlefields (5): Aspirant's Climb, Obelisk of Power, Reaver's Row,
+                      The Arena's Greatest, The Dreaming Tree
+    Gear (1):         Scrapheap
+    Spells (2):       Called Shot, Fight or Flight
+    Units (2):        Draven - Vanquisher, Stealthy Pursuer
+
+  2v2 Constructed additionally bans one Legend of its own: the Starter
+  printing of Master Yi - Wuju Bladesman (for overshadowing every other 2v2
+  Legend option). That one is legal in 1v1.
+
+  HALF THE LIST IS BATTLEFIELDS. Battlefields are the line nobody re-reads
+  when copying a decklist, so check bans BEFORE you rate battlefields, not
+  after. Machine-readable copy: data/banlist.json, enforced by
+  `python3 cli.py check`. Re-scrape Riot's Banned Cards tab when a new wave
+  lands -- nothing is hardcoded, the checker reads that file.
+
+
+===============================================================================
+SECTION 11 - WHERE SOURCES DISAGREE, AND WHAT'S GONE STALE
+===============================================================================
+
+Being straight about this is more useful than presenting a false consensus.
+
+1. "EXACTLY 40" VS "AT LEAST 40"
+   Runes & Rift says exactly 40, no exceptions. Riot's primer says you can go
+   higher but recommends against it. The League of Legends wiki resolves it:
+   a "regular" deck requires at least 40 main deck cards, while the
+   Constructed format specifically requires exactly 40. Riot's primer predates
+   the Origins release. For any tournament play, treat it as exactly 40.
+
+2. SIDEBOARD SIZE
+   Guides say 8 or 0. The correct current figure is up to 10, changed July 24,
+   2026. Anything written before that date is wrong on this point.
+
+3. RUNE RATIO STARTING POINT
+   Riot, the wiki, and riftbound.gg all say start at 6/6 and adjust. Runes &
+   Rift and Danireon argue most competitive decks should lean 7/5 or 8/4 from
+   the outset, treating 6/6 as the exception for genuinely balanced Power
+   costs. These aren't really in conflict - 6/6 is the pedagogical default,
+   the skew is the practical outcome once you count your Power symbols. Count
+   first and you'll usually land on a skew.
+
+4. THE COMPETITIVE RATIO FRAMEWORK
+   The 20-24 / 12-16 / 8-12 / 2-4 breakdown from Card Brawlers cannot be read
+   literally, since the minimums exceed 40 cards. Use the proportions, not the
+   numbers.
+
+5. TIER LISTS DISAGREE WITH EACH OTHER
+   Different trackers rank the same Legends differently depending on whether
+   they weight metashare, raw win rate, top-cut conversion, or outright wins.
+   As of late July 2026, one tracker had Master Yi at Tier 1 with the highest
+   metashare and win rate while a tier list elsewhere put Irelia alone at the
+   top and Master Yi a tier below. Neither is wrong; they're measuring
+   different things. Check what a list is actually measuring before you let it
+   pick your deck.
+
+6. SET ROTATION IS OFTEN MISDESCRIBED
+   Riftbound's first Standard rotation does not occur until Set 10 arrives at
+   the start of 2028, at which point Sets 1-5 leave. Nothing legal today
+   rotates before then. Don't let rotation anxiety influence a build in 2026.
+
+
+===============================================================================
+SECTION 12 - META-AWARE BUILDING (SNAPSHOT, LATE JULY 2026)
+===============================================================================
+
+Deckbuilding advice ages fast. This section will be the first part of this
+document to go stale - Vendetta releases July 31, 2026 and will reset much of
+it.
+
+TIP: Build with the actual field in mind, weighted by metashare.
+  WHY: Your sideboard and your tech slots are only as good as your prediction
+  of what you'll face. As of late July 2026 the Unleashed field ran roughly:
+  Master Yi Wuju Bladesman 11%, Irelia Blade Dancer 9%, Diana Scorn of the
+  Moon 8%, LeBlanc Deceiver 6%, Azir Emperor of the Sands 4%, Vex Gloomist 4%.
+  A card that beats the 11% deck is worth far more than one that beats the 1%
+  deck.
+
+TIP: Distinguish metashare from win rate from conversion rate.
+  WHY: These measure different things and reward different decisions.
+  Metashare tells you what to prepare for. Win rate tells you how a deck
+  performs head-to-head. Top-cut conversion tells you whether a deck
+  over-performs relative to how often it's played. A deck can be popular and
+  mediocre, or rare and excellent.
+
+TIP: Check the ban list and the release calendar before investing money.
+  WHY: A new set arriving in days can invalidate a build, shift singles
+  prices, and change what's worth sideboarding. Ban list updates can make
+  cards in a copied decklist outright illegal.
+
+TIP: Beware of tuning too hard for a metagame that's about to change.
+  WHY: Narrow tech aimed at a specific top deck is a bet on that deck still
+  being there. Immediately before a set release, that bet is bad.
+
+
+===============================================================================
+SECTION 13 - SOURCES
+===============================================================================
+
+Ordered roughly by authority and depth.
+
+1. Deckbuilding Primer - Dave Guskin, Game Director, Riot Games
+   playriftbound.com, July 28, 2025
+   The official six-step guide. Best source for domain strengths and
+   weaknesses, main deck ratios (9+ small units, 6+ interactive spells), the
+   battlefield selection questions, and the zero-Power/high-Power rune skew
+   pattern. Predates the Origins release, so some specifics are dated.
+
+2. Riftbound Deckbuilding Guide - Runes & Rift
+   runesandrift.com, updated November 2025
+   The most rules-detailed source, with core rule citations. Best on Domain
+   Identity, Signature card limits, the legality checklist, rune ratio
+   arithmetic, and the consistency argument for 3-of playsets.
+
+3. Deckbuilding 101: Building Your First Riftbound Deck - Kera, Riftbound.gg
+   riftbound.gg, updated February 2026
+   Best on the practical main deck composition (9-12 low-cost units, 6-9
+   spells), the sideboard/main deck copy-limit interaction, and best-of-three
+   battlefield planning. Sideboard size is now outdated.
+
+4. Riftbound Deck-Building Rules - Justin Gauthier, Danireon Cards & Games
+   danireon.com, May 12, 2026
+   Best on the Energy vs Power distinction, the risk of over-skewing a rune
+   base, and the argument for auditing copy distribution rather than maxing
+   everything.
+
+5. Deck Construction - Riftbound: League of Legends TCG Wiki (Fextralife)
+   riftbound.wiki.fextralife.com
+   Structured process reference. Confirms the 6/6 starting split and the
+   colorless battlefield pool.
+
+6. Format - League of Legends Wiki
+   wiki.leagueoflegends.com
+   Authoritative on the regular vs Constructed deck size distinction, copy
+   limits, Signature restrictions, and limited-format deviations.
+
+7. 8 Tips to Improve At Riftbound Quickly - Rift Mana
+   riftmana.com, November 2025
+   Source for turn-order considerations in battlefield selection and the
+   recycling/rune-count tradeoff.
+
+8. Deckbuilding Fundamentals - Mobalytics
+   mobalytics.gg
+   Source for the explicit win-condition check and the card draw requirement.
+
+Supporting data on the metagame snapshot, ban list, and rotation timeline came
+from riftDecks.com, riftbound.gg tier lists and meta reports, and Riftbound
+organized play announcements.
+
+===============================================================================
+END
+===============================================================================

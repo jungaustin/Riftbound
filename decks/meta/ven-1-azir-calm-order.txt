@@ -1,0 +1,34 @@
+# Azir Calm/Order (Vendetta tourney, 100 players)
+Legend: Azir, Emperor of the Sands
+Champion: Azir, Sovereign
+Main Deck:
+3x Arise!
+3x B.F. Sword
+2x Back Off
+3x Brutalizer
+3x Deathgrip
+3x Defy
+3x Discipline
+3x Doran's Shield
+2x En Garde
+3x Eye of the Herald
+2x Guards!
+1x Hand Hammer
+3x Hidden Blade
+1x Resonating Strike
+3x Soul Sword
+1x Vi, Peacekeeper
+Battlefields:
+1x Hall of Legends
+1x Ornn's Forge
+1x Trifarian War Camp
+Runes:
+7x Calm Rune
+5x Order Rune
+Sideboard:
+3x Ashe, Focused
+1x Charm
+1x Crumbling Sands
+2x Disarming Rake
+2x Salvage
+1x Vi, Peacekeeper

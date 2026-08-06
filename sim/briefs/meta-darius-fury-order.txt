@@ -1,0 +1,170 @@
+# Riftbound pilot — meta/darius-fury-order
+
+You are piloting one deck in a game of Riftbound against an opponent whose
+decklist you have not seen and will not be told. Play to win.
+
+## Riftbound — what you need to know
+
+**Win condition.** First to **8 victory points**. Points come almost entirely
+from *Holding* battlefields.
+
+**The scoring rule that drives everything.** In your **Beginning Phase**, you
+Hold every battlefield you *already control* and score it. You do NOT score a
+battlefield by taking it on your own turn — you score it by having held it
+through the opponent's entire turn. Taking a battlefield late in your turn is
+worth nothing unless you can keep it. Defending what you hold is usually worth
+more than grabbing something new.
+
+**Turn structure** (your turn, in order):
+  1. **Awaken**  — you ready everything you control.
+  2. **Beginning** — you Hold and score every battlefield you control. ← points
+  3. **Channel** — you channel 2 runes. (Going second: +1 on your first turn.)
+  4. **Draw**    — you draw 1.
+  5. **Main**    — rune pools empty, then you act freely. Only you may act.
+  6. **Ending**  — all units heal, "this turn" effects expire, pools empty.
+
+**Rune economy.** Your Rune Deck is exactly 12, and you channel 2 per turn — so
+you are fully channelled by turn 6 and gain nothing after. Each rune gives you
+a choice:
+  - **Exhaust for 1 Energy** — renewable, it readies again next Awaken.
+  - **Recycle for 1 Power** — the rune leaves play and goes to the *bottom of
+    your Rune Deck*.
+Energy is rent; Power is a sale. A Power cost permanently shrinks your board of
+runes until you re-channel it, so a card costing Power is meaningfully more
+expensive than its energy number suggests.
+
+**Combat and Showdowns.** Units of two opposing players at the same battlefield
+stage a **Combat**. Contesting control of a battlefield opens a **Showdown**.
+Both put the turn into a *Showdown State*, which restricts what can be played.
+
+## Play timing — read this before planning any turn
+
+The turn is always in one of four states, from two independent axes:
+  - **Neutral** (no Showdown/Combat) vs **Showdown** (one is running)
+  - **Open** (Chain is empty) vs **Closed** (something is on the Chain)
+
+What you may play depends on your card's keyword. The tiers are strictly nested:
+
+  | Card         | Playable in                                              |
+  |--------------|----------------------------------------------------------|
+  | no keyword   | **Neutral Open only, on your own turn**                   |
+  | `[Action]`   | Neutral Open **+ Showdown Open**                          |
+  | `[Reaction]` | **All four states** — including both Closed States        |
+
+The two hard prohibitions:
+  - **In a Showdown State, only `[Action]` and `[Reaction]` can be played.**
+    Your plain spells are dead during a Showdown, even on your own turn.
+  - **In a Closed State — any time the Chain is not empty — only `[Reaction]`
+    can be played.** Reaction is your only real counterplay.
+
+`[Reaction]` also resolves **before** whatever is already on the Chain (last on,
+first off). That is what lets it counter or pre-empt.
+
+**Plan around this.** Do not dump a `[Reaction]` in Neutral Open when a plain
+spell would have done the same job — you are spending your only interaction
+window. Conversely, holding a plain spell "for the right moment" is a mistake:
+there is no later window for it. Plain spells are use-them-on-your-turn cards.
+
+**Priority vs Focus.** Both are needed to act. You hold **Priority** in your own
+Main Phase; you gain **Focus** during Showdowns. Gaining Focus grants Priority,
+but holding Focus *without* Priority means you must wait. The state header tells
+you both.
+
+
+## Your deck
+
+**Legend:** Darius, Hand of Noxus — starts in your Legend Zone and never leaves it.
+**Chosen Champion:** Darius, Trifarian — starts in your **Champion Zone**, not shuffled into your deck. You can deploy it from there; you do not have to draw it.
+
+Your Champion counts toward the 40-card minimum, so the list below is **39 cards** — that is what you actually draw from.
+
+### Main deck
+- 2x **Blood Rush** · 1E · Spell · **[Action]** · Fury
+    [Action] (Play on your turn or in showdowns.)[Repeat] {1 energy} (You may pay the additional cost to repeat this spell's effect.)Give a unit [Assault 2]. (+2 Might while it's an attacker.)
+- 2x **Falling Star** · 2E+2P · Spell · Fury
+    Deal 3 to a unit.Deal 3 to a unit.
+- 3x **Hidden Blade** · 2E+1P · Spell · **[Action]** · Order
+    [Hidden] (Hide now for {any rune} to react with later for {0 energy}.)[Action] (Play on your turn or in showdowns.)Kill a unit at a battlefield. Its controller draws 2.
+- 3x **Honest Broker** · 2E · Unit · 2 might · Order
+    [Deathknell] — Play a Gold gear token exhausted. (When I die, get the effect.)
+- 2x **Imperial Decree** · 5E+2P · Spell · **[Action]** · Order
+    [Action] (Play on your turn or in showdowns.)When any unit takes damage this turn, kill it.
+- 2x **Inferna** · 2E · Unit · 1 might · **[Reaction]** · Fury
+    [Ambush] (You may play me as a [Reaction] to a battlefield where you have units.)[Assault 2] (+2 Might while I'm an attacker.)
+- 3x **Noxus Hopeful** · 4E · Unit · 4 might · Fury
+    [Legion] — I cost {2 energy} less. (Get the effect if you've played another card this turn.)
+- 3x **Rally the Troops** · 2E · Spell · **[Action]** · Order
+    [Action] (Play on your turn or in showdowns.)When a friendly unit is played this turn, buff it. (If it doesn't have a buff, it gets a +1 Might buff.)Draw 1.
+- 2x **Rengar, Unseen** · 4E+1P · Unit · 4 might · Fury
+    [Accelerate] (You may pay {1 energy}{Fury rune} as an additional cost to have me enter ready.)[Assault 2] (+2 Might while I'm an attacker.)[Deflect] (Opponents must pay {any rune} to choose me with a spell or ability.)[Ganking] (I can move from battlefield to battlefield.)
+- 2x **Salvage** · 2E+1P · Spell · **[Action]** · Order
+    [Action] (Play on your turn or in showdowns.)You may kill a gear. Draw 1.
+- 2x **Seal of Unity** · 1P · Gear · **[Reaction]** · Order
+    Exhaust: [Reaction] — [Add] {Order rune}. (Abilities that add resources can't be reacted to.)
+- 2x **Shadow's Call** · 2E · Spell · Order
+    Choose a friendly unit without [Temporary]. Give it [Temporary]. Draw 2. (Kill it at the start of its controller's Beginning Phase, before scoring.)
+- 2x **Spectral Matron** · 4E+2P · Unit · 4 might · Order
+    When you play me, you may play a unit costing no more than {3 energy} and no more than {any rune} from your trash, ignoring its cost.
+- 3x **Trifarian Gloryseeker** · 2E · Unit · 2 might · Order
+    [Legion] — When you play me, buff me. (If I don't have a buff, I get a +1 Might buff. Get the effect if you've played another card this turn.)
+- 3x **Vanguard Captain** · 3E+1P · Unit · 3 might · Order
+    [Legion] — When you play me, play two 1 Might Recruit unit tokens here. (Get the effect if you've played another card this turn.)
+- 3x **Vi, Peacekeeper** · 5E+1P · Unit · 5 might · **[Reaction]** · Order
+    [Ambush] (You may play me as a [Reaction] to a battlefield where you have units.)When I attack, [Stun] an enemy unit here. (It doesn't deal combat damage this turn.)
+
+### Battlefields (you bring 3; ONE is chosen at random at setup)
+- 1x **Monastery of Hirana** · 0 · Battlefield · Colorless
+    When you conquer here, you may spend a buff to draw 1.
+- 1x **The Arena's Greatest** · 0 · Battlefield · Colorless
+    At the start of each player's first Beginning Phase, that player gains 1 point.
+- 1x **Trifarian War Camp** · 0 · Battlefield · Colorless
+    Units here have +1 Might. (This includes attackers.)
+
+### Rune deck (12 total)
+- 5x Fury Rune
+- 7x Order Rune
+
+### Your interaction budget
+
+This deck runs **7 `[Reaction]` cards** (playable in any state,
+including with the Chain full) and **12 `[Action]` cards** (playable in
+Showdown Open as well as your own Neutral Open). Every other card in the
+deck can only be played in **Neutral Open on your own turn**.
+
+That count is your entire ability to interact on the opponent's turn. Spend
+it deliberately.
+
+## The playfield
+
+Each turn you receive one state block. Everything in it is what you can see:
+public board, both trashes, both scores, and **your own hand**. You do not see
+the opponent's hand, deck, or facedown cards, and you have never been told their
+decklist. You learn what they play by watching it resolve. Reason from what is
+visible and from what their revealed cards imply — never assume a specific card.
+
+The `STATE` line tells you which of the four states you are in and therefore
+what class of card is playable. In `YOUR HAND`, each card is marked ✓ or ✗ for
+playable *right now* — a ✗ on a card you can afford is a **timing** block.
+
+## How to reply
+
+The engine lists every legal action, numbered. It has already filtered for cost
+and timing, so anything listed is legal and anything absent is not.
+
+**Reply with exactly two lines:**
+
+```
+ACTION: <number>
+WHY: <one short sentence>
+```
+
+Nothing else. No preamble, no analysis, no markdown. If you want to explain your
+plan, compress it into the WHY line.
+
+Pick only from the numbered list. Do not invent actions, name cards not listed,
+or describe a sequence — you will be asked again after each one resolves.
+
+Your WHY line is logged and read back when reviewing losses. Make it say what
+you were actually trying to do ("holding Reaction for their Showdown" beats
+"good play"), because it is how a human tells a bad deck from a bad pilot.
+

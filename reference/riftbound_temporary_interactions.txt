@@ -1,0 +1,156 @@
+RIFTBOUND — TEMPORARY KEYWORD INTERACTIONS (REFERENCE)
+=======================================================
+Scope: How the TEMPORARY keyword interacts with reaction timing, HIDDEN cards
+(esp. Sprite Call), spell speeds, and Dusk Rose Lab.
+Authority note: Card-interaction rulings below are drawn from the RiftJudge
+community rules database (rules-cited). Treat RiftJudge / a floor judge as the
+final word on edge cases. Rules can shift with set patches (current set: Vendetta,
+released 2026-07-31).
+
+
+1. TEMPORARY — WHAT IT IS
+-------------------------
+- Card text pattern: "Kill it at the start of its controller's Beginning Phase,
+  before scoring."
+- It is a TRIGGERED ABILITY (a death trigger), NOT a silent auto-removal. At the
+  start of the Beginning Phase it is placed on the chain. Because it uses the
+  chain, it can be RESPONDED TO before it resolves.
+- The check happens ONCE, only at the start of the turn — NOT when a unit enters.
+  Consequence: a Temporary unit CREATED mid-turn (after the check) survives the
+  current turn and is only checked at the controller's NEXT Beginning Phase.
+- Multiple instances of Temporary are redundant (do not stack).
+
+
+2. BEGINNING PHASE STRUCTURE (why "before scoring" matters)
+-----------------------------------------------------------
+The Beginning Phase resolves in order:
+  (a) Beginning Step — "at the start of Beginning Phase" effects happen here,
+      including Temporary kills and things like Dusk Rose Lab.
+  (b) Scoring Step — Hold points are scored here.
+Temporary kills occur in (a), BEFORE (b). So if you can keep/replace a body
+through the Beginning Step, you still score in the Scoring Step.
+
+- A Temporary unit CAN hold a battlefield and score. The keyword does not restrict
+  holding or scoring. If it is present at the Scoring Step, it scores normally.
+
+
+3. CORE LINE — SAVING VALUE WITH A HIDDEN CARD (e.g., Sprite Call)
+-----------------------------------------------------------------
+Goal: your only unit at a battlefield is a Temporary token about to die; you want
+to keep the battlefield (hold + score) instead of losing it.
+
+Why it works: the Temporary death trigger opens a reaction window. While that
+trigger is still PENDING on the chain, the old token is still alive, so you STILL
+control the battlefield — which means a card HIDDEN at that battlefield is still
+valid and usable.
+
+Sequence:
+  1. Beginning Phase starts. Temporary trigger goes on the chain (not resolved yet).
+  2. IN RESPONSE (old token still alive → you still control the BF → hidden card
+     still valid): flip your Hidden card. Sprite Call from Hidden = Reaction speed,
+     cost 0, and MUST be played to the SAME battlefield it was hidden at.
+  3. Reaction resolves first → a NEW Sprite token enters that battlefield.
+  4. The original Temporary trigger now resolves → kills the OLD token. You keep
+     control via the new token.
+  5. The new token survives (its Temporary check window already passed).
+  6. Scoring Step → new token holds → you score.
+
+CRITICAL RULE OF THUMB:
+  RESPOND to the trigger; do NOT let it resolve first. If you let the old token
+  die before you have a replacement, you drop to zero units at that battlefield,
+  LOSE CONTROL, and LOSE the face-down Hidden card before you can use it.
+
+
+4. THE GATE IS SPEED, NOT COST
+------------------------------
+Three spell timings in Riftbound:
+  - NEUTRAL (no keyword): only on your turn, in Neutral (not in a showdown), and
+    only when NO chain is open. (Sorcery-speed.)
+  - ACTION: on your turn or in showdowns, but only in an OPEN state (no pending
+    chain / when you hold focus). CANNOT respond to a chain item.
+  - REACTION: the ONLY speed that can be added in response to something already on
+    the chain.
+
+Applied to the Temporary trigger (a chain item):
+  - Only REACTION-speed cards/abilities may respond to it.
+  - You are NOT limited to free Hidden cards. Any Reaction-speed card works, and
+    paid ones are fine: you may EXHAUST (tap) runes for Energy and recycle for
+    Power to play a Reaction spell from hand, or flash in an AMBUSH unit (Ambush =
+    Reaction speed) — note Ambush needs "a battlefield where you have units," which
+    is satisfied while the old token is still alive.
+  - You may NOT play a plain ACTION or NEUTRAL spell in response, no matter how
+    much Energy you have Ready. It is a timing/speed wall, not a cost wall.
+
+
+5. HIDDEN OVERRIDES A CARD'S PRINTED SPEED
+------------------------------------------
+- Sprite Call is printed as an ACTION spell ("Play on your turn or in showdowns").
+  It also has HIDDEN ("Hide now for [A] to react with later for [0]").
+- These describe two DIFFERENT ways to play the same card:
+    * From HAND  → uses ACTION timing → CANNOT respond to the Temporary trigger.
+    * From HIDDEN → Hidden grants REACTION speed for that play, for 0 → CAN respond.
+- Therefore the line requires PRE-COMMITMENT: you must have Hidden the card on an
+  EARLIER turn (paying the [A] Hide cost then). A Sprite Call sitting in hand when
+  the trigger fires is useless for this — from hand it is Action speed.
+- This generalizes to ANY card with Hidden: Hidden is the mechanism for playing a
+  normally-Action effect at Reaction speed in windows its printed timing would lock
+  it out of.
+
+HIDDEN CARD RESTRICTIONS (relevant context):
+  - A Hidden card sits face-down at a SPECIFIC battlefield you control.
+  - If you lose control of that battlefield while the card is still hidden, you
+    LOSE the card.
+  - Limit 1 Hidden card per battlefield.
+  - When played from Hidden, it must target/affect the SAME battlefield where it
+    was hidden (cannot reach another battlefield).
+
+
+6. DUSK ROSE LAB COMBO
+----------------------
+Dusk Rose Lab (Battlefield, UNL-209):
+  "At the start of your Beginning Phase, you may kill a unit you control here to
+   draw 1. (This happens before scoring.)"
+
+Base interaction (confirmed, RiftJudge FAQ #9231 / ruling #9428):
+  - Both the Dusk Rose Lab trigger and the Temporary trigger go on the chain at the
+    start of your Beginning Phase.
+  - You control both → you choose the order they resolve.
+  - Resolve Dusk Rose Lab FIRST: kill your doomed Temporary token as the ability's
+    cost, draw 1. Then the Temporary trigger tries to resolve, finds its unit
+    already gone, and is IGNORED (fizzles).
+  - Net: you convert a token that was dying anyway into a drawn card.
+
+Full combo (Dusk Rose Lab + Temporary + Hidden Sprite Call):
+  Goal: draw a card off the dying token AND keep a token to hold/score.
+  Because the Lab consumes the old token, the Hidden flip supplies the replacement.
+
+  1. Beginning Phase starts. Temporary trigger + Dusk Rose Lab trigger both on the
+     chain. You have priority to respond.
+  2. Flip Hidden Sprite Call FIRST, while the OLD token is still alive (so you
+     never lose control / never lose the Hidden card). New Sprite enters the same
+     battlefield. You now have two tokens there.
+  3. Resolve Dusk Rose Lab: kill the OLD token as the cost → draw 1.
+  4. Resolve the Temporary trigger: old token already dead → ignored. (New token's
+     own Temporary is not checked until next turn.)
+  5. Scoring Step: new token holds → score.
+
+  Result: +1 card (off a doomed body), battlefield kept, point scored.
+
+  DO NOT: resolve Dusk Rose Lab and kill your only token BEFORE flipping the Hidden
+  card. That drops you to zero units → lose control → lose the Hidden card first.
+  Always flip the Hidden card while the old token is still alive.
+
+This is an "aristocrats"-style engine: a disposable/doomed body becomes card
+advantage + a replacement body + a held point, every Beginning Phase.
+
+
+7. QUICK CHECKLIST (decision order at start of Beginning Phase)
+--------------------------------------------------------------
+  [ ] Is a Temporary token about to die and is it my only unit at that BF?
+  [ ] Do I have a Hidden card at THAT battlefield? (Reaction speed when flipped.)
+  [ ] Is the responder REACTION speed? (Hidden / Reaction spell / Ambush = yes.
+      Plain Action/Neutral from hand = no, even with Energy.)
+  [ ] Respond to the trigger — do NOT let it resolve first.
+  [ ] If Dusk Rose Lab present: flip the Hidden replacement FIRST, THEN feed the
+      old token to the Lab, THEN let Temporary fizzle.
+  [ ] Confirm the replacement is present at the Scoring Step to hold/score.

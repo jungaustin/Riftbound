@@ -1,0 +1,49 @@
+domain,card,slug,type,inclusion_pct,raw_popularity_pct,copies_per_deck,divisor_rune_pct
+fury,Falling Star,falling-star,spell,77.7,35.93,2.31,46.26
+fury,Thermo Beam,thermo-beam,spell,44.9,20.75,1.39,46.26
+fury,Cleave,cleave,spell,44.6,20.63,1.97,46.26
+fury,Brittle Steel,brittle-steel,spell,30.9,14.31,1.71,46.26
+fury,Against the Odds,against-the-odds,spell,23.7,10.97,1.26,46.26
+fury,Void Seeker,void-seeker,spell,22.2,10.29,1.67,46.26
+calm,Defy,defy,spell,99.5,99.52,2.96,100.0
+calm,Discipline,discipline,spell,97.5,97.5,2.95,100.0
+calm,Charm,charm,spell,91.1,91.1,2.38,100.0
+calm,En Garde,en-garde,spell,73.8,73.77,2.2,100.0
+calm,Not So Fast,not-so-fast,spell,63.3,63.28,1.57,100.0
+calm,Back Off,back-off,spell,43.4,43.44,1.72,100.0
+mind,Stupefy,stupefy,spell,76.3,60.73,2.9,79.57
+mind,Singularity,singularity,spell,61.2,48.73,1.54,79.57
+mind,Turn to Dust,turn-to-dust,spell,54.8,43.6,1.84,79.57
+mind,Bellows Breath,bellows-breath,spell,39.1,31.08,2.27,79.57
+mind,Wages of Pain,wages-of-pain,spell,36.4,28.97,2.22,79.57
+mind,Eclipse,eclipse,spell,32.4,25.79,1.28,79.57
+mind,Smoke Screen,smoke-screen,spell,27.5,21.86,1.35,79.57
+mind,Unchecked Power,unchecked-power,spell,27.4,21.82,1.39,79.57
+mind,Deadly Flourish,deadly-flourish,spell,24.0,19.08,2.49,79.57
+mind,Sprite Burst,sprite-burst,spell,23.7,18.84,2.3,79.57
+mind,Time Warp,time-warp,spell,20.9,16.65,1.88,79.57
+body,Sabotage,sabotage,spell,92.5,70.43,2.49,76.11
+body,Punch First,punch-first,spell,85.9,65.38,2.64,76.11
+body,Challenge,challenge,spell,80.7,61.45,2.03,76.11
+body,Unyielding Spirit,unyielding-spirit,spell,29.0,22.1,1.48,76.11
+body,Repulse,repulse,spell,27.2,20.71,1.64,76.11
+body,Primal Strength,primal-strength,spell,24.5,18.68,1.03,76.11
+body,Rampage,rampage,spell,21.2,16.1,2.04,76.11
+body,Grim Resolve,grim-resolve,spell,20.9,15.94,2.07,76.11
+chaos,Star-Crossed,star-crossed,spell,88.0,83.74,2.51,95.11
+chaos,Stacked Deck,stacked-deck,spell,83.7,79.61,2.69,95.11
+chaos,Gust,gust,spell,79.5,75.6,2.24,95.11
+chaos,Ride the Wind,ride-the-wind,spell,66.8,63.51,2.09,95.11
+chaos,Hard Bargain,hard-bargain,spell,56.9,54.09,1.46,95.11
+chaos,Switcheroo,switcheroo,spell,51.6,49.05,1.49,95.11
+chaos,Abandon,abandon,spell,44.9,42.73,1.24,95.11
+chaos,Flash,flash,spell,36.1,34.38,1.6,95.11
+chaos,Acceptable Losses,acceptable-losses,spell,34.7,33.03,1.77,95.11
+chaos,Rebuke,rebuke,spell,24.3,23.09,1.3,95.11
+order,Hidden Blade,hidden-blade,spell,82.7,51.47,2.47,62.24
+order,Salvage,salvage,spell,80.7,50.24,2.25,62.24
+order,Cull the Weak,cull-the-weak,spell,55.2,34.34,2.57,62.24
+order,Sacrifice,sacrifice,spell,39.3,24.48,2.49,62.24
+order,Shadow's Call,shadows-call,spell,33.1,20.63,2.02,62.24
+order,Deathgrip,deathgrip,spell,29.5,18.36,1.95,62.24
+order,Imperial Decree,imperial-decree,spell,22.0,13.67,2.4,62.24

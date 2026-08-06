@@ -1,0 +1,33 @@
+# Kennen Chaos/Order (Vendetta tourney, 100 players)
+Legend: Kennen, Heart of the Tempest
+Champion: Kennen, Storm of Shuriken
+Main Deck:
+3x Fizz, Trickster
+2x Gust
+1x Invert Timelines
+2x Last Rites
+3x Lightning Rush
+3x Nocturne, Horrifying
+1x Rebuke
+3x Rhasa the Sunderer
+3x Ride the Wind
+3x Seal of Discord
+1x Shadow Order Disciple
+1x Shadows of the Past
+3x Stacked Deck
+2x Star-Crossed
+2x Switcheroo
+3x Traveling Merchant
+3x Treasure Hunter
+Battlefields:
+1x Minefield
+1x Sandswept Tomb
+1x Zaun Warrens
+Runes:
+9x Chaos Rune
+3x Order Rune
+Sideboard:
+2x Abandon
+2x Downwell
+3x Ravenbloom Prefect
+3x Salvage

@@ -1,0 +1,32 @@
+# Master Yi Body/Calm (Vendetta tourney, 100 players)
+Legend: Master Yi, Wuju Bladesman
+Champion: Master Yi, Tempered
+Main Deck:
+3x Charm
+3x Defy
+3x Discipline
+3x En Garde
+3x First Mate
+3x Lonely Poro
+3x Pit Rookie
+3x Punch First
+1x Rampage
+3x Rengar, Trophy Hunter
+2x Ruin Runner
+3x Sabotage
+3x Scuttle Crab
+1x Twilight Shroud
+2x Zhonya's Hourglass
+Battlefields:
+1x Emperor's Dais
+1x Seat of Power
+1x Star Spring
+Runes:
+6x Body Rune
+6x Calm Rune
+Sideboard:
+2x Decree of Focus
+3x Decree of Strength
+3x Disarming Rake
+1x Rampage
+1x Ruin Runner

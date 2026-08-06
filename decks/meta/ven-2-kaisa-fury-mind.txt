@@ -1,0 +1,37 @@
+# Kai'Sa Fury/Mind (Vendetta tourney, 100 players)
+Legend: Kai'sa, Daughter of the Void
+Champion: Kai'Sa, Survivor
+Main Deck:
+1x Bellows Breath
+1x Brittle Steel
+1x Eclipse
+3x Falling Star
+3x Ferrous Forerunner
+3x Hextech Ray
+3x Lecturing Yordle
+2x Noxus Hopeful
+3x Plundering Poro
+2x Pouty Poro
+1x Progress Day
+2x Singularity
+3x Stupefy
+2x Temporal Breach
+3x Thousand-Tailed Watcher
+2x Time Warp
+1x Unchecked Power
+3x Watchful Sentry
+Battlefields:
+1x Rockfall Path
+1x The Candlelit Sanctum
+1x Void Gate
+Runes:
+7x Fury Rune
+5x Mind Rune
+Sideboard:
+1x Bellows Breath
+1x Brittle Steel
+2x Brynhir Thundersong
+2x Mel, Newly Awakened
+1x Progress Day
+2x Thermo Beam
+1x Unchecked Power

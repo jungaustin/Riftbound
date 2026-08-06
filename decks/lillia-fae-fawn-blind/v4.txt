@@ -1,0 +1,40 @@
+Legend:
+1 Lillia - Bashful Bloom
+
+Champion:
+1 Lillia - Fae Fawn
+
+MainDeck:
+2 Lillia - Fae Fawn
+3 Petal Pixie
+3 Scuttle Crab
+3 Trevor Snoozebottom
+3 Sprite Fountain
+3 Sprite Call
+3 Stupefy
+3 Defy
+3 Lilting Lullaby
+3 Soul Shepherd
+2 Smoke and Mirrors
+2 Janna - Savior
+2 Heart of Dark Ice
+2 Riptide Rex
+2 Thousand-Tailed Watcher
+
+Battlefields:
+1 Dusk Rose Lab
+1 Emperor's Dais
+1 Hall of Legends
+
+Rune Pool:
+7 Mind Rune
+5 Calm Rune
+
+Sideboard:
+2 Disarming Rake
+2 Crescent Strike
+2 Akali, Silent
+1 Riptide Rex
+1 Falling Comet
+1 Turn to Dust
+1 LeBlanc - Everywhere At Once

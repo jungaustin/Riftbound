@@ -1,0 +1,36 @@
+# Lux Mind/Order
+Legend: Lux, Lady of Luminosity
+Champion: Lux, Crownguard
+Main Deck:
+1x Cull the Weak
+3x Ekko, Recurrent
+1x Fiora, Worthy
+3x Forge of the Future
+3x Lecturing Yordle
+3x Progress Day
+1x Promising Future
+1x Rally the Troops
+1x Renata Glasc, Mastermind
+3x Retreat
+3x Sacrifice
+3x Shadow's Call
+3x Soaring Scout
+1x Sprite Burst
+3x Stupefy
+2x Sumpworks Map
+1x The Ruination
+3x Watchful Sentry
+Battlefields:
+1x Aspirant's Climb
+1x Forgotten Monument
+1x The Papertree
+Runes:
+6x Mind Rune
+6x Order Rune
+Sideboard:
+1x Ashe, Focused
+2x Cull the Weak
+2x Sprite Burst
+1x Sumpworks Map
+1x The Ruination
+1x Vi, Peacekeeper

@@ -1,0 +1,101 @@
+domain,card,slug,type,inclusion_pct,raw_popularity_pct,copies_per_deck,divisor_rune_pct
+fury,Falling Star,falling-star,spell,77.7,35.93,2.31,46.26
+fury,Noxus Hopeful,noxus-hopeful,unit,71.7,33.19,2.7,46.26
+fury,Ferrous Forerunner,ferrous-forerunner,unit,70.5,32.63,2.25,46.26
+fury,"Kai'Sa, Survivor",kaisa-survivor,unit,55.1,25.48,2.23,46.26
+fury,Brynhir Thundersong,brynhir-thundersong,unit,47.5,21.98,1.64,46.26
+fury,Thermo Beam,thermo-beam,spell,44.9,20.75,1.39,46.26
+fury,Cleave,cleave,spell,44.6,20.63,1.97,46.26
+fury,Inferna,inferna,unit,44.2,20.43,2.66,46.26
+fury,"Darius, Trifarian",darius-trifarian,unit,36.2,16.73,1.75,46.26
+fury,Brittle Steel,brittle-steel,spell,30.9,14.31,1.71,46.26
+fury,Long Sword,long-sword,gear,29.6,13.67,1.93,46.26
+fury,"Pyke, Dockside Butcher",pyke-dockside-butcher,unit,28.7,13.28,1.78,46.26
+fury,Against the Odds,against-the-odds,spell,23.7,10.97,1.26,46.26
+fury,"Rengar, Pouncing",rengar-pouncing,unit,22.8,10.57,2.21,46.26
+fury,Void Seeker,void-seeker,spell,22.2,10.29,1.67,46.26
+fury,"Rek'Sai, Breacher",reksai-breacher,unit,20.1,9.3,1.3,46.26
+calm,Defy,defy,spell,99.5,99.52,2.96,100.0
+calm,Discipline,discipline,spell,97.5,97.5,2.95,100.0
+calm,Charm,charm,spell,91.1,91.1,2.38,100.0
+calm,Scuttle Crab,scuttle-crab,unit,76.3,76.31,2.7,100.0
+calm,En Garde,en-garde,spell,73.8,73.77,2.2,100.0
+calm,Zhonya's Hourglass,zhonyas-hourglass,gear,64.9,64.94,1.93,100.0
+calm,Not So Fast,not-so-fast,spell,63.3,63.28,1.57,100.0
+calm,Disarming Rake,disarming-rake,unit,61.5,61.49,2.03,100.0
+calm,Back Off,back-off,spell,43.4,43.44,1.72,100.0
+calm,Lonely Poro,lonely-poro,unit,43.1,43.08,2.84,100.0
+calm,"Irelia, Fervent",irelia-fervent,unit,33.0,32.95,1.58,100.0
+calm,Guardian Angel,guardian-angel,gear,31.4,31.44,2.13,100.0
+calm,Stellacorn Herder,stellacorn-herder,unit,26.1,26.11,2.86,100.0
+calm,Vilemaw,vilemaw,unit,25.2,25.16,1.46,100.0
+calm,Adaptatron,adaptatron,unit,21.7,21.7,1.83,100.0
+mind,Stupefy,stupefy,spell,76.3,60.73,2.9,79.57
+mind,Thousand-Tailed Watcher,thousand-tailed-watcher,unit,65.1,51.79,2.1,79.57
+mind,Singularity,singularity,spell,61.2,48.73,1.54,79.57
+mind,Turn to Dust,turn-to-dust,spell,54.8,43.6,1.84,79.57
+mind,Ravenbloom Student,ravenbloom-student,unit,45.7,36.37,2.83,79.57
+mind,Sprite Fountain,sprite-fountain,gear,43.4,34.5,2.39,79.57
+mind,Bellows Breath,bellows-breath,spell,39.1,31.08,2.27,79.57
+mind,Wages of Pain,wages-of-pain,spell,36.4,28.97,2.22,79.57
+mind,Eclipse,eclipse,spell,32.4,25.79,1.28,79.57
+mind,"Hwei, Brooding Painter",hwei-brooding-painter,unit,32.2,25.6,2.87,79.57
+mind,"Diana, Lunari",diana-lunari,unit,27.9,22.22,1.22,79.57
+mind,Smoke Screen,smoke-screen,spell,27.5,21.86,1.35,79.57
+mind,Unchecked Power,unchecked-power,spell,27.4,21.82,1.39,79.57
+mind,Deadly Flourish,deadly-flourish,spell,24.0,19.08,2.49,79.57
+mind,Sprite Burst,sprite-burst,spell,23.7,18.84,2.3,79.57
+mind,Watchful Sentry,watchful-sentry,unit,23.7,18.84,2.86,79.57
+mind,Plundering Poro,plundering-poro,unit,21.9,17.45,2.46,79.57
+mind,Time Warp,time-warp,spell,20.9,16.65,1.88,79.57
+body,Sabotage,sabotage,spell,92.5,70.43,2.49,76.11
+body,Punch First,punch-first,spell,85.9,65.38,2.64,76.11
+body,Challenge,challenge,spell,80.7,61.45,2.03,76.11
+body,"Rengar, Trophy Hunter",rengar-trophy-hunter,unit,70.9,53.93,2.7,76.11
+body,First Mate,first-mate,unit,63.8,48.57,2.54,76.11
+body,"Akshan, Mischievous",akshan-mischievous,unit,59.8,45.55,1.94,76.11
+body,Pit Rookie,pit-rookie,unit,55.8,42.45,2.52,76.11
+body,Ruin Runner,ruin-runner,unit,54.9,41.77,2.61,76.11
+body,"Master Yi, Tempered",master-yi-tempered,unit,45.7,34.82,1.04,76.11
+body,"Fiora, Peerless",fiora-peerless,unit,38.4,29.25,2.16,76.11
+body,Unyielding Spirit,unyielding-spirit,spell,29.0,22.1,1.48,76.11
+body,Repulse,repulse,spell,27.2,20.71,1.64,76.11
+body,Elder Dragon,elder-dragon,unit,25.2,19.16,2.75,76.11
+body,Primal Strength,primal-strength,spell,24.5,18.68,1.03,76.11
+body,Irresistible Faefolk,irresistible-faefolk,unit,21.4,16.3,2.9,76.11
+body,Rampage,rampage,spell,21.2,16.1,2.04,76.11
+body,Grim Resolve,grim-resolve,spell,20.9,15.94,2.07,76.11
+chaos,Star-Crossed,star-crossed,spell,88.0,83.74,2.51,95.11
+chaos,Stacked Deck,stacked-deck,spell,83.7,79.61,2.69,95.11
+chaos,"Vex, Apathetic",vex-apathetic,unit,82.5,78.46,1.89,95.11
+chaos,Gust,gust,spell,79.5,75.6,2.24,95.11
+chaos,Ride the Wind,ride-the-wind,spell,66.8,63.51,2.09,95.11
+chaos,Tideturner,tideturner,unit,66.6,63.39,2.74,95.11
+chaos,"Fizz, Trickster",fizz-trickster,unit,60.4,57.43,1.89,95.11
+chaos,Hard Bargain,hard-bargain,spell,56.9,54.09,1.46,95.11
+chaos,Switcheroo,switcheroo,spell,51.6,49.05,1.49,95.11
+chaos,"Kha'Zix, Mutating Horror",khazix-mutating-horror,unit,51.0,48.49,1.48,95.11
+chaos,Abandon,abandon,spell,44.9,42.73,1.24,95.11
+chaos,Flash,flash,spell,36.1,34.38,1.6,95.11
+chaos,Acceptable Losses,acceptable-losses,spell,34.7,33.03,1.77,95.11
+chaos,Boots of Swiftness,boots-of-swiftness,gear,34.6,32.95,2.27,95.11
+chaos,Baron Nashor,baron-nashor,unit,33.7,32.07,1.45,95.11
+chaos,Traveling Merchant,traveling-merchant,unit,33.5,31.88,2.34,95.11
+chaos,"Vex, Cheerless",vex-cheerless,unit,30.0,28.5,1.38,95.11
+chaos,Rebuke,rebuke,spell,24.3,23.09,1.3,95.11
+chaos,Ravenbloom Prefect,ravenbloom-prefect,unit,22.9,21.76,2.08,95.11
+order,Hidden Blade,hidden-blade,spell,82.7,51.47,2.47,62.24
+order,Salvage,salvage,spell,80.7,50.24,2.25,62.24
+order,"Vi, Peacekeeper",vi-peacekeeper,unit,73.5,45.75,2.27,62.24
+order,"Ashe, Focused",ashe-focused,unit,56.7,35.29,1.74,62.24
+order,Cull the Weak,cull-the-weak,spell,55.2,34.34,2.57,62.24
+order,Sacrifice,sacrifice,spell,39.3,24.48,2.49,62.24
+order,Shadow's Call,shadows-call,spell,33.1,20.63,2.02,62.24
+order,Deathgrip,deathgrip,spell,29.5,18.36,1.95,62.24
+order,Honest Broker,honest-broker,unit,26.5,16.49,2.54,62.24
+order,Harnessed Dragon,harnessed-dragon,unit,25.2,15.7,2.49,62.24
+order,Soaring Scout,soaring-scout,unit,24.9,15.5,2.91,62.24
+order,B.F. Sword,b-f-sword,gear,24.7,15.38,2.65,62.24
+order,Carrion Dredger,carrion-dredger,unit,23.6,14.71,2.76,62.24
+order,Imperial Decree,imperial-decree,spell,22.0,13.67,2.4,62.24
+order,Rift Herald,rift-herald,unit,20.3,12.64,2.31,62.24

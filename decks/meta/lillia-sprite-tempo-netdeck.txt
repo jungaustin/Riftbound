@@ -1,0 +1,34 @@
+Legend: Lillia - Bashful Bloom
+Champion: Lillia - Fae Fawn
+Main Deck:
+3x Defy
+3x Discipline
+3x Stupefy
+3x Ravenbloom Student
+3x Scuttle Crab
+3x Sprite Burst
+3x Sprite Fountain
+2x Charm
+2x En Garde
+2x Mask of Foresight
+2x Singularity
+2x Thousand-Tailed Watcher
+2x Heart of Dark Ice
+2x Smoke and Mirrors
+1x Sprite Call
+1x Unchecked Power
+1x Eclipse
+1x Lilting Lullaby
+Battlefields:
+1x Seat of Power
+1x Black Flame Altar
+1x Dusk Rose Lab
+Runes:
+7x Mind Rune
+5x Calm Rune
+Sideboard:
+2x Disarming Rake
+2x Janna - Savior
+2x Bellows Breath
+1x Unchecked Power
+1x Lilting Lullaby

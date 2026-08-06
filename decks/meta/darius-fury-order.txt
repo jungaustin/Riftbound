@@ -1,0 +1,34 @@
+# Darius Fury/Order
+Legend: Darius, Hand of Noxus
+Champion: Darius, Trifarian
+Main Deck:
+2x Blood Rush
+2x Falling Star
+3x Hidden Blade
+3x Honest Broker
+2x Imperial Decree
+2x Inferna
+3x Noxus Hopeful
+3x Rally the Troops
+2x Rengar, Unseen
+2x Salvage
+2x Seal of Unity
+2x Shadow's Call
+2x Spectral Matron
+3x Trifarian Gloryseeker
+3x Vanguard Captain
+3x Vi, Peacekeeper
+Battlefields:
+1x Monastery of Hirana
+1x The Arena's Greatest
+1x Trifarian War Camp
+Runes:
+5x Fury Rune
+7x Order Rune
+Sideboard:
+1x Brynhir Thundersong
+2x Cull the Weak
+2x Ferrous Forerunner
+1x Noxian Guillotine
+1x Thermo Beam
+1x Vengeance

@@ -1,0 +1,12 @@
+slug,legend_name,domain_a,domain_b,deck_count_unleashed,deck_count_vendetta,presence_status,notes
+irelia-blade-dancer,"Irelia, Blade Dancer",calm,chaos,1492,29,COMPLETE,"stats-page base 1492; decklist index showed 6175 all-format; Vendetta metashare ~10%"
+master-yi-wuju-bladesman,"Master Yi, Wuju Bladesman",body,calm,1291,24,PARTIAL,"re-fetch — current rows came from a summary"
+reksai-void-burrower,"Rek'Sai, Void Burrower",fury,body,253,,PARTIAL,"re-fetch — only anchor for Fury so far"
+diana-scorn-of-the-moon,"Diana, Scorn of the Moon",mind,chaos,,,MISSING,"~2005-2434 decks reported; page was bot-blocked"
+leblanc-deceiver,"LeBlanc, Deceiver",mind,order,1884,,MISSING,"primary Order anchor; page was bot-blocked"
+azir-emperor-of-the-sands,"Azir, Emperor of the Sands",calm,order,1170,,MISSING,"second Order anchor"
+lillia-bashful-bloom,"Lillia, Bashful Bloom",calm,mind,,,MISSING,"seen in tournament results"
+vex-gloomist,"Vex, Gloomist",,,,,MISSING,"domains unconfirmed — verify"
+ivern-green-father,"Ivern, Green Father",calm,order,,,MISSING,"domain pair from deck listing"
+zed-master-of-shadows,"Zed, Master of Shadows",,,,,MISSING,"domains unconfirmed"
+kennen,"Kennen",,,,25,MISSING,"Vendetta-era; domains unconfirmed"

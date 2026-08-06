@@ -1,0 +1,27 @@
+{
+  "source": "https://riftbound.example/rules/banned-cards (Riot official rules site, Banned Cards tab)",
+  "note": "Riot bans outright rather than restricting - there is no restricted list.",
+  "effective": "2026-07-24",
+  "recorded": "2026-08-05",
+  "constructed": [
+    {"name": "Aspirant's Climb", "type": "Battlefield"},
+    {"name": "Obelisk of Power", "type": "Battlefield"},
+    {"name": "Reaver's Row", "type": "Battlefield"},
+    {"name": "The Arena's Greatest", "type": "Battlefield"},
+    {"name": "The Dreaming Tree", "type": "Battlefield"},
+    {"name": "Scrapheap", "type": "Gear"},
+    {"name": "Called Shot", "type": "Spell"},
+    {"name": "Fight or Flight", "type": "Spell"},
+    {"name": "Draven - Vanquisher", "type": "Unit"},
+    {"name": "Stealthy Pursuer", "type": "Unit"}
+  ],
+  "constructed_2v2_only": [
+    {
+      "name": "Master Yi - Wuju Bladesman",
+      "type": "Legend",
+      "printing": "Starter",
+      "reason": "overshadowing every other 2v2 Legend option",
+      "note": "Banned as the Starter printing specifically. 2v2 Constructed only; legal in 1v1."
+    }
+  ]
+}

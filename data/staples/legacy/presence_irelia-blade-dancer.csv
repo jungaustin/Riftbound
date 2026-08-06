@@ -1,0 +1,131 @@
+card,category,avg_copies,presence_pct,topcut_x
+# Source: https://riftdecks.com/legends/irelia-blade-dancer/stats
+# Legend: Irelia, Blade Dancer | Domains: calm, chaos | Base: 1492 decks
+# Metagame toggle: Unleashed | Board: main | Read: 2026-08-03 | Provenance: DIRECT FETCH, verbatim
+Discipline,Core,3.0,99.66,1.00
+Defy,Core,2.9,99.60,1.00
+Defiant Dance,Core,3.0,99.20,1.01
+Boots of Swiftness,Core,2.2,98.53,1.01
+"Irelia, Fervent",Core,1.0,97.92,1.20
+En Garde,Core,2.2,95.98,1.01
+Charm,Core,2.1,95.58,1.01
+Ride the Wind,Core,1.9,94.37,0.99
+Scuttle Crab,Core,2.7,92.83,1.00
+Stellacorn Herder,Core,2.8,89.14,1.02
+Not So Fast,Core,1.5,84.38,0.99
+Guardian Angel,Core,2.4,82.24,1.00
+Star-Crossed,Core,1.6,77.08,1.00
+Tideturner,Core,2.4,76.54,1.02
+Gust,Core,1.5,73.93,0.98
+Stacked Deck,Core,1.9,61.26,1.01
+"Vex, Apathetic",Flex,1.6,59.79,1.01
+Zhonya's Hourglass,Flex,1.7,59.05,1.00
+Flash,Flex,1.2,46.45,0.97
+Lonely Poro,Flex,2.3,42.96,1.07
+Adaptatron,Flex,1.0,41.15,1.04
+The Syren,Trap,1.0,34.45,0.89
+Edge of Night,Flex,1.1,26.27,1.02
+"Fizz, Trickster",Flex,1.0,23.86,1.14
+Back Off,Flex,1.2,20.98,0.96
+Hard Bargain,Flex,1.0,20.24,0.95
+Find Your Center,Flex,2.4,20.11,1.03
+"Draven, Audacious",Flex,1.3,16.62,0.81
+Rebuke,Flex,1.1,15.28,1.10
+Baron Nashor,Flex,1.9,13.67,1.00
+Abandon,Flex,1.2,11.46,0.99
+Heart of Dark Ice,Flex,1.0,11.39,0.90
+Mindsplitter,Flex,1.6,11.33,1.03
+Tricksy Tentacles,Flex,1.0,7.98,0.88
+Tasty Faefolk,Flex,1.9,6.37,1.01
+Sneaky Deckhand,Gem,2.7,5.03,1.13
+"Vex, Cheerless",Fringe,1.2,4.96,1.02
+Switcheroo,Fringe,1.1,4.62,0.91
+Honeyfruit,Fringe,1.9,4.09,0.64
+Invert Timelines,Fringe,1.2,4.02,0.98
+"Kha'Zix, Mutating Horror",Fringe,1.9,3.69,0.62
+Windsinger,Fringe,1.3,3.35,0.91
+"Pyke, Returned",Fringe,1.3,3.28,1.09
+"Evelynn, Entrancing",Fringe,1.5,3.15,0.99
+Disarming Rake,Gem,1.1,2.75,1.14
+Spirit Wheel,Fringe,1.1,2.48,0.76
+"Yasuo, Windrider",Fringe,1.1,2.48,0.96
+"Diana, No Longer Human",Fringe,1.6,2.21,0.82
+Vilemaw,Fringe,1.6,1.47,0.75
+Pack of Wonders,Fringe,2.1,1.41,0.84
+Bewitching Spirit,Fringe,2.2,1.34,0.94
+Emperor's Divide,Fringe,1.5,1.34,1.01
+Meditation,Fringe,1.9,1.34,0.65
+Treasure Hunter,Fringe,2.2,1.27,0.81
+Existential Dread,Fringe,1.3,1.21,0.76
+Factory Recall,Fringe,1.1,1.21,0.83
+Overzealous Fan,Fringe,2.5,1.01,0.74
+Traveling Merchant,Gem,2.7,1.01,1.49
+Treasure Trove,Fringe,2.9,1.01,0.74
+"Ezreal, Prodigy",Fringe,2.3,0.94,0.67
+Forgotten Signpost,Fringe,1.3,0.94,0.67
+Whiteflame Protector,Fringe,1.1,0.94,0.76
+Wuju Apprentice,Fringe,2.9,0.80,0.81
+Doran's Ring,Fringe,1.0,0.74,1.02
+Last Rites,Fringe,1.0,0.74,0.83
+Clockwork Keeper,Fringe,2.0,0.67,0.76
+Feral Strength,Fringe,1.7,0.67,1.06
+Skyward Strike,Fringe,1.6,0.67,0.76
+Block,Fringe,1.1,0.60,0.89
+Lunar Boon,Fringe,1.4,0.54,0.92
+"Nami, Headstrong",Fringe,1.5,0.54,0.82
+Seal of Discord,Fringe,2.4,0.54,0.82
+"Irelia, Graceful",Fringe,1.0,0.47,0.74
+Beast Below,Gem,1.0,0.40,1.11
+Bone Skewer,Fringe,1.3,0.40,0.88
+Flurry of Feathers,Fringe,1.0,0.40,0.99
+Mister Root,Fringe,2.3,0.40,0.77
+Seal of Focus,Fringe,1.5,0.40,0.77
+Combat Experience,Fringe,2.2,0.34,0.80
+Isolate,Fringe,1.6,0.34,0.80
+Rhasa the Sunderer,Gem,2.0,0.34,1.38
+Mutated Mouser,Fringe,2.5,0.27,0.83
+Scryer's Bloom,Fringe,2.0,0.27,0.83
+Cull,Fringe,1.3,0.20,1.12
+Desert's Call,Fringe,2.0,0.20,1.00
+"Sona, Harmonious",Fringe,2.7,0.20,1.00
+Svellsongur,Fringe,1.7,0.20,0.87
+"Teemo, Scout",Fringe,1.0,0.20,1.00
+"Yuumi, Magical Cat",Fringe,1.7,0.20,0.87
+Angler Beast,Fringe,1.0,0.13,0.91
+"Annie, Stubborn",Fringe,1.0,0.13,1.04
+"Aphelios, Exalted",Fringe,1.5,0.13,0.91
+Cemetery Attendant,Fringe,1.0,0.13,0.91
+Herald of Spring,Fringe,2.0,0.13,0.91
+Insightful Investigator,Fringe,2.0,0.13,0.91
+Possession,Fringe,1.0,0.13,0.91
+Trevor Snoozebottom,Fringe,2.0,0.13,1.04
+Zaunite Bouncer,Fringe,1.0,0.13,0.91
+Acceptable Losses,Fringe,2.0,0.07,0.95
+Alpha Wildclaw,Fringe,1.0,0.07,0.95
+"Azir, Ascendant",Fringe,3.0,0.07,0.95
+Baron Pit,Fringe,1.0,0.07,0.95
+"Blitzcrank, Impassive",Fringe,1.0,0.07,0.95
+Conscription,Fringe,1.0,0.07,0.95
+Downwell,Fringe,2.0,0.07,0.95
+Fight or Flight,Fringe,1.0,0.07,0.95
+Frisky Hunter,Fringe,2.0,0.07,0.95
+Guardian of the Passage,Fringe,2.0,0.07,0.95
+Heedless Resurrection,Fringe,1.0,0.07,0.95
+"Ivern, Nurturer",Fringe,3.0,0.07,0.95
+"Jax, Unmatched",Fringe,3.0,0.07,0.95
+Last Stand,Fringe,1.0,0.07,0.95
+Legion Quartermaster,Fringe,2.0,0.07,1.09
+"Leona, Zealot",Fringe,1.0,0.07,0.95
+"Lillia, Protector of Dreams",Fringe,3.0,0.07,0.95
+Mask of Foresight,Fringe,3.0,0.07,0.95
+"Ornn, Blacksmith",Fringe,3.0,0.07,0.95
+Sinister Poro,Fringe,1.0,0.07,0.95
+"Sivir, Mercenary",Fringe,1.0,0.07,0.95
+Stalwart Poro,Fringe,1.0,0.07,0.95
+Stand United,Fringe,1.0,0.07,0.95
+Sterak's Gage,Fringe,1.0,0.07,0.95
+"Syndra, Transcendent",Fringe,1.0,0.07,0.95
+Thwonk!,Fringe,1.0,0.07,0.95
+"Vex, Mocking",Fringe,3.0,0.07,0.95
+Wielder of Water,Fringe,2.0,0.07,0.95
+Wind Wall,Fringe,1.0,0.07,0.95
