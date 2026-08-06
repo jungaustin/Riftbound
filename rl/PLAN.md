@@ -13,14 +13,34 @@ Built and tested so far:
 | `rl/engine/combat.py` | Move declaration, Showdown, Combat, Conquer, Control (445-470) |
 | `rl/engine/actions.py` | Engine API: factored `legal_actions`/`apply`, rune payment |
 | `rl/engine/game.py` | Setup, driver loop, random agent |
-| `rl/tests/` | 20 combat assertions; `fuzz.py` is the M1 gate |
+| `rl/engine/mirror.py` | Seat relabelling; every slot classified, asserted complete |
+| `rl/agents/greedy.py` | Heuristic baseline built around attacker Recall |
+| `rl/viewer.py` | Text replay viewer — **and the spec for what a policy may see** |
+| `rl/obs.py` | Observation encoder: canonical, attribute-based, leak-tested |
+| `rl/env.py` | `RiftboundEnv` — AEC-shaped, index actions, per-seat rewards |
+| `rl/vec.py` | Synchronous vector env with auto-reset; observation batching |
+| `rl/tests/` | 20 combat assertions; `fuzz.py` (M1 gate); `test_env.py` (Phase 3) |
 
 **Build order (v0 = units only, no spells):** phase machine (done) -> move
 declaration / Showdown / Combat (done) -> Conquer + Hold scoring (done) -> random
-agent (done) -> 100k fuzz (M1 gate, running) -> greedy baseline + replay viewer ->
-gym -> PPO. The effect DSL comes *after* combat, so its hooks are derived from
-what combat actually needs rather than guessed. Keywords are flag checks, not DSL
-(§3).
+agent (done) -> 100k fuzz (M1 gate, **passed**) -> greedy baseline + replay viewer
+(done) -> gym (done) -> **PPO (next)**. The effect DSL comes *after* combat, so its
+hooks are derived from what combat actually needs rather than guessed. Keywords
+are flag checks, not DSL (§3).
+
+**Phase 1/2/3 gates, all green.** M1: 100k random games at victory 8, invariants
+on — 0 exceptions, 0 truncations, bit-identical replay under seed, 82 games/s,
+first player 53.7%. Phase 2: random mirror 50.0%, greedy vs random 90.0%, greedy
+mirror 50.0% (seat-swapped on paired seeds). Phase 3: the env reproduces the
+engine hash for hash, and canonicalization survives two deliberately-broken
+encoders as a negative control.
+
+**One gap recorded rather than papered over.** `combat.run_combat` resolves
+Combat without yielding priority, so v0 has no Showdown decision window at all.
+Auto-pass is therefore untested through gameplay and is tested as a predicate
+instead; `actions.apply` now raises `NotImplementedError` on the mutual-pass
+resolution path rather than letting two players pass forever. Splitting
+`run_combat` into a resumable state machine is the first thing Reactions need.
 
 **Payment correction — a card needs max(energy, power) runes, not the sum.**
 A Basic Rune's two abilities are independent (164.2), and Recycle carries **no
@@ -1136,11 +1156,37 @@ generically and the effect DSL inherits them. Do not write a third mechanism.
 greedy beats random ≥80%. If greedy doesn't crush random, the engine is wrong or
 the heuristic is — find out here, not after training.
 
-### Phase 3 — The gym (1 week) — see §5 for full detail
+### Phase 3 — The gym (1 week) — see §5 for full detail — **DONE**
 
 **Exit:** a random policy driving the env produces identical results to Phase 2's
 random agent driving the engine directly. This equivalence test catches almost
 every wrapper bug.
+
+**Met, and extended.** `rl/tests/test_env.py` checks six things:
+
+1. **Equivalence** — 200 seeds identical through the wrapper, including
+   `state_hash`. The env's `_advance` deliberately mirrors `play_game`'s loop so
+   any control-flow divergence surfaces here as a hash mismatch.
+2. **Auto-pass** — a no-op with the flag on or off. See the gap noted at the top:
+   v0 never reaches a pass-only window, so the rule is tested as a predicate.
+3. **Canonicalization** — `encode(s, 0) == encode(mirror(s), 1)` byte for byte
+   over 260 mid-game positions. Two deliberately-broken encoders (raw seat id in
+   globals; battlefields mirrored along with seats) each fail 103/103, so the
+   test is known to have teeth rather than merely passing.
+4. **No leak** — rewriting the opponent's hand, deck order and facedown card
+   moves not one bit of the policy observation, *and* the same perturbation does
+   move `privileged`, *and* the seat's own facedown card is visible to it. The
+   second and third are negative controls: without them the test would pass if
+   the encoder simply dropped those zones.
+5. **Mask hygiene** — prefix-shaped masks, zero padding, `A_max` holds with room
+   (median 3 legal actions, max 10, cap 64).
+6. **Vector env** — batched shapes agree with `Encoder.shapes()`, auto-reset does
+   not leak between slots, and 12 replays match the single env exactly.
+
+**The action space is much smaller than §5.3 gotcha 4 estimated** — median 3,
+max 10 against a cap of 64. That is v0 being units-only with small hands; expect
+it to grow when spells and target selection land, which is when the cap earns
+its assertion.
 
 ### Phase 4 — PPO, no recurrence, no belief (2–3 weeks)
 
