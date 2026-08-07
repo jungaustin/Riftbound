@@ -26,7 +26,8 @@ from rl.engine.cardtable import full_table
 from rl.engine import phases
 from rl.engine.effects import (LOC_BOUND, LOC_FREE, OP_DRAW, OP_STUN,
                                OP_SWAP_LOC, SPECS, spec_for)
-from rl.engine.state import (P_ALIVE, P_LOC, GameState, base_loc, bf_loc)
+from rl.engine.state import (P_ALIVE, P_CARD, P_LOC, GameState, base_loc,
+                             bf_loc)
 
 T = full_table()
 CFG = Config()
@@ -273,5 +274,47 @@ phases.end_turn(s, CFG)
 if int(s.perms[b, P_MIGHT_MOD]) != 0 or combat.might(s, T, b) != 3:
     die("might", "a 'this turn' modifier must clear at end of turn")
 ok("modifiers expire at end of turn, like other turn-scoped effects")
+
+
+# ---------------------------------------------------------------------------
+print("\n[7] tokens: ready, Temporary, and bound to the hidden battlefield")
+from rl.engine.state import P_READY, P_CTRL
+SPRITE_CALL, SPRITE_BURST = SPECS["Sprite Call"], SPECS["Sprite Burst"]
+
+# From Hidden at battlefield 0 -> the token must arrive THERE (811.1.d.3).
+s = fresh()
+s.bf_ctrl[0] = 0
+log = resolve.resolve(s, T, CFG, SPRITE_CALL, 0, [], 0, from_hand=False)
+tok = log["tokens"]
+if len(tok) != 1:
+    die("token", f"Sprite Call makes one token, got {len(tok)}")
+if int(s.perms[tok[0], P_LOC]) != bf_loc(0):
+    die("token", "811.1.d.3 -- a token from a hidden spell must arrive at that "
+                 "battlefield")
+if int(s.perms[tok[0], P_READY]) != 1:
+    die("token", "'Play a READY 3 Might Sprite' must enter ready, not exhausted")
+if combat.might(s, T, tok[0]) != 3:
+    die("token", f"expected 3 Might, got {combat.might(s,T,tok[0])}")
+ok("Sprite Call from hiding: one ready 3-Might token, at that battlefield")
+
+# It carries [Temporary] from the token card itself, so it expires through the
+# existing Beginning-Phase path -- and that is the conquer-vs-hold inversion:
+# an empty battlefield is a lost battlefield (190.4.c).
+if not T.has(int(s.perms[tok[0], P_CARD]), "Temporary"):
+    die("token", "the Sprite token should carry [Temporary]")
+s.active = 0
+killed = phases.expire_temporary(s, T)
+if tok[0] not in killed or s.perms[tok[0], P_ALIVE] == 1:
+    die("token", "the [Temporary] token must die at the start of Beginning")
+ok("the token is [Temporary] and dies before scoring, as the inversion requires")
+
+# Sprite Burst makes two.
+s = fresh()
+log = resolve.resolve(s, T, CFG, SPRITE_BURST, 1, [], -1, from_hand=True)
+if len(log["tokens"]) != 2:
+    die("token", f"Sprite Burst makes two tokens, got {len(log['tokens'])}")
+if any(int(s.perms[i, P_CTRL]) != 1 for i in log["tokens"]):
+    die("token", "tokens must be controlled by the caster")
+ok("Sprite Burst makes two tokens for the caster")
 
 print("\n\033[32mall effect tests passed\033[0m")

@@ -55,9 +55,9 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
 
 # --- ops ------------------------------------------------------------------
 (OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT, OP_COUNTER,
- OP_NO_SPELLS) = range(6)
+ OP_NO_SPELLS, OP_CREATE_TOKEN) = range(7)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
-            "no_spells")
+            "no_spells", "create_token")
 
 # --- conditions, checked at resolution ------------------------------------
 COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY = range(3)
@@ -88,6 +88,11 @@ class Op(NamedTuple):
     # Stricter than the general floor of 0 in 143.2.b, and part of the effect
     # rather than a rule, which is why it lives on the Op.
     floor: int | None = None
+    # For OP_CREATE_TOKEN: the token card's name, and whether the created
+    # units enter ready. Units normally enter exhausted; "Play a READY
+    # 3 Might Sprite" overrides that, which is most of the card's value.
+    token: str | None = None
+    ready: bool = False
 
 
 class CardSpec(NamedTuple):
@@ -105,6 +110,8 @@ class CardSpec(NamedTuple):
 # ---------------------------------------------------------------------------
 # Each entry is a transcription of the printed text. Keep the text in the
 # comment so a future reader can check the transcription without the card.
+
+SPRITE_TOKEN = "Sprite (274) // Buff"   # 3 Might Fae unit token, [Temporary]
 
 SPECS: dict[str, CardSpec] = {
 
@@ -145,6 +152,20 @@ SPECS: dict[str, CardSpec] = {
         speed=SPEED_REACTION,
         targets=(TargetSpec(kind=TK_SPELL, max_energy=4, max_power=1),),
         ops=(Op(OP_COUNTER, target=0),),
+    ),
+
+    # [Hidden] [Action] Play a ready 3 Might Sprite unit token with [Temporary].
+    # The token card carries [Temporary] itself, so it expires through the
+    # existing Beginning-Phase path -- the conquer-vs-hold inversion.
+    "Sprite Call": CardSpec(
+        speed=SPEED_ACTION,
+        ops=(Op(OP_CREATE_TOKEN, n=1, token=SPRITE_TOKEN, ready=True),),
+    ),
+
+    # Play two ready 3 Might Sprite unit tokens with [Temporary].
+    "Sprite Burst": CardSpec(
+        speed=SPEED_MAIN,
+        ops=(Op(OP_CREATE_TOKEN, n=2, token=SPRITE_TOKEN, ready=True),),
     ),
 
     # [Hidden] [Action] [Stun] a unit.

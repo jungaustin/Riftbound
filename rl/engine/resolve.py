@@ -32,6 +32,7 @@ from rl.engine.cardtable import CardTable
 from rl.engine import combat
 from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                COND_NONE, LOC_BOUND, OP_COUNTER,
+                               OP_CREATE_TOKEN,
                                OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
                                OP_SWAP_LOC, REL_DIFFERENT_LOC, REL_NONE,
@@ -40,8 +41,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                TargetSpec)
 from rl.engine import chain
 from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, P_ALIVE,
-                             P_CARD, P_CTRL, P_LOC, GameState, bf_loc,
-                             is_battlefield)
+                             P_CARD, P_CTRL, P_LOC, GameState, base_loc,
+                             bf_loc, is_battlefield)
 
 
 def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
@@ -217,7 +218,22 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["fizzled"].append(op.op)      # this target specifically is gone
             continue
 
-        if op.op == OP_COUNTER:
+        if op.op == OP_CREATE_TOKEN:
+            # 811.1.d.3 -- "If a hidden spell causes you to play a unit, you
+            # must choose to play that unit at that battlefield." From hand the
+            # player should get the choice; v1 places at base instead. Recorded
+            # as a known approximation alongside plan_payment (PLAN.md §5.3
+            # gotcha 5), because it costs the from-hand mode most of its value
+            # while leaving the [Hidden] mode -- the actual combat trick --
+            # exactly right.
+            card = table.id_of(op.token)
+            loc = bf_loc(bound_bf) if bound_bf >= 0 else base_loc(seat)
+            made = [state.add_permanent(card, seat, loc, ready=op.ready)
+                    for _ in range(op.n)]
+            log["tokens"] = made
+            # Arriving units can stage a Combat by presence (461).
+            log.update(combat.cleanup(state, table, cfg, mover=seat, dst=loc))
+        elif op.op == OP_COUNTER:
             # Record the controller BEFORE removing the item -- Lilting
             # Lullaby's second op ("its controller can't play spells this
             # turn") runs after the item is already off the chain.
