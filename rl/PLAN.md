@@ -1249,6 +1249,37 @@ with KL spiking; that did not happen. Victory-3 play saturates at ~97%/77% by
 iteration 100, which is unsurprising — those games last **2.3 turns and 12
 decisions**, so there is not much policy there to find.
 
+### Phase 4 re-run with spells, the Chain and [Hidden] — **exit met, with two findings**
+
+Retrained at `victory_score=3` with `units_only=False` (30% spell decks) against
+a greedy baseline that now hides and uses combat tricks. 400 deals x 2 seats:
+
+| Checkpoint | vs random | vs greedy |
+|---|---|---|
+| **iter 100 (best)** | **93.1% ± 1.8%** | **69.0% ± 3.2%** |
+| iter 150 (last) | 92.8% ± 1.8% | 60.2% ± 3.4% |
+
+**1. Late training made it measurably worse against greedy.** The per-checkpoint
+sequence was 61.5 → 64.5 → 68.0 → 69.5 → 64.0 → 61.5, and the properly powered
+comparison confirms it: best and last differ by 8.8 points with non-overlapping
+intervals, while `vs_random` stayed flat. So this is not eval noise — the policy
+co-adapted to its own current self and lost ground against a *fixed, different*
+opponent. That is textbook self-play drift, and it is precisely what Phase 5's
+PFSP opponent pool exists to prevent. Note also that picking "best" by periodic
+eval is itself mild overfitting to the eval set; the honest headline is the 69%,
+but it should not be treated as a stable capability until the opponent pool
+lands.
+
+**2. Going first is worth much more at victory 3 than the curriculum assumed.**
+Self-play seat-0 win rate is **64.3% ± 5.4%** — the interval excludes 50%, so it
+is real. It is not a seat-asymmetry bug: the same network plays both seats, so
+any deviation is a property of the position. Random play shows 54.2% at victory
+3 and 48.4% at victory 8, so a stronger policy *amplifies* a tempo edge that
+only exists at the short victory score. Two consequences: the victory-3
+curriculum is a more lopsided game than the real one, and seat-swapped paired
+seeds (which `eval.duel` already does) are mandatory for every number reported
+from it — an unpaired measurement here would be off by ~14 points.
+
 **Caveat to carry forward.** Greedy is a deliberately shallow baseline (three
 rules, §Phase 2), so 74.5% against it is a floor on competence, not evidence of
 strong play. The meaningful measurements are Phase 5's Elo against held-out
