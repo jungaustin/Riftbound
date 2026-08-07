@@ -375,4 +375,49 @@ assert not combat.assignment_is_a_choice(s, T, 6, [big, small]), "6 wipes both -
 assert combat.assignment_is_a_choice(s, T, 5, [big, small]), "5 must pick one -- a choice"
 ok("gate for exposing assignment to the policy behaves as specified")
 
+
+print("[12] the Final Point (471.1.b) demands the whole board")
+CFG8 = Config().at_victory_score(8)
+
+
+def at_score(points, scored):
+    s = fresh()
+    s.points[0] = points
+    for j, v in enumerate(scored):
+        s.bf_scored[0, j] = v
+    put(s, PLAIN[2], 0, bf_loc(0))
+    return s
+
+
+# 7 points, conquering B1 having NOT scored B2 -> no point, draw a card instead.
+s = at_score(7, [0, 0])
+hand = int(s.n_hand[0])
+log = combat._establish_control(s, T, CFG8, 0)
+assert int(s.points[0]) == 7, "the Final Point must not land without the board"
+assert int(s.n_hand[0]) == hand + 1, "471.1.b -- they draw a card instead"
+assert log == [(0, "final_point_denied")], log
+ok("at 7, a lone Conquer scores nothing and draws instead")
+
+# Same, but B2 was already Scored this turn -> the Final Point lands.
+s = at_score(7, [0, 1])
+combat._establish_control(s, T, CFG8, 0)
+assert int(s.points[0]) == 8 and s.winner == 0, "every battlefield scored -> win"
+ok("at 7 with the other battlefield already Scored, the Final Point lands")
+
+# Below the threshold the restriction does not apply at all.
+s = at_score(3, [0, 0])
+combat._establish_control(s, T, CFG8, 0)
+assert int(s.points[0]) == 4, "only the FINAL point is restricted"
+ok("below 1-from-victory, Conquer is unrestricted")
+
+# 471.1.a.1 -- Hold is exempt, so it can take the Final Point alone.
+s = fresh()
+s.points[0] = 7
+s.bf_ctrl[0] = 0
+put(s, PLAIN[2], 0, bf_loc(0))
+s.active = 0
+phases.score_holds(s, CFG8)
+assert int(s.points[0]) == 8, "471.1.a.1 -- non-Conquer sources are exempt"
+ok("Hold is exempt and can take the Final Point on its own")
+
 print("\n\033[32mall combat tests passed\033[0m")

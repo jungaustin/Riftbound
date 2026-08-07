@@ -151,6 +151,17 @@ def channel(state: GameState, extra: int = 0) -> list[int]:
     return got
 
 
+def draw_for(state: GameState, seat: int, n: int = 1) -> list[int]:
+    """Draw for a specific seat. `draw` is turn-player-only; the Final Point
+    restriction (471.1.b) makes a non-turn-player draw possible."""
+    prev = state.active
+    state.active = seat
+    try:
+        return draw(state, n)
+    finally:
+        state.active = prev
+
+
 def draw(state: GameState, n: int = 1) -> list[int]:
     """Draw n; an empty Main Deck is a Burn Out and the draw still happens (315.4)."""
     seat = state.active

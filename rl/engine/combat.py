@@ -326,10 +326,31 @@ def _establish_control(state: GameState, table: CardTable, cfg: Config,
     _clear_foreign_hidden(state, i, holder)
     if not state.bf_scored[holder, i]:
         state.bf_scored[holder, i] = 1
+        if _final_point_blocked(state, cfg, holder):
+            # 471.1.b -- the Final Point cannot be taken by Conquer unless the
+            # player has Scored EVERY Battlefield this turn. Otherwise they draw
+            # a card instead of scoring. You cannot win off a single lucky
+            # conquer; the last point demands the whole board.
+            from rl.engine import phases
+            phases.draw_for(state, holder, 1)
+            scored.append((holder, "final_point_denied"))
+            return scored
         state.points[holder] += POINTS_PER_CONQUER
         state.winner = state.check_winner(cfg.victory_score)
         scored.append((holder, "conquer"))
     return scored
+
+
+def _final_point_blocked(state: GameState, cfg: Config, seat: int) -> bool:
+    """Would this Conquer be the Final Point without having Scored everywhere?
+
+    471.1.b: the restriction applies once a player is within one point of the
+    Victory Score. 471.1.a.1 exempts every non-Conquer source, so Hold, spells
+    and Burn Out points are unaffected -- only Conquer is gated.
+    """
+    if int(state.points[seat]) < cfg.victory_score - 1:
+        return False
+    return not all(state.bf_scored[seat, j] for j in range(N_BF))
 
 
 def _clear_foreign_hidden(state: GameState, i: int, holder: int) -> None:
