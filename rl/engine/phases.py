@@ -170,8 +170,19 @@ def draw(state: GameState, n: int = 1) -> list[int]:
     return drawn
 
 
-def enter_main(state: GameState) -> None:
-    """Pools empty at the start of Main (167); only the turn player may act."""
+def enter_main(state: GameState, table: CardTable | None = None,
+               cfg: Config | None = None) -> None:
+    """Pools empty at the start of Main (167); only the turn player may act.
+
+    A Cleanup also happens here. A Combat can be *staged* (461) during the
+    opponent's turn by a Reaction that moves a unit, and a Cleanup could not run
+    at the time -- 321 forbids one while Chain Items are resolving. Nothing else
+    would initiate it, so a staged combat could survive across the turn
+    boundary. This is an Open State, which is where Cleanups belong.
+    """
+    if table is not None and cfg is not None:
+        from rl.engine import combat
+        combat.cleanup(state, table, cfg, mover=-1, dst=-1)
     state.clear_pools()
     state.phase = MAIN
     state.priority = state.active
@@ -232,7 +243,7 @@ def start_turn(state: GameState, table: CardTable, cfg: Config) -> dict:
     state.phase = DRAW
     log["drew"] = draw(state)
 
-    enter_main(state)
+    enter_main(state, table, cfg)
     return log
 
 

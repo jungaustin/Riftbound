@@ -264,12 +264,24 @@ def cleanup(state: GameState, table: CardTable, cfg: Config,
     if not state.is_open:
         return log
 
-    bf = staged_combat(state)
-    if bf >= 0:
+    # A Cleanup resolves EVERY staged Combat, not just the first. v0 could only
+    # ever stage one at a time -- a single Move declaration has one destination
+    # -- so a loop was unnecessary and its absence invisible. A spell that moves
+    # a unit can stage a second one at another battlefield, and stopping after
+    # the first left that one staged but never initiated.
+    for _ in range(N_BF + 1):
+        bf = staged_combat(state)
+        if bf < 0:
+            break
         # The mover applied Contested; if this fired from something other than a
         # move, the turn player is the aggressor by default.
         attacker = mover if mover >= 0 else state.active
         log.update(run_combat(state, table, cfg, bf, attacker))
+        if state.showdown_bf >= 0:
+            return log       # combat yielded for a response; resume later
+    else:
+        raise AssertionError("more staged combats than battlefields")
+    if staged_combat(state) >= 0:
         return log
 
     # No combat: settle Control everywhere (190.4, 466.5).

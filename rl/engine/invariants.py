@@ -88,12 +88,17 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
     # staged Combat (461) that never resolved is the single most likely bug in
     # the move/showdown path, and it is invisible without this check: the
     # position just quietly stops obeying rule 466.1.a.2.
-    if state.showdown_bf < 0:
+    # ...but only in an OPEN state. 321 forbids a Cleanup while Chain Items are
+    # resolving, so a spell that moves a unit onto an enemy legitimately leaves
+    # the combat *staged but not initiated* until the Chain empties. Asserting
+    # this unconditionally was wrong: it fired on correct play once movement
+    # spells existed.
+    if state.showdown_bf < 0 and state.is_open:
         for i in range(N_BF):
             a, b = state.seats_at(N_SEATS + i)
             if a and b:
-                _fail(f"battlefield {i} has units from both seats outside combat "
-                      f"-- a staged combat was never resolved (461)")
+                _fail(f"battlefield {i} has units from both seats in an Open "
+                      f"State -- a staged combat was never initiated (460/461)")
 
     # --- scoring (rule 470) ------------------------------------------------
     if np.any((state.bf_scored < 0) | (state.bf_scored > 1)):

@@ -210,6 +210,15 @@ def apply(state: GameState, table: CardTable, cfg: Config,
         if state.n_chain > 0:
             log = chain.resolve_top(state, table, cfg)   # 340.1, one item
             chain.after_resolution(state)                # 340.2-340.4
+            if state.n_chain == 0:
+                # 340.2 -- the Chain is empty, so play returns to an Open State
+                # and a Cleanup can finally happen. It could not happen during
+                # resolution (321: "while Chain Items are Resolving, a Cleanup
+                # cannot occur"), so a spell that moved a unit onto an enemy
+                # staged a Combat that nothing had yet initiated. That left
+                # battlefields holding units from both seats outside combat.
+                log.update(combat.cleanup(state, table, cfg,
+                                          mover=int(state.active), dst=-1))
             return log
         if state.showdown_bf >= 0:
             # No Chain, so the Showdown Step itself is over and Combat resumes.

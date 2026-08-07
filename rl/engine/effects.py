@@ -38,10 +38,12 @@ SPEED_MAIN, SPEED_ACTION, SPEED_REACTION = range(3)
 SPEED_NAMES = ("main", "action", "reaction")
 
 # --- target slots ---------------------------------------------------------
-TK_UNIT, TK_BATTLEFIELD, TK_SPELL = range(3)
+TK_UNIT, TK_BATTLEFIELD, TK_SPELL, TK_LOCATION = range(4)
 
-# TK_SPELL targets a Chain Item, not a permanent. Its stored value is the
-# item's stable uid, not a row index -- see C_UID in state.py.
+# The stored value of a target slot means whatever its KIND says it means:
+# TK_UNIT a permanent row, TK_SPELL a Chain Item uid (C_UID), TK_LOCATION a
+# location int. Nothing has to disambiguate them at runtime because the slot's
+# kind is always known from the spec.
 
 W_ANY, W_FRIENDLY, W_ENEMY = range(3)      # relative to the caster
 WHO_NAMES = ("any", "friendly", "enemy")
@@ -55,9 +57,9 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
 
 # --- ops ------------------------------------------------------------------
 (OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT, OP_COUNTER,
- OP_NO_SPELLS, OP_CREATE_TOKEN) = range(7)
+ OP_NO_SPELLS, OP_CREATE_TOKEN, OP_MOVE_TO, OP_RETURN_TO_HAND) = range(9)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
-            "no_spells", "create_token")
+            "no_spells", "create_token", "move_to", "return_to_hand")
 
 # --- conditions, checked at resolution ------------------------------------
 COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY = range(3)
@@ -93,6 +95,8 @@ class Op(NamedTuple):
     # 3 Might Sprite" overrides that, which is most of the card's value.
     token: str | None = None
     ready: bool = False
+    # For OP_MOVE_TO / OP_CREATE_TOKEN: also ready the unit afterwards.
+    then_ready: bool = False
 
 
 class CardSpec(NamedTuple):
@@ -159,13 +163,49 @@ SPECS: dict[str, CardSpec] = {
     # existing Beginning-Phase path -- the conquer-vs-hold inversion.
     "Sprite Call": CardSpec(
         speed=SPEED_ACTION,
-        ops=(Op(OP_CREATE_TOKEN, n=1, token=SPRITE_TOKEN, ready=True),),
+        targets=(TargetSpec(kind=TK_LOCATION),),
+        ops=(Op(OP_CREATE_TOKEN, target=0, n=1, token=SPRITE_TOKEN, ready=True),),
     ),
 
     # Play two ready 3 Might Sprite unit tokens with [Temporary].
     "Sprite Burst": CardSpec(
         speed=SPEED_MAIN,
-        ops=(Op(OP_CREATE_TOKEN, n=2, token=SPRITE_TOKEN, ready=True),),
+        targets=(TargetSpec(kind=TK_LOCATION),),
+        ops=(Op(OP_CREATE_TOKEN, target=0, n=2, token=SPRITE_TOKEN, ready=True),),
+    ),
+
+    # [Action] Move a friendly unit and ready it.
+    "Ride The Wind": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_FRIENDLY),
+                 TargetSpec(kind=TK_LOCATION, locality=LOC_FREE)),
+        ops=(Op(OP_MOVE_TO, target=0, target_b=1, then_ready=True),),
+    ),
+
+    # Move an enemy unit.  Moving an enemy INTO your units stages a Combat by
+    # presence (461) -- the engine already handles that, so this is removal.
+    "Charm": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(who=W_ENEMY),
+                 TargetSpec(kind=TK_LOCATION, locality=LOC_FREE)),
+        ops=(Op(OP_MOVE_TO, target=0, target_b=1),),
+    ),
+
+    # [Reaction] Return a unit at a battlefield with 3 Might or less to its
+    # owner's hand.  "with 3 Might or less" is a RESTRICTION (355.9.b), so a
+    # 4-Might unit was never a legal choice and buffing in response saves it.
+    "Gust": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_ANY, at_battlefield=True, max_might=3),),
+        ops=(Op(OP_RETURN_TO_HAND, target=0),),
+    ),
+
+    # [Reaction] Return a friendly unit and an enemy unit to their owners' hands.
+    "Star-Crossed": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_FRIENDLY), TargetSpec(who=W_ENEMY)),
+        ops=(Op(OP_RETURN_TO_HAND, target=0),
+             Op(OP_RETURN_TO_HAND, target=1)),
     ),
 
     # [Hidden] [Action] [Stun] a unit.

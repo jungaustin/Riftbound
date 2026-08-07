@@ -32,17 +32,19 @@ from rl.engine.cardtable import CardTable
 from rl.engine import combat
 from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                COND_NONE, LOC_BOUND, OP_COUNTER,
-                               OP_CREATE_TOKEN,
+                               OP_CREATE_TOKEN, OP_MOVE_TO,
+                               OP_RETURN_TO_HAND,
                                OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
                                OP_SWAP_LOC, REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
-                               TK_SPELL, W_FRIENDLY, CardSpec, Op,
+                               TK_LOCATION, TK_SPELL, W_FRIENDLY,
+                               CardSpec, Op,
                                TargetSpec)
 from rl.engine import chain
-from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, P_ALIVE,
-                             P_CARD, P_CTRL, P_LOC, GameState, base_loc,
-                             bf_loc, is_battlefield)
+from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, N_BF, P_ALIVE,
+                             P_CARD, P_CTRL, P_LOC, P_READY, GameState,
+                             base_loc, bf_loc, is_battlefield)
 
 
 def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
@@ -109,10 +111,27 @@ def _spell_targets(state: GameState, table: CardTable, spec: TargetSpec,
     return out
 
 
+def _location_targets(state: GameState, spec: TargetSpec, seat: int,
+                      bound_bf: int) -> list[int]:
+    """Locations this slot may name.
+
+    811.1.d.1/d.3 -- a hidden permanent, and a unit played by a hidden spell,
+    must go to the battlefield the card was hidden at. A slot marked LOC_FREE
+    ignores that, which is what lets Ride The Wind move a unit anywhere while
+    Sprite Call's token is pinned.
+    """
+    if bound_bf >= 0 and spec.locality == LOC_BOUND:
+        return [bf_loc(bound_bf)]
+    return [base_loc(seat)] + [bf_loc(i) for i in range(N_BF)]
+
+
 def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
                   seat: int, chosen: list[int], bound_bf: int) -> list[int]:
-    """Values that may fill `slot`: permanent rows, or chain uids for TK_SPELL."""
+    """Values that may fill `slot`. Their meaning depends on the slot's kind:
+    a permanent row, a chain uid (TK_SPELL), or a location (TK_LOCATION)."""
     t = spec.targets[slot]
+    if t.kind == TK_LOCATION:
+        return _location_targets(state, t, seat, bound_bf)
     if t.kind == TK_SPELL:
         return _spell_targets(state, table, t, chosen)
     return [i for i in range(state.n_perms)
@@ -188,7 +207,9 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
     still_legal: list[int] = []
     chosen_so_far: list[int] = []
     for slot, t in enumerate(targets):
-        if spec.targets[slot].kind == TK_SPELL:
+        if spec.targets[slot].kind == TK_LOCATION:
+            ok = t >= 0
+        elif spec.targets[slot].kind == TK_SPELL:
             # Still legal iff the item is still on the chain. If someone else
             # countered it first, this one fizzles (359.3.e).
             ok = t >= 0 and chain.index_of_uid(state, t) >= 0
@@ -219,20 +240,40 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             continue
 
         if op.op == OP_CREATE_TOKEN:
-            # 811.1.d.3 -- "If a hidden spell causes you to play a unit, you
-            # must choose to play that unit at that battlefield." From hand the
-            # player should get the choice; v1 places at base instead. Recorded
-            # as a known approximation alongside plan_payment (PLAN.md §5.3
-            # gotcha 5), because it costs the from-hand mode most of its value
-            # while leaving the [Hidden] mode -- the actual combat trick --
-            # exactly right.
+            # 811.1.d.3 -- a hidden spell that plays a unit must play it at
+            # that battlefield. That is enforced by the slot's LOC_BOUND
+            # locality, so the player chooses freely from hand and is pinned
+            # from hiding, with no special case here.
             card = table.id_of(op.token)
-            loc = bf_loc(bound_bf) if bound_bf >= 0 else base_loc(seat)
+            loc = a if a >= 0 else base_loc(seat)
             made = [state.add_permanent(card, seat, loc, ready=op.ready)
                     for _ in range(op.n)]
             log["tokens"] = made
-            # Arriving units can stage a Combat by presence (461).
-            log.update(combat.cleanup(state, table, cfg, mover=seat, dst=loc))
+            # No cleanup here: 321 forbids one while Chain Items are resolving.
+            # Arriving units stage a Combat by presence (461); it is initiated
+            # by the cleanup the action layer runs once the Chain empties.
+        elif op.op == OP_MOVE_TO:
+            dst = still_legal[op.target_b] if 0 <= op.target_b < len(still_legal) else -1
+            if dst < 0:
+                log["fizzled"].append(op.op)
+                continue
+            state.perms[a, P_LOC] = dst
+            if op.then_ready:
+                state.perms[a, P_READY] = 1
+            log["moved"] = (a, dst)
+            # Staged, not initiated -- see the note in OP_CREATE_TOKEN.
+        elif op.op == OP_RETURN_TO_HAND:
+            owner = int(state.perms[a, P_CTRL])
+            card = int(state.perms[a, P_CARD])
+            state.perms[a, P_ALIVE] = 0
+            # 185.3 -- a token that leaves the board ceases to exist; it does
+            # not go to a hand. Only real cards bounce.
+            if not table.is_token(card):
+                h = int(state.n_hand[owner])
+                assert h < state.hand.shape[1], "hand overflow"
+                state.hand[owner, h] = card
+                state.n_hand[owner] = h + 1
+            log.setdefault("returned", []).append(a)
         elif op.op == OP_COUNTER:
             # Record the controller BEFORE removing the item -- Lilting
             # Lullaby's second op ("its controller can't play spells this

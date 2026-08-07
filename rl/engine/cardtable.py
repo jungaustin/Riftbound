@@ -28,6 +28,34 @@ from engine.cards import Card, card_index, find  # noqa: E402  (path set above)
 sys.path.insert(0, str(ROOT))
 from rl.config import ALL_KEYWORDS, CARD_TYPES, DOMAINS, TIER1_KEYWORDS  # noqa: E402
 
+def _token_names() -> set[str]:
+    """Names of Token cards, read from the raw JSON.
+
+    `sim/engine/cards.Card` does not carry `supertype`, and tokens matter to the
+    engine: 185.3 says a token leaving the board ceases to exist rather than
+    going to a hand or trash, so a bounce spell must not put one in hand.
+    """
+    import json
+    out: set[str] = set()
+
+    def walk(o):
+        if isinstance(o, dict):
+            if "name" in o and "type" in o:
+                if (o.get("supertype") or "").lower() == "token":
+                    out.add(o["name"])
+            else:
+                for v in o.values():
+                    walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(json.loads((ROOT / "data" / "cards.json").read_text()))
+    return out
+
+
+_TOKEN_NAMES = None
+
 _BRACKET = re.compile(r"\[([A-Za-z ]+)\]")
 _REMINDER = re.compile(r"\([^)]*\)")
 
@@ -71,6 +99,7 @@ class CardTable:
     domain_mask: np.ndarray   # uint8, bit per DOMAINS
     kw_mask: np.ndarray       # uint32, bit per ALL_KEYWORDS
     text_len: np.ndarray      # int16, reminder text stripped
+    token: np.ndarray         # bool, supertype == Token (185.3)
 
     @property
     def n(self) -> int:
@@ -84,6 +113,11 @@ class CardTable:
 
     def is_type(self, cid: int, type_name: str) -> np.ndarray | bool:
         return self.type_id[cid] == _TYPE_ID[type_name]
+
+    def is_token(self, cid: int) -> bool:
+        """185.3 -- a token that leaves the board ceases to exist rather than
+        moving to a hand, deck or trash."""
+        return bool(self.token[cid])
 
     def v1_legal(self, cid: int) -> bool:
         """True iff every keyword is Tier-1 and the text is short enough."""
@@ -116,6 +150,10 @@ class CardTable:
 
 
 def _rows(cards: list[Card]) -> CardTable:
+    global _TOKEN_NAMES
+    if _TOKEN_NAMES is None:
+        _TOKEN_NAMES = _token_names()
+    _tokens = _TOKEN_NAMES
     n = len(cards)
     tbl = CardTable(
         names=tuple(c.name for c in cards),
@@ -128,6 +166,7 @@ def _rows(cards: list[Card]) -> CardTable:
              for c in cards], np.uint8),
         kw_mask=np.array([keyword_mask(c.text) for c in cards], np.uint32),
         text_len=np.array([len(body_text(c.text)) for c in cards], np.int16),
+        token=np.array([c.name in _tokens for c in cards], bool),
     )
     assert tbl.n == n
     return tbl

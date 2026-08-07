@@ -382,7 +382,8 @@ def explained_variance(pred: np.ndarray, target: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 SPELLS = ("Stupefy", "Discipline", "Smoke Screen", "Lilting Lullaby",
-          "Defy", "Sprite Call", "Sprite Burst", "Back Off",
+          "Defy", "Sprite Call", "Sprite Burst", "Ride The Wind",
+          "Charm", "Gust", "Star-Crossed", "Back Off",
           "Facebreaker", "Smoke and Mirrors")
 
 

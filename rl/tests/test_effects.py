@@ -284,7 +284,7 @@ SPRITE_CALL, SPRITE_BURST = SPECS["Sprite Call"], SPECS["Sprite Burst"]
 # From Hidden at battlefield 0 -> the token must arrive THERE (811.1.d.3).
 s = fresh()
 s.bf_ctrl[0] = 0
-log = resolve.resolve(s, T, CFG, SPRITE_CALL, 0, [], 0, from_hand=False)
+log = resolve.resolve(s, T, CFG, SPRITE_CALL, 0, [bf_loc(0)], 0, from_hand=False)
 tok = log["tokens"]
 if len(tok) != 1:
     die("token", f"Sprite Call makes one token, got {len(tok)}")
@@ -310,11 +310,74 @@ ok("the token is [Temporary] and dies before scoring, as the inversion requires"
 
 # Sprite Burst makes two.
 s = fresh()
-log = resolve.resolve(s, T, CFG, SPRITE_BURST, 1, [], -1, from_hand=True)
+log = resolve.resolve(s, T, CFG, SPRITE_BURST, 1, [base_loc(1)], -1, from_hand=True)
 if len(log["tokens"]) != 2:
     die("token", f"Sprite Burst makes two tokens, got {len(log['tokens'])}")
 if any(int(s.perms[i, P_CTRL]) != 1 for i in log["tokens"]):
     die("token", "tokens must be controlled by the caster")
 ok("Sprite Burst makes two tokens for the caster")
+
+
+# ---------------------------------------------------------------------------
+print("\n[8] location slots, movement and bounce")
+from rl.engine.effects import TK_LOCATION
+RIDE, CHARM = SPECS["Ride The Wind"], SPECS["Charm"]
+GUST, STARX = SPECS["Gust"], SPECS["Star-Crossed"]
+
+# A LOC_BOUND location slot is pinned to the hidden battlefield (811.1.d.3);
+# a LOC_FREE one is not. This is the fix that replaced an approximation.
+s = fresh()
+opts_free = resolve.legal_targets(s, T, RIDE, 1, 0, [], 0)     # hidden at B0
+if len(opts_free) < 3:
+    die("location", f"a LOC_FREE location slot should reach everywhere: {opts_free}")
+opts_bound = resolve.legal_targets(s, T, SPRITE_CALL, 0, 0, [], 0)
+if opts_bound != [bf_loc(0)]:
+    die("location", f"a bound token must land at the hidden battlefield: {opts_bound}")
+ok("location slots respect per-slot locality, so tokens pin but moves do not")
+
+# Ride The Wind moves and readies -- readying is the point of the card.
+s = fresh()
+u = s.add_permanent(PLAIN[3], 0, base_loc(0), ready=False)
+resolve.resolve(s, T, CFG, RIDE, 0, [u, bf_loc(1)], -1, from_hand=True)
+from rl.engine.state import P_READY
+if int(s.perms[u, P_LOC]) != bf_loc(1) or int(s.perms[u, P_READY]) != 1:
+    die("move", "Ride The Wind must move the unit AND ready it")
+ok("Ride The Wind moves a friendly unit and readies it")
+
+# Charm moves an ENEMY unit; moving it into your units stages combat (461).
+s = fresh()
+mine = s.add_permanent(PLAIN[5], 0, bf_loc(0))
+s.bf_ctrl[0] = 0
+foe = s.add_permanent(PLAIN[2], 1, base_loc(1))
+resolve.resolve(s, T, CFG, CHARM, 0, [foe, bf_loc(0)], -1, from_hand=True)
+if s.perms[foe, P_ALIVE] == 1:
+    die("move", "a 2-Might unit charmed into a 5-Might garrison should die")
+ok("Charm drags an enemy into your garrison and combat resolves (461)")
+
+# Gust's "3 Might or less" is a restriction, and bounce returns to hand.
+s = fresh()
+small = s.add_permanent(PLAIN[3], 1, bf_loc(0))
+big = s.add_permanent(PLAIN[5], 1, bf_loc(0))
+opts = resolve.legal_targets(s, T, GUST, 0, 0, [], -1)
+if big in opts or small not in opts:
+    die("bounce", f"Gust should reach only the 3-Might unit: {opts}")
+before = int(s.n_hand[1])
+resolve.resolve(s, T, CFG, GUST, 0, [small], -1, from_hand=True)
+if s.perms[small, P_ALIVE] == 1 or int(s.n_hand[1]) != before + 1:
+    die("bounce", "the unit should leave the board and enter its owner's hand")
+ok("Gust bounces a 3-Might unit to its owner's hand, not the 5-Might one")
+
+# 185.3 -- a token that leaves the board ceases to exist, it does not bounce.
+s = fresh()
+s.bf_ctrl[0] = 1
+log = resolve.resolve(s, T, CFG, SPRITE_CALL, 1, [bf_loc(0)], 0, from_hand=False)
+tokn = log["tokens"][0]
+before = int(s.n_hand[1])
+resolve.resolve(s, T, CFG, GUST, 0, [tokn], -1, from_hand=True)
+if s.perms[tokn, P_ALIVE] == 1:
+    die("bounce", "the token should leave the board")
+if int(s.n_hand[1]) != before:
+    die("bounce", "185.3 -- a token must cease to exist, not go to hand")
+ok("185.3 -- a bounced token ceases to exist rather than entering a hand")
 
 print("\n\033[32mall effect tests passed\033[0m")
