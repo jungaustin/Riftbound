@@ -384,7 +384,8 @@ def explained_variance(pred: np.ndarray, target: np.ndarray) -> float:
 SPELLS = ("Stupefy", "Discipline", "Smoke Screen", "Lilting Lullaby",
           "Defy", "Sprite Call", "Sprite Burst", "Ride The Wind",
           "Charm", "Gust", "Star-Crossed", "Back Off",
-          "Facebreaker", "Smoke and Mirrors")
+          "Facebreaker", "Smoke and Mirrors", "En Garde",
+          "Hidden Blade", "Falling Star")
 
 
 # Measured from the 29 decklists in `decks/`, not assumed:

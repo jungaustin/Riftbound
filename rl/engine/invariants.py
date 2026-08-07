@@ -44,10 +44,21 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
             _fail("permanent ready flag is not boolean")
         if np.any(live[:, P_DMG] < 0):
             _fail("permanent with negative damage")
-        # Damage never persists outside a resolving combat (PLAN.md §1.3.d):
-        # board-wide healing at combat cleanup and again at end of turn.
-        if state.showdown_bf < 0 and np.any(live[:, P_DMG] != 0):
-            _fail("marked damage outside a Showdown -- cleanup heal was missed")
+        # Damage used to be combat-only, so "any damage outside a Showdown is a
+        # missed heal" held. It stopped holding the moment a spell could deal
+        # damage: Falling Star marks 3 on a 5-Might unit in an Open State and it
+        # legitimately stays there until the end-of-turn heal (317.2).
+        #
+        # The invariant that survives is 143.2.a: a LIVE unit must never be
+        # carrying lethal damage, because it would already have been killed.
+        # That still catches a missed kill check, which is the bug that
+        # mattered.
+        if card_might is not None:
+            for row in live:
+                m = int(card_might[int(row[0])]) + int(row[8])
+                if int(row[P_DMG]) > 0 and int(row[P_DMG]) >= max(0, m):
+                    _fail("a live unit is carrying lethal damage -- the "
+                          "143.2.a kill check was missed")
 
     # --- runes -------------------------------------------------------------
     if np.any(state.runes_ready < 0) or np.any(state.runes_spent < 0):

@@ -106,6 +106,22 @@ def set_might_mod(state: GameState, table: CardTable, perm: int, delta: int,
     return False
 
 
+def mark_damage(state: GameState, table: CardTable, perm: int,
+                amount: int) -> bool:
+    """Mark damage and apply 143.2.a. Returns True if it killed the unit."""
+    state.perms[perm, P_DMG] += amount
+    dmg = int(state.perms[perm, P_DMG])
+    if dmg > 0 and dmg >= might(state, table, perm):
+        _destroy(state, perm)
+        return True
+    return False
+
+
+def destroy(state: GameState, perm: int) -> None:
+    """Kill outright (428) -- no damage involved, so no lethal check."""
+    _destroy(state, perm)
+
+
 def might_for_pool(state: GameState, table: CardTable, perm: int) -> int:
     """Might this unit contributes to its side's damage pool (465.2.a/b).
 

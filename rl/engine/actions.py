@@ -236,8 +236,17 @@ def apply(state: GameState, table: CardTable, cfg: Config,
             return log
         if state.showdown_bf >= 0:
             # No Chain, so the Showdown Step itself is over and Combat resumes.
-            return combat.advance_combat(
+            log = combat.advance_combat(
                 state, table, cfg, {"combat_at": int(state.showdown_bf)})
+            if state.showdown_bf < 0:
+                # That Combat finished. `cleanup` resolves every staged Combat,
+                # but it returns early when one YIELDS for a response window --
+                # so a second staged Combat at the other battlefield was left
+                # uninitiated once the first one opened a Showdown. Re-run the
+                # cleanup now that we are back in an Open State.
+                log.update(combat.cleanup(state, table, cfg,
+                                          mover=-1, dst=-1))
+            return log
         return {}
 
     if k == A_PLAY:

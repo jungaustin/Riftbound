@@ -57,12 +57,15 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
 
 # --- ops ------------------------------------------------------------------
 (OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT, OP_COUNTER,
- OP_NO_SPELLS, OP_CREATE_TOKEN, OP_MOVE_TO, OP_RETURN_TO_HAND) = range(9)
+ OP_NO_SPELLS, OP_CREATE_TOKEN, OP_MOVE_TO, OP_RETURN_TO_HAND,
+ OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER) = range(12)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
-            "no_spells", "create_token", "move_to", "return_to_hand")
+            "no_spells", "create_token", "move_to", "return_to_hand",
+            "damage", "kill", "draw_controller")
 
 # --- conditions, checked at resolution ------------------------------------
-COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY = range(3)
+(COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
+ COND_ONLY_UNIT_THERE) = range(4)
 
 
 class TargetSpec(NamedTuple):
@@ -206,6 +209,34 @@ SPECS: dict[str, CardSpec] = {
         targets=(TargetSpec(who=W_FRIENDLY), TargetSpec(who=W_ENEMY)),
         ops=(Op(OP_RETURN_TO_HAND, target=0),
              Op(OP_RETURN_TO_HAND, target=1)),
+    ),
+
+    # [Reaction] Give a friendly unit +1 Might this turn, then an additional
+    # +1 Might this turn if it is the only unit you control there.
+    "En Garde": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_FRIENDLY),),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=1),
+             Op(OP_MODIFY_MIGHT, target=0, n=1, cond=COND_ONLY_UNIT_THERE)),
+    ),
+
+    # [Hidden] [Action] Kill a unit at a battlefield. Its controller draws 2.
+    # The draw goes to the TARGET's controller, not the caster -- a different
+    # recipient from every other draw in the pool, hence its own op.
+    "Hidden Blade": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY, at_battlefield=True),),
+        ops=(Op(OP_KILL, target=0),
+             Op(OP_DRAW_CONTROLLER, target=0, n=2)),
+    ),
+
+    # Deal 3 to a unit. Deal 3 to a unit.  Two separate instances, so two
+    # target slots -- and they may be the same unit, which 6 damage on one
+    # body is often the point of.
+    "Falling Star": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(who=W_ANY), TargetSpec(who=W_ANY)),
+        ops=(Op(OP_DAMAGE, target=0, n=3), Op(OP_DAMAGE, target=1, n=3)),
     ),
 
     # [Hidden] [Action] [Stun] a unit.

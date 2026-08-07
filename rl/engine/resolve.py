@@ -31,7 +31,9 @@ from rl.engine import phases
 from rl.engine.cardtable import CardTable
 from rl.engine import combat
 from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
-                               COND_NONE, LOC_BOUND, OP_COUNTER,
+                               COND_NONE, COND_ONLY_UNIT_THERE,
+                               LOC_BOUND, OP_COUNTER, OP_DAMAGE,
+                               OP_DRAW_CONTROLLER, OP_KILL,
                                OP_CREATE_TOKEN, OP_MOVE_TO,
                                OP_RETURN_TO_HAND,
                                OP_DRAW, OP_NO_SPELLS,
@@ -188,6 +190,12 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
         return True
     if op.cond == COND_FROM_HAND:
         return from_hand
+    if op.cond == COND_ONLY_UNIT_THERE:
+        a = targets[op.target] if 0 <= op.target < len(targets) else -1
+        if a < 0:
+            return False
+        loc, ctrl = int(state.perms[a, P_LOC]), int(state.perms[a, P_CTRL])
+        return state.units_at(loc, ctrl).size == 1
     if op.cond == COND_ANY_TARGET_TEMPORARY:
         return any(table.has(int(state.perms[t, P_CARD]), "Temporary")
                    for t in targets if t >= 0)
@@ -252,6 +260,19 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # No cleanup here: 321 forbids one while Chain Items are resolving.
             # Arriving units stage a Combat by presence (461); it is initiated
             # by the cleanup the action layer runs once the Chain empties.
+        elif op.op == OP_DAMAGE:
+            # 143.2.a -- marking damage kills as soon as it is non-zero and at
+            # least the unit's current Might. Same continuous check as a Might
+            # reduction; combat.mark_damage owns it so there is one code path.
+            if combat.mark_damage(state, table, a, op.n):
+                log.setdefault("killed", []).append(a)
+        elif op.op == OP_KILL:
+            combat.destroy(state, a)
+            log.setdefault("killed", []).append(a)
+        elif op.op == OP_DRAW_CONTROLLER:
+            # The TARGET's controller draws, not the caster.
+            owner = int(state.perms[a, P_CTRL])
+            log["drew_opponent"] = phases.draw_for(state, owner, op.n)
         elif op.op == OP_MOVE_TO:
             dst = still_legal[op.target_b] if 0 <= op.target_b < len(still_legal) else -1
             if dst < 0:
