@@ -41,7 +41,7 @@ from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import TR_PLAY_ME, spec_for
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
-                             MAX_CHAIN, N_BF,
+                             MAX_CHAIN, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
                              P_LOC, P_READY, GameState, base_loc, bf_loc,
                              is_battlefield)
@@ -49,11 +49,12 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
 # Action kinds. Wire format -- append only, never reorder.
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
  A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN,
- A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST) = range(16)
+ A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST, A_ORDER) = range(17)
 
 KIND_NAMES = ("pass", "end_turn", "play", "play_at", "declare", "add",
               "commit", "cancel", "retreat", "target", "hide", "hide_at",
-              "play_hidden", "accept", "decline", "play_at_fast")
+              "play_hidden", "accept", "decline", "play_at_fast",
+              "order")
 
 
 class Action(NamedTuple):
@@ -152,6 +153,15 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         if int(state.chain[item, C_CTRL]) != seat:
             return []
         return [Action(A_ACCEPT), Action(A_DECLINE)]
+
+    # 383.3.d -- simultaneous triggers, and their controller picks the order
+    # they go on the Chain. Not cosmetic: the Chain resolves newest-first, so
+    # the one placed LAST resolves FIRST.
+    if state.pend_order >= 0:
+        if seat != int(state.pend_order):
+            return []
+        return [Action(A_ORDER, i)
+                for i in chain.orderable(state, table, seat)]
 
     if state.pend_hide >= 0:
         if seat != state.active:
@@ -263,18 +273,27 @@ def _settle(state: GameState, table: CardTable, cfg: Config) -> dict:
     for the player to finish choosing targets rather than clobbering
     `pend_slot` mid-selection.
     """
-    if (state.pend_slot >= 0 or state.pend_may >= 0 or state.pend_play >= 0
-            or state.pend_hide >= 0 or state.declaring or is_terminal(state)):
+    if (state.pend_slot >= 0 or state.pend_may >= 0 or state.pend_order >= 0
+            or state.pend_play >= 0 or state.pend_hide >= 0 or state.declaring
+            or is_terminal(state)):
         return {}
     log: dict = {}
-    for _ in range(MAX_CHAIN + 1):
-        if state.n_trig:
-            log.update(chain.flush(state, table, cfg))
-        log.update(_advance_pending(state, table, cfg))
-        # A decision is required, or there is nothing left to drain.
-        if state.pend_slot >= 0 or state.pend_may >= 0 or state.n_trig == 0:
+    # Every queued trigger goes on the Chain BEFORE any of them is finalized:
+    # 383.3.d is about the order they are *placed*, and 337.1.b then finalizes
+    # oldest-first once they are all there.
+    for _ in range(MAX_TRIGGERS + 1):
+        if not state.n_trig:
+            break
+        seat = chain.next_placer(state)
+        opts = chain.orderable(state, table, seat)
+        if len(opts) > 1:
+            state.pend_order = seat
             return log
-    raise AssertionError("the trigger queue is not draining")
+        chain.place(state, table, cfg, opts[0])
+    else:
+        raise AssertionError("the trigger queue is not draining")
+    log.update(_advance_pending(state, table, cfg))
+    return log
 
 
 def _apply_one(state: GameState, table: CardTable, cfg: Config,
@@ -343,6 +362,11 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
 
     if k == A_TARGET:
         return _choose_target(state, table, cfg, action.arg)
+
+    if k == A_ORDER:
+        state.pend_order = -1
+        chain.place(state, table, cfg, action.arg)
+        return {}
 
     if k == A_ACCEPT:
         return _accept_may(state, table, cfg)
@@ -658,6 +682,8 @@ def acting_seat(state: GameState) -> int:
             return int(state.chain[item, C_CTRL])
     if state.pend_may >= 0:
         return int(state.chain[int(state.pend_may), C_CTRL])
+    if state.pend_order >= 0:
+        return int(state.pend_order)
     if state.n_chain > 0 or state.showdown_bf >= 0:
         return int(state.priority)
     return int(state.active)

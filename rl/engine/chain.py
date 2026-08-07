@@ -241,24 +241,66 @@ def queue(state: GameState, trigger: int, src: int, ctx: int = -1) -> None:
     state.n_trig = i + 1
 
 
-def flush(state: GameState, table: CardTable, cfg: Config) -> dict:
-    """Put every queued trigger on the Chain (383.3), oldest first.
+def trig_controller(state: GameState, i: int) -> int:
+    """Which seat controls queued trigger `i`."""
+    return int(state.perms[int(state.trig[i, 1]), P_CTRL])
 
-    383.3.d orders simultaneous triggers by their controller's choice; queue
-    order stands in for that. It is a real decision only when one player has
-    two triggers firing at once with different useful orderings, which no card
-    in the pool can currently produce.
+
+def next_placer(state: GameState) -> int:
+    """Which seat places the next queued trigger, or -1 if the queue is empty.
+
+    383.3.d.1 -- "starting with the Turn Player and proceeding in Turn Order,
+    each player orders their Triggered Abilities on the Chain." So the turn
+    player empties their queue first, then the opponent.
     """
+    for seat in (int(state.active), 1 - int(state.active)):
+        for i in range(int(state.n_trig)):
+            if trig_controller(state, i) == seat:
+                return seat
+    return -1
+
+
+def orderable(state: GameState, table: CardTable, seat: int) -> list[int]:
+    """Queue indices `seat` may place next, interchangeable ones collapsed.
+
+    383.3.d gives the controller the choice of order, and **the order is not
+    cosmetic**: the Chain resolves newest-first (340.1), so the ability placed
+    LAST resolves FIRST. Two triggers that would fight over the same target, or
+    a token-maker and something that counts tokens, genuinely differ.
+
+    Triggers identical in (card, ability, captured context) are collapsed --
+    swapping two copies of the same Deathknell cannot produce a different game,
+    and offering the choice would just widen the branching factor.
+    """
+    seen: set[tuple] = set()
+    out: list[int] = []
+    for i in range(int(state.n_trig)):
+        if trig_controller(state, i) != seat:
+            continue
+        src = int(state.trig[i, 1])
+        key = (int(state.perms[src, P_CARD]), int(state.trig[i, 0]),
+               int(state.trig[i, 2]))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(i)
+    return out
+
+
+def place(state: GameState, table: CardTable, cfg: Config, i: int) -> int:
+    """Move queued trigger `i` onto the Chain and drop it from the queue.
+
+    Always consumes the entry, even when `fire` declines to push anything
+    (355.8, no legal targets) -- otherwise the drain loop would spin on it.
+    """
+    trigger, src, ctx = (int(x) for x in state.trig[i])
+    added = fire(state, table, cfg, trigger, src, ctx)
     n = int(state.n_trig)
-    if not n:
-        return {}
-    added = 0
-    for i in range(n):
-        trigger, src, ctx = (int(x) for x in state.trig[i])
-        added += fire(state, table, cfg, trigger, src, ctx)
-    state.trig[:n] = -1
-    state.n_trig = 0
-    return {"triggered": added} if added else {}
+    if i < n - 1:
+        state.trig[i:n - 1] = state.trig[i + 1:n]
+    state.trig[n - 1] = -1
+    state.n_trig = n - 1
+    return added
 
 
 def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,

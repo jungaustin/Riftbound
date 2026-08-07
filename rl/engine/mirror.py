@@ -34,7 +34,8 @@ SEAT_AXIS = (
 )
 
 # The value *is* a seat id: flip it, but leave the -1 "nobody" sentinel alone.
-SEAT_VALUED_SCALAR = ("active", "priority", "attacker", "focus", "winner")
+SEAT_VALUED_SCALAR = ("active", "priority", "attacker", "focus", "winner",
+                      "pend_order")
 SEAT_VALUED_ARRAY = ("bf_ctrl", "fd_owner")
 
 # Seat-agnostic: battlefield identities, phase, counters, the RNG.

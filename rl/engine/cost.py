@@ -31,6 +31,41 @@ from rl.engine.state import N_DOMAINS, GameState
 MULTI_DOMAIN_POWER_IS_PERMISSIVE = True
 
 
+# ---------------------------------------------------------------------------
+# NOT IMPLEMENTED YET, and the design is already decided -- read this before
+# adding the first cost-reducing card.
+# ---------------------------------------------------------------------------
+# **The player chooses the order discounts apply, and the order changes the
+# answer.** 356.1: "Apply base cost modifications in any order." 356.4.c.1
+# repeats it per component. This is not a tie-break; it is a real decision that
+# must reach the action space, and modelling discounts as a commutative sum
+# would silently delete it.
+#
+# 356.4.e is why: "If a discount applies a minimum cost, that minimum applies
+# only to that discount." So a floored discount used FIRST, followed by an
+# unfloored one, lands below the floor. The rulebook's own example:
+#
+#     Sky Splitter costs 8 Energy and reduces its own cost by the highest Might
+#     among units you control (7). Eager Apprentice reduces spell Energy by 1,
+#     to a minimum of 1.
+#         Apprentice first:  8 -> 7, then Sky Splitter's own -> 0
+#         Sky Splitter first: 8 -> 1, then Apprentice, floored     -> 1
+#
+# The project owner raised the same interaction independently, with Applied
+# Researchers ("your spells cost {1 energy}{any rune} less, to a minimum of
+# {1 energy}") as the floored half.
+#
+# Two more rules that fall out of the same section and are easy to miss:
+#
+#   356.4.d    a discount on TOTAL cost must be applied after every discount on
+#              a single component.
+#   356.4.f.1  an Optional Additional Cost counts as *paid* if the player chose
+#              to pay it, "no matter how much the player actually paid" -- so a
+#              discounted-to-zero [Accelerate] still makes the unit enter ready.
+#              `_resolve_play` already keys readiness off the CHOICE rather than
+#              the amount, which is what keeps that true for free.
+
+
 def card_domains(table: CardTable, card: int) -> list[int]:
     mask = int(table.domain_mask[card])
     return [d for d in range(N_DOMAINS) if mask >> d & 1]

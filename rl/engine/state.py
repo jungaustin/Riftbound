@@ -137,7 +137,7 @@ class GameState:
         "bf_card", "bf_ctrl", "bf_contested", "fd_owner", "fd_card", "fd_ply",
         "bf_scored",
         "chain", "n_chain", "chain_targets", "pend_slot", "chain_uid",
-        "pend_may", "trig", "n_trig",
+        "pend_may", "trig", "n_trig", "pend_order",
         "points", "burned_out", "no_spells",
         "legend", "champion",
         "turn", "ply", "active", "phase", "priority", "focus",
@@ -206,6 +206,9 @@ class GameState:
         # [trigger kind, source permanent row, captured context int]
         self.trig = np.full((MAX_TRIGGERS, 3), -1, np.int16)
         self.n_trig = 0
+        # Seat currently choosing the order to place its simultaneous triggers
+        # on the Chain (383.3.d). -1 when nobody is being asked.
+        self.pend_order = -1
         self.chain_uid = 0        # monotone; next id for a chain item
 
         self.points = np.zeros(N_SEATS, np.int16)

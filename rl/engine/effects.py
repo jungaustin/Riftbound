@@ -136,6 +136,19 @@ class CardSpec(NamedTuple):
 TRIGGER_NAMES = ("play_me", "death", "move")
 
 
+# [Repeat] (820), not implemented yet -- the constraint is recorded because it
+# is the part that is easy to get wrong. 820.1.c.3: **each Repeat cost can be
+# paid only a single time.** It is an optional additional cost that buys ONE
+# extra execution, not a loop, so nothing can be repeated arbitrarily by paying
+# again. A card printing two separate Repeat instances (820.1.c.2, 820.3) may
+# pay each once, for three executions total; that is the only way past two.
+# 820.2.a: the choices for the extra execution are made at the normal time and
+# need not match the first, so a repeated targeted effect needs a second set of
+# target slots rather than a re-use of the first. Confirmed with the project
+# owner.
+REPEAT_PAYMENTS_PER_INSTANCE = 1
+
+
 class Ability(NamedTuple):
     """One triggered ability. Deliberately shaped like a `CardSpec`.
 

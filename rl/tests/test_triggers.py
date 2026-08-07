@@ -33,7 +33,9 @@ from rl.config import Config
 from rl.engine import actions as A
 from rl.engine import chain, combat
 from rl.engine.cardtable import full_table
-from rl.engine.effects import ABILITIES, TR_PLAY_ME, abilities_for
+from rl.engine.effects import (ABILITIES, TR_DEATH as chain_TR_DEATH,
+                               TR_MOVE as chain_TR_MOVE, TR_PLAY_ME,
+                               abilities_for)
 from rl.engine.state import (C_ABIL, C_CARD, C_SRC, MAIN, P_ALIVE, P_CARD,
                              P_LOC, P_READY, GameState, base_loc, bf_loc)
 
@@ -387,7 +389,7 @@ if s.n_chain != 0:
                  "`n_chain == 0`, so that blocks the Cleanup that killed it")
 ok("the trigger is QUEUED at death, not pushed onto the Chain")
 
-chain.flush(s, T, V1)
+chain.place(s, T, V1, 0)
 drain(s, V1)
 if int(s.n_hand[0]) != before + 1:
     die("death", f"Deathknell draw did not happen: hand {int(s.n_hand[0])}, "
@@ -401,5 +403,68 @@ combat.destroy(s, T, p0)
 if s.n_trig:
     die("death", "a unit with no Deathknell queued a trigger anyway")
 ok("a unit without one queues nothing, so the queue stays bounded")
+
+
+# ---------------------------------------------------------------------------
+print("\n[13] 383.3.d -- the controller orders simultaneous triggers")
+
+# Two DIFFERENT triggers of the same controller, fired at once. Order matters
+# because the Chain resolves newest-first (340.1): the one placed LAST resolves
+# FIRST. Confirmed important by the project owner.
+s = fresh(hand=[])
+sen = s.add_permanent(SENTRY, 0, bf_loc(0))          # Deathknell: draw 1
+lil = s.add_permanent(LILLIA, 0, bf_loc(0))          # move: make a Sprite
+chain.queue(s, chain_TR_DEATH, sen, bf_loc(0))
+chain.queue(s, chain_TR_MOVE, lil, bf_loc(0))
+opts = chain.orderable(s, T, 0)
+if len(opts) != 2:
+    die("order", f"two distinguishable triggers should offer 2 choices, got {opts}")
+if chain.next_placer(s) != 0:
+    die("order", "383.3.d.1 -- the turn player places first")
+ok("two different triggers from one controller offer a real ordering choice")
+
+# Identical triggers are collapsed: swapping two copies of the same Deathknell
+# cannot produce a different game.
+s = fresh(hand=[])
+a0 = s.add_permanent(SENTRY, 0, bf_loc(0))
+a1 = s.add_permanent(SENTRY, 0, bf_loc(0))
+chain.queue(s, chain_TR_DEATH, a0, bf_loc(0))
+chain.queue(s, chain_TR_DEATH, a1, bf_loc(0))
+if len(chain.orderable(s, T, 0)) != 1:
+    die("order", "two identical Deathknells must collapse to one choice")
+ok("interchangeable triggers collapse -- no branching for a distinction "
+   "without a difference")
+
+# 383.3.d.1 -- turn player empties their queue before the opponent is asked.
+s = fresh(hand=[])
+mine = s.add_permanent(SENTRY, 0, bf_loc(0))
+theirs = s.add_permanent(SENTRY, 1, bf_loc(1))
+chain.queue(s, chain_TR_DEATH, theirs, bf_loc(1))
+chain.queue(s, chain_TR_DEATH, mine, bf_loc(0))
+if chain.next_placer(s) != 0:
+    die("order", "the turn player must place before the opponent, whatever "
+                 "order the triggers were queued in")
+chain.place(s, T, V1, chain.orderable(s, T, 0)[0])
+if chain.next_placer(s) != 1:
+    die("order", "the opponent places once the turn player is done")
+ok("turn player first, then the opponent (383.3.d.1)")
+
+# The decision reaches the action layer, and the chain ends up two deep.
+s = fresh(hand=[])
+sen = s.add_permanent(SENTRY, 0, bf_loc(0))
+lil = s.add_permanent(LILLIA, 0, bf_loc(0))
+chain.queue(s, chain_TR_DEATH, sen, bf_loc(0))
+chain.queue(s, chain_TR_MOVE, lil, bf_loc(0))
+A.apply(s, T, V1, A.PASS)                 # any action runs the settle step
+if s.pend_order != 0:
+    die("order", "the ordering decision was never offered to the player")
+acts = A.legal_actions(s, T, V1, 0)
+if {a.kind for a in acts} != {A.A_ORDER}:
+    die("order", f"expected only A_ORDER, got {[a for a in acts]}")
+A.apply(s, T, V1, acts[1])                # place the SECOND one first
+A.apply(s, T, V1, A.legal_actions(s, T, V1, 0)[0])
+if s.n_chain != 2:
+    die("order", f"both triggers should be on the chain, got {s.n_chain}")
+ok("the choice is a real action, and both triggers reach the Chain")
 
 print("\n\033[32mall trigger tests passed\033[0m")
