@@ -26,7 +26,8 @@ import numpy as np
 
 from rl.engine import actions as A
 from rl.engine import combat
-from rl.engine.state import GameState, bf_index, is_battlefield
+from rl.engine.state import (P_CARD, P_CTRL, GameState, bf_index,
+                             is_battlefield)
 
 
 def _would_wipe(state: GameState, table, cfg, dst: int,
@@ -52,11 +53,42 @@ def _can_wipe(state: GameState, table, cfg, dst: int) -> bool:
     return bool(movable) and _would_wipe(state, table, cfg, dst, movable)
 
 
+def _biggest_enemy(state: GameState, table, seat: int, cands):
+    """Prefer stunning the largest enemy unit; fall back to the smallest friend.
+
+    Crude on purpose. The point of the baseline is to be a *fair yardstick*, not
+    to play well -- but it has to use combat tricks at all, or "beats greedy"
+    silently starts measuring an opponent that ignores half the game.
+    """
+    enemy = [a for a in cands if state.perms[a.arg, P_CTRL] != seat]
+    pool = enemy or list(cands)
+    key = (max if enemy else min)
+    return key(pool, key=lambda a: int(table.might[int(state.perms[a.arg, P_CARD])]))
+
+
 def greedy_agent(rng: np.random.Generator):
     def choose(state: GameState, table, cfg, seat: int, legal):
         kinds = {}
         for a in legal:
             kinds.setdefault(a.kind, []).append(a)
+
+        # Filling a target slot: stun the biggest thing that is not ours.
+        if A.A_TARGET in kinds:
+            return _biggest_enemy(state, table, seat, kinds[A.A_TARGET])
+
+        if A.A_HIDE_AT in kinds:
+            return kinds[A.A_HIDE_AT][0]
+
+        # A priority window. Spend a trick only when defending a showdown --
+        # that is where Stun actually converts into a kill, because the
+        # attacker deals nothing and is still Recalled or destroyed.
+        if A.A_PASS in kinds:
+            defending = (state.showdown_bf >= 0 and int(state.attacker) != seat)
+            if defending:
+                for k in (A.A_PLAY_HIDDEN, A.A_PLAY):
+                    if k in kinds:
+                        return kinds[k][0]
+            return kinds[A.A_PASS][0]
 
         # Mid-decision points: finish what was started.
         if A.A_PLAY_AT in kinds:
@@ -90,6 +122,9 @@ def greedy_agent(rng: np.random.Generator):
             if A.A_COMMIT in kinds:
                 return kinds[A.A_COMMIT][0]
             return kinds[A.A_CANCEL][0]
+
+        if A.A_HIDE in kinds:
+            return kinds[A.A_HIDE][0]
 
         # 1 + 3. Play a card if we have one; the destination choice above then
         # steers it onto an empty battlefield when that is available.

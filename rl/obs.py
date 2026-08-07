@@ -47,17 +47,17 @@ from rl.engine.state import (F_NO_COMBAT_DAMAGE, F_STUNNED, N_BF, N_DOMAINS,
  CX_LOC,                       # 4 slots: own base, enemy base, B0, B1
  CX_AFFORD, CX_ARRIVED,
  CX_CTRL_MINE, CX_CTRL_OPP, CX_CTRL_NONE, CX_CONTESTED,
- CX_SCORED_MINE, CX_SCORED_OPP, CX_FD_PRESENT) = (
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21)
-CTX_DIM = 22
+ CX_SCORED_MINE, CX_SCORED_OPP, CX_FD_PRESENT, CX_FD_LIVE) = (
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)
+CTX_DIM = 23
 
 # Slot counts. Overflow is a bug, not a resize -- both are far above anything a
 # legal game reaches, and silently dropping a card from the observation would be
 # invisible in training.
-HAND_SLOTS = 12
+HAND_SLOTS = 16   # spells draw cards; 12 was reachable
 BOARD_SLOTS = 24
 
-GLOBAL_DIM = 34 + 5 * N_DOMAINS
+GLOBAL_DIM = 39 + 5 * N_DOMAINS
 
 # Action-row layout after the kind one-hot and card block.
 ACT_EXTRA = 4 + 1 + 3 + 1 + 1 + 1 + 1 + 2   # loc, is_bf, ctrl(3), counts, might, cost
@@ -172,6 +172,8 @@ class Encoder:
             r[c + CX_SCORED_MINE] = float(state.bf_scored[seat, i])
             r[c + CX_SCORED_OPP] = float(state.bf_scored[1 - seat, i])
             r[c + CX_FD_PRESENT] = float(state.fd_owner[i] >= 0)
+            r[c + CX_FD_LIVE] = float(state.fd_owner[i] >= 0
+                                      and int(state.fd_ply[i]) < int(state.ply))
             r[c + CX_LOC + _loc_slot(bf_loc(i), seat)] = 1.0
             z[i] = r
         return z, m
@@ -195,6 +197,10 @@ class Encoder:
             c = self.card_dim
             r[c + CX_MINE] = float(mine)
             r[c + CX_FD_PRESENT] = 1.0
+            # 811.1.b -- a card hidden this turn is not playable until the next
+            # one. Public information (everyone saw when it was hidden), and
+            # decisive for whether the threat is real right now.
+            r[c + CX_FD_LIVE] = float(int(state.fd_ply[i]) < int(state.ply))
             r[c + CX_LOC + _loc_slot(bf_loc(i), seat)] = 1.0
             z[i] = r
             m[i] = True
@@ -240,6 +246,18 @@ class Encoder:
             float(state.rune_left[seat]) / float(cfg.rune_deck_size),
             float(state.rune_left[foe]) / float(cfg.rune_deck_size),
             float(state.pool_energy[seat]) / 5.0,
+            # The Chain. Depth matters: an item five deep is respondable only
+            # after the ones above it clear (340.4).
+            float(state.n_chain) / 4.0,
+            float(state.pend_slot >= 0),
+            # Facedown zones. Presence is public (107.3.f), identity is not --
+            # the *contents* stay out of the observation, which is what the
+            # belief head will be asked to predict.
+            float(any(state.fd_owner[i] == seat for i in range(N_BF))),
+            float(any(state.fd_owner[i] == foe for i in range(N_BF))),
+            float(any(state.fd_owner[i] == foe
+                      and int(state.fd_ply[i]) < int(state.ply)
+                      for i in range(N_BF))),
         ]
         # Runes are on the board face up, so both boards are public.
         for s in (seat, foe):
@@ -277,6 +295,19 @@ class Encoder:
             might = combat.might(state, self.table, act.arg)
         elif k == A.A_COMMIT:
             loc = int(state.decl_dst)
+        elif k == A.A_HIDE:
+            card = int(state.hand[seat, act.arg])
+        elif k == A.A_HIDE_AT:
+            loc = bf_loc(act.arg)
+        elif k == A.A_PLAY_HIDDEN:
+            # The card's identity is legitimate here: only its owner is ever
+            # offered this action, and they know what they hid.
+            card = int(state.fd_card[act.arg])
+            loc = bf_loc(act.arg)
+        elif k == A.A_TARGET:
+            card = int(state.perms[act.arg, P_CARD])
+            loc = int(state.perms[act.arg, P_LOC])
+            might = combat.might(state, self.table, act.arg)
 
         if card >= 0:
             r[nk] = 1.0

@@ -41,6 +41,7 @@ import math
 import sys
 import time
 from dataclasses import dataclass, field
+from dataclasses import replace as dc_replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -298,6 +299,29 @@ def explained_variance(pred: np.ndarray, target: np.ndarray) -> float:
 
 # ---------------------------------------------------------------------------
 
+SPELLS = ("Back Off", "Facebreaker", "Smoke and Mirrors")
+
+
+def v1_deal(table, deck_size: int = 30, spell_rate: float = 0.30):
+    """Decks with the implemented spells mixed in.
+
+    `spell_rate` is well above what a real decklist would run. That is
+    deliberate for now: response windows are the thing being learned, and at a
+    natural rate they are too rare for a short run to see many of them.
+    """
+    spells = [table.id_of(n) for n in SPELLS]
+    units = v0_pool(table)
+    bfs = [c for c in range(table.n) if table.is_type(c, "Battlefield")][:2]
+
+    def deal(seed):
+        rng = np.random.default_rng(seed)
+        decks = [[int(rng.choice(spells if rng.random() < spell_rate else units))
+                  for _ in range(deck_size)] for _ in range(2)]
+        runes = [[int(rng.integers(6)) for _ in range(12)] for _ in range(2)]
+        return decks, runes, bfs
+    return deal
+
+
 def v0_deal(table, deck_size: int = 30):
     """The Phase 1-3 deal, so training results stay comparable to the gates."""
     pool = v0_pool(table)
@@ -316,6 +340,8 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("iterations", nargs="?", type=int, default=100)
     p.add_argument("--victory", type=int, default=3)
+    p.add_argument("--spells", action="store_true",
+                   help="enable the DSL spell pool (units_only=False)")
     p.add_argument("--envs", type=int, default=64)
     p.add_argument("--rollout", type=int, default=2048)
     p.add_argument("--device", default="cpu")
@@ -331,8 +357,10 @@ def main(argv=None) -> int:
     torch.manual_seed(a.seed)
     table = full_table()
     cfg = Config().at_victory_score(a.victory)
+    if a.spells:
+        cfg = dc_replace(cfg, units_only=False)
     hp = HP(n_envs=a.envs, rollout=a.rollout)
-    deal = v0_deal(table)
+    deal = v1_deal(table) if a.spells else v0_deal(table)
 
     tr = Trainer(table, cfg, deal, hp, device=a.device, seed=a.seed)
     if a.init:
