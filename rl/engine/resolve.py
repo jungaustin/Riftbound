@@ -31,13 +31,17 @@ from rl.engine import phases
 from rl.engine.cardtable import CardTable
 from rl.engine import combat
 from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
-                               COND_NONE, LOC_BOUND, OP_DRAW,
+                               COND_NONE, LOC_BOUND, OP_COUNTER,
+                               OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
                                OP_SWAP_LOC, REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
-                               W_FRIENDLY, CardSpec, Op, TargetSpec)
-from rl.engine.state import (P_ALIVE, P_CARD, P_CTRL, P_LOC, GameState,
-                             bf_loc, is_battlefield)
+                               TK_SPELL, W_FRIENDLY, CardSpec, Op,
+                               TargetSpec)
+from rl.engine import chain
+from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, P_ALIVE,
+                             P_CARD, P_CTRL, P_LOC, GameState, bf_loc,
+                             is_battlefield)
 
 
 def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
@@ -80,10 +84,36 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
     return True
 
 
+def _spell_targets(state: GameState, table: CardTable, spec: TargetSpec,
+                   chosen: list[int]) -> list[int]:
+    """Chain items this slot may counter, as stable uids.
+
+    Excludes items still Pending and the countering card itself: at the moment
+    its targets are chosen it is the newest item on the chain, and a spell
+    cannot counter itself.
+    """
+    out = []
+    newest = state.n_chain - 1
+    for i in range(state.n_chain):
+        if i == newest or state.chain[i, C_FINAL] != 1:
+            continue
+        card = int(state.chain[i, C_CARD])
+        if spec.max_energy >= 0 and int(table.energy[card]) > spec.max_energy:
+            continue
+        if spec.max_power >= 0 and int(table.power[card]) > spec.max_power:
+            continue
+        uid = int(state.chain[i, C_UID])
+        if uid not in chosen:
+            out.append(uid)
+    return out
+
+
 def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
                   seat: int, chosen: list[int], bound_bf: int) -> list[int]:
-    """Permanent rows that may fill `slot`, given the slots already chosen."""
+    """Values that may fill `slot`: permanent rows, or chain uids for TK_SPELL."""
     t = spec.targets[slot]
+    if t.kind == TK_SPELL:
+        return _spell_targets(state, table, t, chosen)
     return [i for i in range(state.n_perms)
             if i not in chosen
             and _matches(state, table, t, i, seat, chosen, bound_bf)]
@@ -157,8 +187,13 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
     still_legal: list[int] = []
     chosen_so_far: list[int] = []
     for slot, t in enumerate(targets):
-        ok = (t >= 0 and _matches(state, table, spec.targets[slot], t, seat,
-                                  chosen_so_far, bound_bf))
+        if spec.targets[slot].kind == TK_SPELL:
+            # Still legal iff the item is still on the chain. If someone else
+            # countered it first, this one fizzles (359.3.e).
+            ok = t >= 0 and chain.index_of_uid(state, t) >= 0
+        else:
+            ok = (t >= 0 and _matches(state, table, spec.targets[slot], t, seat,
+                                      chosen_so_far, bound_bf))
         still_legal.append(t if ok else -1)
         chosen_so_far.append(t if ok else -1)
 
@@ -182,7 +217,29 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["fizzled"].append(op.op)      # this target specifically is gone
             continue
 
-        if op.op == OP_MODIFY_MIGHT:
+        if op.op == OP_COUNTER:
+            # Record the controller BEFORE removing the item -- Lilting
+            # Lullaby's second op ("its controller can't play spells this
+            # turn") runs after the item is already off the chain.
+            i = chain.index_of_uid(state, a)
+            if i >= 0:
+                log["countered_ctrl"] = int(state.chain[i, C_CTRL])
+            name = chain.counter(state, table, a)
+            if name is None:
+                log["fizzled"].append(op.op)   # already countered by someone else
+                continue
+            log["countered_spell"] = name
+        elif op.op == OP_NO_SPELLS:
+            i = chain.index_of_uid(state, a)
+            if i >= 0:
+                state.no_spells[int(state.chain[i, C_CTRL])] = 1
+            else:
+                # The item was countered by this same card a moment ago, so its
+                # controller is read from the log rather than the chain.
+                ctrl = log.get("countered_ctrl")
+                if ctrl is not None:
+                    state.no_spells[ctrl] = 1
+        elif op.op == OP_MODIFY_MIGHT:
             # May kill, but only by meeting damage already marked (143.2.a).
             # Never by reduction alone -- lethal damage must be non-zero.
             if combat.set_might_mod(state, table, a, op.n, op.floor):

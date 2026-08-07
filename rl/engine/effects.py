@@ -38,7 +38,10 @@ SPEED_MAIN, SPEED_ACTION, SPEED_REACTION = range(3)
 SPEED_NAMES = ("main", "action", "reaction")
 
 # --- target slots ---------------------------------------------------------
-TK_UNIT, TK_BATTLEFIELD = range(2)
+TK_UNIT, TK_BATTLEFIELD, TK_SPELL = range(3)
+
+# TK_SPELL targets a Chain Item, not a permanent. Its stored value is the
+# item's stable uid, not a row index -- see C_UID in state.py.
 
 W_ANY, W_FRIENDLY, W_ENEMY = range(3)      # relative to the caster
 WHO_NAMES = ("any", "friendly", "enemy")
@@ -51,8 +54,10 @@ LOC_FREE, LOC_BOUND = range(2)
 REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
 
 # --- ops ------------------------------------------------------------------
-OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT = range(4)
-OP_NAMES = ("stun", "draw", "swap_loc", "modify_might")
+(OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT, OP_COUNTER,
+ OP_NO_SPELLS) = range(6)
+OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
+            "no_spells")
 
 # --- conditions, checked at resolution ------------------------------------
 COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY = range(3)
@@ -67,6 +72,10 @@ class TargetSpec(NamedTuple):
     rel_to: int = -1          # index of the earlier slot `rel` refers to
     max_might: int = -1       # 355.9.b "with N might or less"; -1 = no limit
     at_battlefield: bool = False   # must be at a Battlefield, not a base
+    # Cost restrictions, for TK_SPELL. Defy: "costs no more than {4 energy}
+    # and no more than {any rune}" -- energy <= 4 AND power <= 1.
+    max_energy: int = -1
+    max_power: int = -1
 
 
 class Op(NamedTuple):
@@ -121,6 +130,21 @@ SPECS: dict[str, CardSpec] = {
         speed=SPEED_REACTION,
         targets=(TargetSpec(who=W_ANY),),
         ops=(Op(OP_MODIFY_MIGHT, target=0, n=-4, floor=1),),
+    ),
+
+    # [Reaction] Counter a spell. Its controller can't play spells this turn.
+    "Lilting Lullaby": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(kind=TK_SPELL),),
+        ops=(Op(OP_COUNTER, target=0), Op(OP_NO_SPELLS, target=0)),
+    ),
+
+    # [Reaction] Counter a spell that costs no more than {4 energy} and no
+    # more than {any rune}.  "{any rune}" is one Power symbol of any domain.
+    "Defy": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(kind=TK_SPELL, max_energy=4, max_power=1),),
+        ops=(Op(OP_COUNTER, target=0),),
     ),
 
     # [Hidden] [Action] [Stun] a unit.

@@ -91,8 +91,12 @@ RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 # that does NOT pass priority. `C_BOUND_BF` is the battlefield a [Hidden] card
 # was played from, which binds its bound target slots (811.1.d.2.a); -1 means it
 # was played from hand and nothing is bound.
-C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF = range(5)
-N_CHAIN_COLS = 5
+C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF, C_UID = range(6)
+N_CHAIN_COLS = 6
+
+# `C_UID` is a stable per-item id. Chain *indices* shift whenever an item is
+# removed, so a counterspell that stored an index could hit the wrong item
+# after something below it resolved. Targets store the uid instead.
 
 # Target slots stored per chain item. Two is enough for every card in the first
 # batch; overflow is asserted rather than silently truncated.
@@ -112,8 +116,8 @@ class GameState:
         "pool_energy", "pool_power",
         "bf_card", "bf_ctrl", "bf_contested", "fd_owner", "fd_card", "fd_ply",
         "bf_scored",
-        "chain", "n_chain", "chain_targets", "pend_slot",
-        "points", "burned_out",
+        "chain", "n_chain", "chain_targets", "pend_slot", "chain_uid",
+        "points", "burned_out", "no_spells",
         "legend", "champion",
         "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "attacker", "passes",
@@ -175,9 +179,13 @@ class GameState:
         self.chain_targets = np.full((MAX_CHAIN, MAX_TARGETS), -1, np.int16)
         # Slot currently being filled for the item being finalized, or -1.
         self.pend_slot = -1
+        self.chain_uid = 0        # monotone; next id for a chain item
 
         self.points = np.zeros(N_SEATS, np.int16)
         self.burned_out = np.zeros(N_SEATS, np.int8)
+        # Lilting Lullaby: "its controller can't play spells this turn".
+        # Turn-scoped, cleared in the end-of-turn cleanup.
+        self.no_spells = np.zeros(N_SEATS, np.int8)
         self.legend = np.full(N_SEATS, -1, np.int16)
         self.champion = np.full(N_SEATS, -1, np.int16)
 

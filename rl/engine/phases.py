@@ -202,6 +202,7 @@ def ending(state: GameState) -> None:
     if state.n_perms:
         state.perms[:state.n_perms, P_FLAGS] &= ~TURN_SCOPED_FLAGS
         state.perms[:state.n_perms, P_MIGHT_MOD] = 0   # 'this turn' buffs
+    state.no_spells[:] = 0          # 'this turn' play restrictions
     state.clear_pools()
     state.phase = ENDING
     state.priority = -1

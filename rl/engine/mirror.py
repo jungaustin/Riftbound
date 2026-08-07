@@ -30,7 +30,7 @@ SEAT_AXIS = (
     "hand", "n_hand", "deck", "deck_ptr", "n_deck", "trash", "n_trash",
     "runes_ready", "runes_spent", "rune_deck", "rune_head", "rune_left",
     "pool_energy", "pool_power", "bf_scored", "points", "burned_out",
-    "legend", "champion",
+    "legend", "champion", "no_spells",
 )
 
 # The value *is* a seat id: flip it, but leave the -1 "nobody" sentinel alone.
@@ -48,7 +48,7 @@ UNCHANGED = (
     "chain_targets", "pend_slot",
     # `fd_ply` and `ply` are turn counters, and `pend_hide` is a hand index
     # in the acting seat's own hand -- none of them names a seat.
-    "fd_ply", "ply", "pend_hide",
+    "fd_ply", "ply", "pend_hide", "chain_uid",
 )
 
 # Handled by hand below: they carry seat ids *inside* a matrix.

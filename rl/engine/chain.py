@@ -40,6 +40,7 @@ from rl.engine.cardtable import CardTable
 from rl.engine.cost import plan_payment
 from rl.engine.effects import SPEED_ACTION, SPEED_REACTION, spec_for
 from rl.engine.state import (C_BOUND_BF, C_CARD, C_CTRL, C_FINAL, C_FROM_HAND,
+                             C_UID,
                              MAIN, MAX_CHAIN, MAX_TARGETS, N_BF, N_SEATS,
                              GameState)
 
@@ -74,7 +75,7 @@ def playable_hand_indices(state: GameState, table: CardTable, cfg: Config,
     Three identical cards are one choice: they are interchangeable, so offering
     all three triples the branching for nothing.
     """
-    if cfg.units_only:
+    if cfg.units_only or state.no_spells[seat]:
         return []
     seen: set[int] = set()
     out: list[int] = []
@@ -140,7 +141,7 @@ def hidden_playable(state: GameState, table: CardTable, cfg: Config,
       811.1.d  it cannot be played at all if its bound targets have no legal
                options at that battlefield.
     """
-    if cfg.units_only:
+    if cfg.units_only or state.no_spells[seat]:
         return []
     out = []
     for i in range(N_BF):
@@ -171,9 +172,37 @@ def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
     row[C_FINAL] = 0
     row[C_FROM_HAND] = int(from_hand)
     row[C_BOUND_BF] = bound_bf
+    row[C_UID] = state.chain_uid
+    state.chain_uid += 1
     state.chain_targets[i, :] = -1
     state.n_chain = i + 1
     return i
+
+
+def index_of_uid(state: GameState, uid: int) -> int:
+    """Chain index holding `uid`, or -1 if it has already left the chain."""
+    for i in range(state.n_chain):
+        if int(state.chain[i, C_UID]) == uid:
+            return i
+    return -1
+
+
+def counter(state: GameState, table: CardTable, uid: int) -> str | None:
+    """Remove a chain item without resolving it. Returns its card name.
+
+    A countered spell still goes to the trash -- it was played, it just never
+    resolved. Returns None if it is already gone, which is normal: two players
+    can counter the same item, and the second one fizzles (359.3.e).
+    """
+    i = index_of_uid(state, uid)
+    if i < 0:
+        return None
+    card, ctrl, *_ = _pop(state, i)
+    n = int(state.n_trash[ctrl])
+    assert n < state.trash.shape[1], "trash overflow"
+    state.trash[ctrl, n] = card
+    state.n_trash[ctrl] = n + 1
+    return table.names[card]
 
 
 def oldest_pending(state: GameState) -> int:

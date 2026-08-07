@@ -1,0 +1,32 @@
+# Viktor Mind/Order (user-supplied 2026-08-06, source not recorded)
+Legend: Viktor, Herald of the Arcane
+Champion: Viktor, Leader
+Main Deck:
+1x B.F. Sword
+3x Bellows Breath
+1x Blood Money
+3x Carrion Dredger
+3x Cull the Weak
+3x Escaped Grayback
+3x Hidden Blade
+3x Imperial Decree
+1x Salvage
+3x Shadow's Call
+3x Sprite Fountain
+3x Stupefy
+3x Vi, Peacekeeper
+3x Wages of Pain
+3x Xin Zhao, Vigilant
+Battlefields:
+1x Forbidding Waste
+1x Rockfall Path
+1x Void Gate
+Runes:
+5x Mind Rune
+7x Order Rune
+Sideboard:
+1x Decree of Insight
+1x Decree of Unity
+3x Pickpocket
+3x Safety Inspector
+2x Salvage

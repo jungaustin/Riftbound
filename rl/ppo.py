@@ -381,14 +381,14 @@ def explained_variance(pred: np.ndarray, target: np.ndarray) -> float:
 
 # ---------------------------------------------------------------------------
 
-SPELLS = ("Stupefy", "Discipline", "Smoke Screen",
-          "Back Off", "Facebreaker", "Smoke and Mirrors")
+SPELLS = ("Stupefy", "Discipline", "Smoke Screen", "Lilting Lullaby",
+          "Defy", "Back Off", "Facebreaker", "Smoke and Mirrors")
 
 
 # Measured from the 29 decklists in `decks/`, not assumed:
 #   main deck   39 cards, every single deck
 #   copies      at most 3 of any one card
-#   spells      28% - 62% of the main deck, median 49%
+#   spells      28% - 67% of the main deck, median 49% (33 decks)
 #
 # An earlier version of this file used 30 cards and called a 30% spell rate
 # "well above what a real decklist would run". Both were wrong, and the second
@@ -396,7 +396,7 @@ SPELLS = ("Stupefy", "Discipline", "Smoke Screen",
 # range. The project owner's Lillia lists run 54%.
 MAIN_DECK_SIZE = 39
 MAX_COPIES = 3
-SPELL_RATE_RANGE = (0.28, 0.62)
+SPELL_RATE_RANGE = (0.28, 0.67)
 
 
 def v1_deal(table, deck_size: int = MAIN_DECK_SIZE,

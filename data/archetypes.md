@@ -6,7 +6,7 @@ is not written down here, the tools will not claim anything about it — that is
 deliberate, and it is what stops the model from inventing a meta that sounds
 plausible and is fiction.
 
-as_of: 2026-07-31
+as_of: 2026-08-06
 
 **Reader context (2026-07-31).** The user is a new player and does not have a
 local field to report. Every list in `decks/meta/` is a deck found online that
@@ -14,9 +14,23 @@ did well in a tournament — not something the user has actually sat across from
 Treat this whole file as "what wins tournaments somewhere", not "what the user
 will face", until real games get recorded. There are now THREE data grades in
 this file, best to worst: the four `VEN` entries (real event, real lists), the
-six pre-Vendetta entries (real lists, older format), and the `HEARSAY` entries
-at the bottom (named threats from two content-creator guide transcripts, no
-lists). Never let a HEARSAY entry outvote a VEN entry.
+six pre-Vendetta entries plus the four `LIST` entries (real lists, no event
+data), and the `HEARSAY` entries at the bottom (named threats from two
+content-creator guide transcripts, no lists). Never let a HEARSAY entry
+outvote a VEN entry.
+
+**New batch added 2026-08-06 — the four `LIST` entries.** The user pasted
+seven decklists. Three of them (Azir Calm/Order, Kai'Sa Fury/Mind, Master Yi
+Body/Calm) were **byte-identical to the existing VEN top-4 lists** and were
+not duplicated; the other four — Ezreal Chaos/Mind, Irelia Calm/Chaos, Rek'Sai
+Fury/Order, Viktor Mind/Order — are new and are saved in `decks/meta/` with no
+`ven-` prefix. **No source, event, or finish was recorded for any of them.**
+That three of the seven are exact copies of the Vendetta top 4 is suggestive of
+a shared origin, but suggestive is not evidence: until provenance is supplied,
+these four carry list-grade confidence (plan, curve, and rune math are solid,
+read straight off the cards) and ZERO matchup or prevalence confidence. Their
+`strong_vs`/`weak_to` lines are labelled STRUCTURAL INFERENCE for that reason.
+All four validate as legal 40/12/3 under the current banlist.
 
 **BANLIST WARNING (added 2026-08-05).** Six of the eleven lists in `decks/meta/`
 are **pre-ban and now illegal** — all six on their battlefield line:
@@ -65,7 +79,14 @@ same prevalence note. If you learn the ordering, put it in.
 
 These come from comparing all six sideboards, and are the most trustworthy
 meta signal in the file, because a sideboard is a direct statement of what a
-pilot expects to face.
+pilot expects to face. **Scope note (2026-08-06):** every count below is over
+the ORIGINAL SIX pre-Vendetta lists only. `decks/meta/` now holds sixteen
+lists, so "four of six" and "all six" here are not field-wide totals any more.
+Two of the numbers are already superseded: the rune-load claim below names
+only Sivir (3.3 Body) and Darius (3.0 Order) as stretched, but VEN Kai'Sa
+(4.2 Mind), VEN Kennen (2.9 Chaos) and LIST Viktor (2.9 Order) are all in or
+past that range. Re-derive these observations across all sixteen before
+quoting them.
 
 - **Four of six sideboards carry gear hate**: Thermo Beam (Annie, Darius),
   Factory Recall (Annie, Sivir), Disarming Rake (Master Yi), plus Acceptable
@@ -385,9 +406,9 @@ plan: Print ready 3-Might Temporary Sprites (Legend ability, Sprite Fountain,
   final-point conquer restriction by scoring every battlefield in one turn).
 key_cards: Sprite Fountain, Sprite Burst, Ravenbloom Student, Defy,
   Mask of Foresight, Riptide Rex, Smoke and Mirrors
-strong_vs: slow spell decks with little action-speed interaction (per the
-  guides: Pyke/Jhin-style shells) — the token stream outpaces reactive removal
-  because every dead token is a card the opponent spent on nothing
+strong_vs: slow spell decks with little action-speed interaction — per the two
+  Lillia guides, Pyke/Jhin-style shells — the token stream outpaces reactive
+  removal because every dead token is a card the opponent spent on nothing
 weak_to: established holds it cannot crack (big Tank/Deflect holders); Vex -
   Apathetic specifically (see HEARSAY entry — stuns every unit its opponent
   plays, and the deck's whole plan is playing ready tokens); sweepers are
@@ -401,6 +422,159 @@ notes: Gale Winds (the archetype's defining pilot) runs ZERO copies of the
   and Mirrors).
 confidence: high on plan (two real lists + pilot interview), none on matchups
 updated: 2026-07-31
+
+## LIST — Ezreal Spell Velocity
+
+legend: Ezreal - Prodigal Explorer
+identity: Chaos+Mind
+speed: midrange control; average cost 2.70, 26 of 40 copies are spells
+prevalence: unknown — list supplied 2026-08-06, no event or finish recorded
+plan: Make spells cheap, then cast several a turn and get paid for each one.
+  The Legend exhausts for a [Reaction] Draw 1, usable only if you have chosen
+  enemy units and/or gear TWICE this turn with spells or abilities — so the
+  deck is built from cheap targeted spells (Stupefy {1}, Frigid Touch, Bellows
+  Breath, Wages of Pain) specifically to turn the Legend on every turn.
+  Applied Researchers (3x) Empowers for {3} and then makes every spell cost
+  {1 energy}{any rune} less; Ezreal - Prodigy discounts optional additional
+  costs ([Repeat], [Flow], [Accelerate], [Equip]) by {1 energy} or {any rune}.
+  Card flow is 10 draw effects plus 12 recursion effects — Dredge Up and Up
+  from the Deep both have [Flow] and get cast twice, and Fizz - Trickster
+  replays a spell of Energy cost {3} or less out of the trash.
+key_cards: Applied Researchers, Ezreal - Prodigy, Fizz - Trickster, Dredge Up,
+  Up from the Deep, Wages of Pain, Vex - Apathetic
+battlefields: Void Gate (spells/abilities affecting units here deal +1 bonus
+  damage — turns Bellows Breath into 2-to-three-units and Wages of Pain into
+  4), Sigil of the Storm (conquer here, recycle a rune), Frozen Fortress
+  (1 damage to every unit here each Beginning Phase)
+strong_vs: STRUCTURAL INFERENCE, not observed. Boards of 1-2 Might bodies —
+  Bellows Breath at Void Gate deals 2 to three units for {1}{P1}, and 2x Vex -
+  Apathetic maindeck stuns every unit an opponent plays while she stands at a
+  battlefield
+weak_to: STRUCTURAL INFERENCE. Only 14 units, three of them 1-of; the deck
+  answers threats but does not pressure, so a resilient board that ignores
+  small damage outruns it. Its own Tentacle tokens (1 Might, from Up from the
+  Deep) die to its own Frozen Fortress
+tech_against: gear (Turn to Dust main + sideboard, 3x Pickpocket sideboard);
+  hand disruption in the board (Mindsplitter)
+notes: This is the FIRST recorded list running Vex - Apathetic maindeck. The
+  HEARSAY entry below calls Vex the worst enemy of Lillia Sprite Tempo; a real
+  list now plays two. Read those two entries together.
+confidence: high on plan (list + verified card text), NONE on matchups or
+  prevalence
+updated: 2026-08-06
+
+## LIST — Irelia Ready-and-Move Tempo
+
+legend: Irelia - Blade Dancer
+identity: Calm+Chaos
+speed: fast tempo; average cost 2.27, 27 of 40 copies at 1-2 runes
+plan: Untap the same unit over and over. The Legend reads "when you choose a
+  friendly unit, you may exhaust me and pay {any rune} to ready it," and
+  "when you conquer, you may pay {1 energy} to ready me" — so every cheap
+  buff that CHOOSES your own unit (Discipline, En Garde, Defiant Dance) is
+  also a free ready, and conquering refunds the Legend for the next one.
+  Irelia - Fervent closes the loop: [Deflect], and "when you choose or ready
+  me, give me +1 Might this turn," so each activation grows her twice over.
+  The movement half — Stellacorn Herder (draw on move), Ride the Wind (move
+  and ready), Tideturner (swap two friendly units' locations) — repositions
+  the single threat to wherever the point is.
+key_cards: Irelia - Fervent, Defiant Dance, Discipline, Ride The Wind,
+  Tideturner, Stellacorn Herder, Zhonya's Hourglass
+prevalence: unknown — list supplied 2026-08-06, no event or finish recorded
+battlefields: Targon's Peak (conquer here, ready 2 runes at end of turn — this
+  is the deck's fuel line, because every Legend activation costs {any rune});
+  Sunken Temple (conquer with a 5+ Might unit, pay {1} to draw 1 — Fervent
+  gets there after two buffs); Abandoned Hall (playing a spell may give a unit
+  here +1 Might — symmetric, but this deck casts 23 spells)
+strong_vs: STRUCTURAL INFERENCE. Decks that answer a threat by blocking it,
+  since readying means the same unit defends after attacking
+weak_to: STRUCTURAL INFERENCE. Same structural weakness the file already
+  records for Master Yi — only 12 units, so going wide beats one big body.
+  Also rune-starved: every Legend ready costs a rune on top of the spell, and
+  the deck has no ramp beyond Find Your Center and Targon's Peak
+tech_against: cheap disposable blockers; rune denial; sweepers hit its 12-unit
+  board hard
+data_gap: Boots of Swiftness (2x) and Guardian Angel (1x) have NO attached
+  ability text in data/cards.json — only the [Equip] line is recorded. Do not
+  claim what those two gear do until the card data is fixed.
+confidence: high on plan, NONE on matchups or prevalence
+updated: 2026-08-06
+
+## LIST — Rek'Sai Assault Aggro
+
+legend: Rek'sai - Void Burrower
+identity: Fury+Order
+speed: aggro; average cost 2.42, 25 of 40 copies castable at 2 runes
+prevalence: unknown — list supplied 2026-08-06, no event or finish recorded
+plan: Cheap bodies that hit far above their printed Might while attacking,
+  refuelled by conquering. The Legend exhausts on conquer to reveal the top 2
+  and play one; Void Rush (2x, the signature) does the same for {2}{P1} with a
+  {2 energy} discount. Rek'Sai - Breacher is what makes that a tempo engine
+  rather than card advantage: "friendly units played from anywhere other than
+  a player's hand have [Accelerate]," so anything hit off a reveal enters
+  READY. Undertitan is built for it — "as I'm revealed from your deck, [Add]
+  {2 energy}." The buff package is all Assault (+Might only while attacking):
+  Blood Rush (3x, [Repeat]), Cleave (2x), Daring Poro, Inferna, Breacher
+  itself. 25 units is the most unit-dense list in this file.
+key_cards: Rek'Sai - Breacher, Void Rush, Undertitan, Blood Rush, Inferna,
+  Noxus Hopeful, Falling Star
+battlefields: Forbidding Waste (a unit defending ALONE here has -2 Might),
+  Hall of Legends (conquer here, pay {1} to ready your Legend — a second
+  reveal in the same turn), Seat of Power (conquer, draw 1 per other
+  battlefield you control)
+strong_vs: STRUCTURAL INFERENCE, but a hard one: Forbidding Waste directly
+  cancels the Master Yi Legend, which grants +2 Might to a friendly unit
+  defending alone. -2 and +2 net to zero, and the whole Master Yi plan is one
+  unit defending alone
+weak_to: STRUCTURAL INFERENCE. Sweepers and mass -Might. Average Might at 2
+  energy is 1.6, so the VEN Kai'Sa entry's damage breakpoints apply to
+  essentially this entire board (Thousand-Tailed Watcher's -3 Might alone
+  clears it). Assault buffs are also blank on defence
+tech_against: anything that stops the conquer trigger, since both the Legend
+  and two of three battlefields only pay out on conquer
+confidence: high on plan, NONE on matchups or prevalence
+updated: 2026-08-06
+
+## LIST — Viktor Token Attrition
+
+legend: Viktor - Herald of the Arcane
+identity: Mind+Order
+speed: slow control; average cost 2.62, 17 removal-flagged copies
+prevalence: unknown — list supplied 2026-08-06, no event or finish recorded
+plan: An endless supply of free bodies feeding an unusually deep removal suite.
+  The Legend makes a 1 Might Recruit token for {1} and an exhaust EVERY turn;
+  Viktor - Leader makes another whenever a non-Recruit unit you control dies.
+  The deck then converts those bodies into cards and damage: Shadow's Call
+  (give a friendly unit [Temporary], draw 2), Escaped Grayback ([Empower] by
+  killing a friendly unit), Blood Money (kill a ≤2 Might unit; a FRIENDLY one
+  makes two Gold tokens), Carrion Dredger ([Deathknell] leaves a 1 Might
+  [Deflect] Bird). Sprite Fountain is two ready 3 Might Sprites per copy — it
+  makes one on play and repeats on its own [Deathknell]. Xin Zhao - Vigilant
+  enters ready whenever two other units are in base, which the token stream
+  guarantees.
+key_cards: Viktor - Leader, Sprite Fountain, Imperial Decree, Hidden Blade,
+  Shadow's Call, Xin Zhao - Vigilant, Vi - Peacekeeper
+combo: Imperial Decree (3x, {5}{P2}: "when any unit takes damage this turn,
+  kill it") plus Bellows Breath (3x, 1 damage to up to three units at a
+  location, [Repeat]) is a two-card unconditional wipe that ignores Might
+  entirely. It is SYMMETRIC — it kills Viktor's own damaged units too, which
+  is precisely why the deck wants replaceable tokens. Wages of Pain (3x) and
+  Void Gate's +1 bonus damage feed the same line.
+battlefields: Void Gate (+1 bonus damage from spells/abilities — Bellows
+  Breath becomes a 2-damage sweep), Rockfall Path (units can't be played
+  here at all), Forbidding Waste (-2 Might to a unit defending alone)
+strong_vs: STRUCTURAL INFERENCE. Single-threat decks — 17 removal copies plus
+  3x Vi - Peacekeeper stunning on attack, against a plan that has one body
+weak_to: STRUCTURAL INFERENCE, though this one is arithmetic rather than a
+  matchup guess. 20 hard Order pips across only 7 Order runes (2.9 per rune), 26
+  runes leaving the pool if every copy is cast. That is the fourth-heaviest
+  rune load in this file, just under Darius (3.0 Order). Only 17 of 40 copies
+  are castable off any rune. It cannot deploy and hold up interaction in the
+  same turn nearly as often as its card quality suggests
+tech_against: rune denial and pressure that punishes a tapped-out turn; gear
+  hate is nearly blank here (4 gear, one of them a 1-of)
+confidence: high on plan and rune math, NONE on matchups or prevalence
+updated: 2026-08-06
 
 ## HEARSAY — NA circuit threats named in the two Lillia guides
 

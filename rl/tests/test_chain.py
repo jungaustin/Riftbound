@@ -17,7 +17,10 @@ import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))
 
+from dataclasses import replace
+
 from rl.config import Config
+from rl.engine import phases
 from rl.engine import chain
 from rl.engine.cardtable import full_table
 from rl.engine.state import (C_CARD, F_STUNNED, P_FLAGS, GameState,
@@ -25,6 +28,7 @@ from rl.engine.state import (C_CARD, F_STUNNED, P_FLAGS, GameState,
 
 T = full_table()
 CFG = Config()
+CFG_V1 = replace(Config(), units_only=False)
 
 BACK_OFF = T.id_of("Back Off")
 
@@ -183,5 +187,62 @@ chain.resolve_top(s, T, CFG)                     # ix resolves -> stuns x
 if not (s.perms[x, P_FLAGS] & F_STUNNED):
     die("targets", "the remaining item lost its target when the other resolved")
 ok("the surviving item kept its own target through the other's resolution")
+
+
+# ---------------------------------------------------------------------------
+print("\n[6] countering: uids are stable, and a counter beats what it answers")
+from rl.engine import resolve as rsv
+from rl.engine.effects import SPECS, TK_SPELL
+from rl.engine.state import C_UID
+
+LULLABY, DEFY = SPECS["Lilting Lullaby"], SPECS["Defy"]
+BIG = T.id_of("Lilting Lullaby")        # 2E 2P -- too expensive for Defy
+
+s = fresh()
+v = s.add_permanent(U2, 1, bf_loc(0))
+a = chain.push(s, BACK_OFF, 0); chain.set_target(s, a, 0, v); chain.finalize(s, a)
+b = chain.push(s, BACK_OFF, 1); chain.set_target(s, b, 0, v); chain.finalize(s, b)
+uid_a = int(s.chain[a, C_UID])
+
+# The newest item is excluded (a spell cannot counter itself); the older is fair
+# game.
+c = chain.push(s, T.id_of("Lilting Lullaby"), 1)
+opts = rsv.legal_targets(s, T, LULLABY, 0, 1, [], -1)
+if int(s.chain[c, C_UID]) in opts:
+    die("counter", "a spell was offered as a target for itself")
+if uid_a not in opts:
+    die("counter", f"an older finalized item should be counterable: {opts}")
+ok("a counterspell may target older chain items but never itself")
+
+# Uids survive other items resolving -- the whole reason they exist.
+chain.set_target(s, c, 0, uid_a)
+chain.finalize(s, c)
+before_idx = chain.index_of_uid(s, uid_a)
+chain.resolve_top(s, T, CFG)            # the Lullaby resolves, countering a
+if chain.index_of_uid(s, uid_a) >= 0:
+    die("counter", "the targeted item was not removed from the chain")
+if not s.no_spells[0]:
+    die("counter", "'its controller can't play spells this turn' did not apply")
+ok("countering removes the targeted item and restricts its controller")
+
+# The restriction is turn-scoped and blocks that seat from playing spells.
+assert not chain.playable_hand_indices(s, T, CFG_V1, 0), \
+    "a restricted seat must not be offered spells"
+phases.end_turn(s, CFG_V1)
+if s.no_spells[0]:
+    die("counter", "the restriction must clear at end of turn")
+ok("the restriction blocks spells, then expires at end of turn")
+
+# Defy's printed cost limit is a target RESTRICTION, not a condition.
+s = fresh()
+cheap = chain.push(s, BACK_OFF, 0); chain.finalize(s, cheap)      # 3E, 0P
+pricey = chain.push(s, BIG, 0); chain.finalize(s, pricey)         # 2E, 2P
+_ = chain.push(s, T.id_of("Defy"), 1)
+opts = rsv.legal_targets(s, T, DEFY, 0, 1, [], -1)
+if int(s.chain[pricey, C_UID]) in opts:
+    die("counter", "Defy targeted a spell costing more than {any rune}")
+if int(s.chain[cheap, C_UID]) not in opts:
+    die("counter", f"Defy should reach a 3E 0P spell: {opts}")
+ok("Defy's cost limit narrows the legal targets (a restriction, not a condition)")
 
 print("\n\033[32mall chain tests passed\033[0m")

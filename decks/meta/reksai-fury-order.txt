@@ -1,0 +1,34 @@
+# Rek'Sai Fury/Order (user-supplied 2026-08-06, source not recorded)
+Legend: Reksai, Void Burrower
+Champion: Rek'Sai, Breacher
+Main Deck:
+3x Blood Rush
+1x Brynhir Thundersong
+3x Carrion Dredger
+2x Cleave
+3x Cull the Weak
+3x Daring Poro
+2x Faithful Manufactor
+3x Falling Star
+1x Hidden Blade
+3x Inferna
+3x Legion Rearguard
+3x Noxus Hopeful
+3x Pouty Poro
+1x Shadow Fiend
+2x Undertitan
+2x Void Rush
+1x Void Seeker
+Battlefields:
+1x Forbidding Waste
+1x Hall of Legends
+1x Seat of Power
+Runes:
+8x Fury Rune
+4x Order Rune
+Sideboard:
+1x Brynhir Thundersong
+3x Divine Judgment
+2x Long Sword
+2x Salvage
+2x Shadow Fiend
