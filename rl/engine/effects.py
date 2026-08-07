@@ -59,11 +59,12 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
 (OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT, OP_COUNTER,
  OP_NO_SPELLS, OP_CREATE_TOKEN, OP_MOVE_TO, OP_RETURN_TO_HAND,
  OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER, OP_READY,
- OP_MODIFY_MIGHT_ALL, OP_DAMAGE_ALL) = range(15)
+ OP_MODIFY_MIGHT_ALL, OP_DAMAGE_ALL,
+ OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT) = range(19)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
-            "damage_all")
+            "damage_all", "discard", "kill_all", "exhaust_all", "heal_at")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -73,10 +74,11 @@ OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
 T_SELF = -2      # the permanent the ability is printed on
 T_HERE = -3      # that permanent's current location
 T_CTX = -4       # the location captured when the trigger fired (359.3.f.3)
+T_OWNER_BASE = -5  # the base of the unit in the op's FIRST slot ("to its base")
 
 # --- conditions, checked at resolution ------------------------------------
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
- COND_ONLY_UNIT_THERE) = range(4)
+ COND_ONLY_UNIT_THERE, COND_CONTROL_N_GEAR) = range(5)
 
 
 class TargetSpec(NamedTuple):
@@ -95,6 +97,12 @@ class TargetSpec(NamedTuple):
     # "another unit" on a unit's own ability: exclude the ability's source.
     # Distinct from `rel`, which relates a slot to an earlier SLOT.
     not_self: bool = False
+    # "up to N" -- the slot may be left EMPTY. 355.14 lets a player choose
+    # fewer targets than the maximum, so the card is still legal to play with
+    # nothing to point at, and each unfilled slot simply does nothing. Without
+    # this, "Deal 6 to each of up to two units" would be unplayable whenever
+    # only one unit existed.
+    optional: bool = False
 
 
 class Op(NamedTuple):
@@ -332,6 +340,54 @@ SPECS: dict[str, CardSpec] = {
     # These need no mechanism the DSL did not already have. Kept together so
     # the batch is legible; the ordering tool is `rl/tools/triage.py`.
 
+    # [Reaction] Move up to 2 friendly units to base.
+    "Flash": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_FRIENDLY, optional=True),
+                 TargetSpec(who=W_FRIENDLY, optional=True)),
+        ops=(Op(OP_MOVE_TO, target=0, target_b=T_OWNER_BASE),
+             Op(OP_MOVE_TO, target=1, target_b=T_OWNER_BASE)),
+    ),
+
+    # Deal 6 to each of up to two units.
+    "Singularity": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(who=W_ANY, optional=True),
+                 TargetSpec(who=W_ANY, optional=True)),
+        ops=(Op(OP_DAMAGE, target=0, n=6), Op(OP_DAMAGE, target=1, n=6)),
+    ),
+
+    # [Action] Return a unit at a battlefield to its owner's hand.
+    "Rebuke": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY, at_battlefield=True),),
+        ops=(Op(OP_RETURN_TO_HAND, target=0),),
+    ),
+
+    # [Action] Deal 4 to a unit at a battlefield. Draw 1.
+    "Void Seeker": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY, at_battlefield=True),),
+        ops=(Op(OP_DAMAGE, target=0, n=4), Op(OP_DRAW, n=1)),
+    ),
+
+    # Kill all units.  Untargeted and total -- ours too.
+    "The Ruination": CardSpec(speed=SPEED_MAIN, ops=(Op(OP_KILL_ALL),)),
+
+    # Exhaust all friendly units, then deal 12 to ALL units at battlefields.
+    # The exhaust is not a cost, it is the first instruction, so it happens
+    # even if the damage kills nothing.
+    "Unchecked Power": CardSpec(
+        speed=SPEED_MAIN,
+        ops=(Op(OP_EXHAUST_ALL), Op(OP_DAMAGE_ALL, n=12)),
+    ),
+
+    # [Reaction] Discard 1, then draw 2.
+    "Lunar Boon": CardSpec(
+        speed=SPEED_REACTION,
+        ops=(Op(OP_DISCARD, n=1), Op(OP_DRAW, n=2)),
+    ),
+
     # [Action] Give a unit +5 Might this turn.
     "Punch First": CardSpec(
         speed=SPEED_ACTION,
@@ -468,6 +524,32 @@ def statics_for(table, card: int) -> tuple[Static, ...]:
 RECRUIT_TOKEN = "Recruit (271) // Buff"   # 1 Might domainless unit token
 
 ABILITIES: dict[str, tuple[Ability, ...]] = {
+
+    # [Tank] When you play me, move a unit from a battlefield to its base.
+    # "its base" is the TARGET's owner's base, not the caster's -- moving an
+    # enemy unit sends it home, not to yours.
+    "Maddened Marauder": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY, at_battlefield=True),),
+                ops=(Op(OP_MOVE_TO, target=0, target_b=T_OWNER_BASE),)),
+    ),
+
+    # When you play me, if you control 3 or more other gear, draw 1.
+    # A CONDITION, not a restriction: the card is played regardless and the
+    # draw simply fails when the board does not support it.
+    "Patched Porobot": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_DRAW, n=1, cond=COND_CONTROL_N_GEAR, floor=3),)),
+    ),
+
+    # [Reaction] When you play me, heal your units here, then move an enemy
+    # unit from here to its base.
+    "Janna - Savior": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ENEMY, at_battlefield=True),),
+                ops=(Op(OP_HEAL_AT, target=T_HERE),
+                     Op(OP_MOVE_TO, target=0, target_b=T_OWNER_BASE))),
+    ),
 
     # [Tank] When you play me, draw 1.
     # [Tank] is a keyword flag the damage-assignment tiers already read, so the

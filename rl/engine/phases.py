@@ -181,6 +181,28 @@ def draw_for(state: GameState, seat: int, n: int = 1) -> list[int]:
         state.active = prev
 
 
+def discard(state: GameState, seat: int, n: int = 1) -> list[int]:
+    """Discard `n` from `seat`'s hand, oldest first.
+
+    Which card to discard is a real choice on many cards, but nothing in the
+    pool yet lets the player pick -- Lunar Boon simply says "discard 1". Taking
+    the oldest keeps it deterministic; the day a card says "discard a card of
+    your choice" this becomes a decision point rather than a rule here.
+    """
+    out = []
+    for _ in range(n):
+        h = int(state.n_hand[seat])
+        if h <= 0:
+            break
+        card = int(state.hand[seat, 0])
+        state.hand[seat, 0:h - 1] = state.hand[seat, 1:h]
+        state.hand[seat, h - 1] = -1
+        state.n_hand[seat] = h - 1
+        _to_trash(state, seat, card)
+        out.append(card)
+    return out
+
+
 def draw(state: GameState, n: int = 1) -> list[int]:
     """Draw n; an empty Main Deck is a Burn Out and the draw still happens (315.4)."""
     seat = state.active

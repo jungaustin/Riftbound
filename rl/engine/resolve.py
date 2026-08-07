@@ -38,17 +38,19 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                OP_RETURN_TO_HAND,
                                OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
-                               OP_DAMAGE_ALL, OP_MODIFY_MIGHT_ALL,
+                               COND_CONTROL_N_GEAR, OP_DAMAGE_ALL,
+                               OP_DISCARD, OP_EXHAUST_ALL, OP_HEAL_AT,
+                               OP_KILL_ALL, OP_MODIFY_MIGHT_ALL,
                                OP_READY, OP_SWAP_LOC,
                                REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
                                TK_LOCATION, TK_SPELL, W_FRIENDLY,
-                               T_CTX, T_HERE, T_SELF,
+                               T_CTX, T_HERE, T_OWNER_BASE, T_SELF,
                                CardSpec, Op,
                                TargetSpec)
 from rl.engine import chain
 from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, N_BF, P_ALIVE,
-                             P_CARD, P_CTRL, P_LOC, P_READY, GameState,
+                             P_CARD, P_CTRL, P_DMG, P_LOC, P_READY, GameState,
                              base_loc, bf_loc, is_battlefield)
 
 
@@ -161,6 +163,12 @@ def _can_complete(state: GameState, table: CardTable, spec: CardSpec, slot: int,
     """
     if slot >= spec.n_targets:
         return True
+    if spec.targets[slot].optional:
+        # 355.14 -- "up to N" may be satisfied with fewer, so an optional slot
+        # can always be completed by skipping it. Without this the whole card
+        # would be unplayable when the board is too empty to fill it.
+        return _can_complete(state, table, spec, slot + 1, seat, chosen + [-1],
+                             bound_bf, source)
     return any(
         _can_complete(state, table, spec, slot + 1, seat, chosen + [p], bound_bf,
                       source)
@@ -195,7 +203,8 @@ def can_be_cast(state: GameState, table: CardTable, spec: CardSpec, seat: int,
 # ---------------------------------------------------------------------------
 
 def _condition_holds(state: GameState, table: CardTable, op: Op,
-                     targets: list[int], from_hand: bool) -> bool:
+                     targets: list[int], from_hand: bool, seat: int = -1,
+                     source: int = -1) -> bool:
     if op.cond == COND_NONE:
         return True
     if op.cond == COND_FROM_HAND:
@@ -206,6 +215,15 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
             return False
         loc, ctrl = int(state.perms[a, P_LOC]), int(state.perms[a, P_CTRL])
         return state.units_at(loc, ctrl).size == 1
+    if op.cond == COND_CONTROL_N_GEAR:
+        # "if you control N or more OTHER gear" -- the source itself does not
+        # count, which is what `floor` carries here as the threshold.
+        n = sum(1 for i in range(state.n_perms)
+                if state.perms[i, P_ALIVE] == 1
+                and int(state.perms[i, P_CTRL]) == seat
+                and i != source
+                and table.is_type(int(state.perms[i, P_CARD]), "Gear"))
+        return n >= int(op.floor or 0)
     if op.cond == COND_ANY_TARGET_TEMPORARY:
         return any(table.has(int(state.perms[t, P_CARD]), "Temporary")
                    for t in targets if t >= 0)
@@ -227,6 +245,7 @@ def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
         return int(state.perms[source, P_LOC]) if source >= 0 else -1
     if idx == T_CTX:
         return ctx
+
     return still_legal[idx] if 0 <= idx < len(still_legal) else -1
 
 
@@ -271,7 +290,8 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
         return log
 
     for op in spec.ops:
-        if not _condition_holds(state, table, op, still_legal, from_hand):
+        if not _condition_holds(state, table, op, still_legal, from_hand,
+                                seat, source):
             log["fizzled"].append(op.op)
             continue
 
@@ -313,7 +333,13 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             owner = int(state.perms[a, P_CTRL])
             log["drew_opponent"] = phases.draw_for(state, owner, op.n)
         elif op.op == OP_MOVE_TO:
-            dst = _slot(state, still_legal, op.target_b, source, ctx)
+            if op.target_b == T_OWNER_BASE:
+                # "to its base" -- the base of whoever controls THIS op's own
+                # target, so an enemy unit goes home rather than to ours, and
+                # a card moving two units sends each to the right place.
+                dst = base_loc(int(state.perms[a, P_CTRL])) if a >= 0 else -1
+            else:
+                dst = _slot(state, still_legal, op.target_b, source, ctx)
             if dst < 0:
                 log["fizzled"].append(op.op)
                 continue
@@ -368,6 +394,26 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["stunned"] = log.get("stunned", [])
             if state.stun(a):
                 log["stunned"].append(a)
+        elif op.op == OP_DISCARD:
+            log["discarded"] = phases.discard(state, seat, op.n)
+        elif op.op == OP_KILL_ALL:
+            for i in range(state.n_perms):
+                r = state.perms[i]
+                if r[P_ALIVE] == 1 and table.is_type(int(r[P_CARD]), "Unit"):
+                    combat.destroy(state, table, i)
+                    log.setdefault("killed", []).append(i)
+        elif op.op == OP_EXHAUST_ALL:
+            for i in range(state.n_perms):
+                r = state.perms[i]
+                if (r[P_ALIVE] == 1 and int(r[P_CTRL]) == seat
+                        and table.is_type(int(r[P_CARD]), "Unit")):
+                    r[P_READY] = 0
+        elif op.op == OP_HEAL_AT:
+            # "heal your units here" -- removes marked damage (no rule allows
+            # healing to kill, so no 143.2.a re-check is needed).
+            for i in state.units_at(a, seat):
+                state.perms[i, P_DMG] = 0
+            log["healed_at"] = a
         elif op.op == OP_DAMAGE_ALL:
             # "Deal N to all units at battlefields" -- untargeted (355.10) and
             # indiscriminate: it hits the caster's units too.

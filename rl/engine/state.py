@@ -86,7 +86,6 @@ MAX_PERMS = 48
 MAX_HAND = 20
 MAX_DECK = 60
 MAX_TRASH = 80
-MAX_CHAIN = 16
 # Triggers waiting to be put on the Chain. A trigger fires from wherever the
 # game action happens -- deep inside combat damage, inside a Cleanup -- and at
 # those moments the Chain must stay empty, because `is_open` is `n_chain == 0`
@@ -94,6 +93,18 @@ MAX_CHAIN = 16
 # `_destroy` would therefore block the very Cleanup that finishes the Combat.
 # So a trigger is QUEUED where it fires and drained at the next safe point.
 MAX_TRIGGERS = 32
+
+# Chain capacity, DERIVED. This was 16 and overflowed the moment a trigger
+# could fire per spell played: three Ravenbloom Students ("when you play a
+# spell, give me +1 Might") plus a five-deep spell chain is 11 abilities and 5
+# spells, which is legal and is exactly what a random game produced.
+#
+# The bound: every spell on the chain came from a hand, so spells are capped by
+# both hands together, and abilities are capped by the trigger queue that feeds
+# them. A hand-picked headroom number would have to be re-picked every time a
+# new trigger type lands -- and would announce itself by crashing a training
+# run rather than by failing a test.
+MAX_CHAIN = 2 * MAX_HAND + MAX_TRIGGERS
 RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 
 # Chain columns (rules 337-340).

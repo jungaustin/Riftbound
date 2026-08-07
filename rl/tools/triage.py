@@ -39,7 +39,15 @@ from rl.engine.effects import ABILITIES, SPECS, STATICS
 # Mechanisms that do not exist yet. A card mentioning one is blocked on the
 # mechanism, not on transcription -- ordered so the FIRST match is the biggest
 # thing standing in the card's way.
+# Token cards the effect would have to instantiate. `data/cards.json` only
+# ships Recruit and Sprite, so a card that plays a Gold, Bird, Mech, Sand
+# Soldier or Reflection token cannot be encoded at all -- there is nothing to
+# put on the board. This is a DATA gap, not an engine one, and it was giving
+# false "ready" flags on nine deck cards.
+MISSING_TOKENS = r"(Gold|Bird|Mech|Sand Soldier|Reflection|Poro|Treasure)\b[^.]*token"
+
 MECHANISMS = [
+    ("MissingToken", MISSING_TOKENS),
     ("Empower",     r"\[Empower"),
     ("XP",          r"\bXP\b|\[Level"),
     ("Equip",       r"\[Equip\]|\[Weaponmaster\]|Equipment|attach"),

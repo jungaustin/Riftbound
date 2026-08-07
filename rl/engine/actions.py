@@ -140,7 +140,15 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         item = chain.oldest_pending(state)
         if item < 0 or int(state.chain[item, C_CTRL]) != seat:
             return []
-        return [Action(A_TARGET, p) for p in _slot_options(state, table, item)]
+        opts = [Action(A_TARGET, p) for p in _slot_options(state, table, item)]
+        # 355.14 -- an "up to N" slot may be left empty, so skipping is a real
+        # choice and not merely the absence of one. `arg = -1` is the skip;
+        # `resolve` already reads a -1 slot as "no target" and fizzles just the
+        # ops that wanted it.
+        spec = chain.item_spec(state, table, item)
+        if spec.targets[int(state.pend_slot)].optional:
+            opts.append(Action(A_TARGET, -1))
+        return opts
 
     # 383.3.a -- a Triggered Ability whose effect BEGINS with "you may" is
     # accepted or declined at FINALIZATION, before targets are chosen. That
