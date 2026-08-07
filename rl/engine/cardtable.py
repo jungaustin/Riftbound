@@ -136,6 +136,12 @@ class CardTable:
             self.power.astype(np.float32) / 3.0,
             np.maximum(self.might, 0).astype(np.float32) / 5.0,
             (self.might >= 0).astype(np.float32),          # is a unit at all
+            # 185.3 -- a token that leaves the board ceases to exist. Bouncing
+            # one destroys it outright rather than being tempo, and it never
+            # returns to a hand or deck, so "is this a token" changes what a
+            # board unit is worth. Tokens are never in a decklist, so this is
+            # the only way the policy can know.
+            self.token.astype(np.float32),
         ]
         onehot_type = np.zeros((n, len(CARD_TYPES)), np.float32)
         onehot_type[np.arange(n), self.type_id] = 1.0

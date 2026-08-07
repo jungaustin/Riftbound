@@ -73,11 +73,19 @@ def _pool(table: CardTable) -> tuple[list[int], list[int]]:
 
 
 def _closest(table: CardTable, pool: list[int], want: int) -> int:
-    """Nearest implemented card by total cost, so the curve survives."""
+    """Nearest implemented card by domain first, then cost.
+
+    Domain leads because the rune deck is what gives a deck its identity: an
+    off-colour substitute is often uncastable and dilutes exactly the archetype
+    signal the substitution is supposed to preserve. Cost breaks ties so the
+    curve still survives.
+    """
     e, p = int(table.energy[want]), int(table.power[want])
-    return min(pool, key=lambda c: (abs(int(table.energy[c]) - e)
-                                    + abs(int(table.power[c]) - p),
-                                    int(table.energy[c]), c))
+    mask = int(table.domain_mask[want])
+    return min(pool, key=lambda c: (
+        0 if (int(table.domain_mask[c]) & mask) else 1,      # shares a domain
+        abs(int(table.energy[c]) - e) + abs(int(table.power[c]) - p),
+        int(table.energy[c]), c))
 
 
 def load_deck(path: Path, table: CardTable) -> DeckLoad:
