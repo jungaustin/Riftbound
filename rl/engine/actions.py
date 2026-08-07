@@ -76,13 +76,32 @@ def play_destinations(state: GameState, table: CardTable, cfg: Config,
                       seat: int, card: int) -> list[int]:
     """Locations a permanent may be played to.
 
-    Units may enter at their base or at any Battlefield -- playing onto an empty
-    one is the no-combat Conquer path (194.1.b). Gear is base-only unless played
-    from Hidden (811.1.d.1.a), which v0 does not reach.
+    **A Unit may only be played to its controller's base or a Battlefield they
+    already control.** 806.3 and 813.3.a both state this as the inherent
+    restriction on playing Units, in identical words, while explaining that
+    [Action] and [Reaction] do not lift it. This engine used to offer every
+    Battlefield, which made playing onto an empty one a free Conquer that
+    skipped the Move -- and a Move is the only thing that starts a Combat, so
+    the cheapest way to take ground was to never fight for it.
+
+    The restriction is what four separate printed texts exist to grant
+    exceptions to, and every one of them was a dead letter while any
+    Battlefield was legal:
+
+        [Ambush]                    "I may be played to a battlefield where you
+                                     control Units" (822.1.b)
+        Rengar, Trophy Hunter       "...where there are enemy units"
+        Rengar - Pouncing           "...you're attacking"
+        Ocean Drake                 "You may play me to an open battlefield"
+
+    None of those permissions are implemented yet, so this is deliberately the
+    unmodified default. Gear is base-only (149.2) unless played from Hidden
+    (811.1.d.1.a), which v0 does not reach.
     """
     if not table.is_type(card, "Unit"):
         return [base_loc(seat)]
-    return [base_loc(seat)] + [bf_loc(i) for i in range(N_BF)]
+    return ([base_loc(seat)]
+            + [bf_loc(i) for i in range(N_BF) if int(state.bf_ctrl[i]) == seat])
 
 
 def _hand_choices(state: GameState, seat: int) -> list[int]:

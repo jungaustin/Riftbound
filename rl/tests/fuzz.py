@@ -1,6 +1,6 @@
 """Random-game fuzz -- PLAN.md Phase 1.7, the M1 gate.
 
-Usage: python3 rl/tests/fuzz.py [n_games] [victory_score]
+Usage: python3 rl/tests/fuzz.py [n_games] [victory_score] [--spells]
 
 Asserts: no exceptions, every game terminates, invariants hold at every step,
 and the same seed reproduces a bit-identical result. Reports the truncation
@@ -15,6 +15,7 @@ import pathlib
 import sys
 import time
 from collections import Counter
+from dataclasses import replace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
@@ -36,9 +37,14 @@ from rl.engine.cardtable import full_table
 # changes and only fires when v0 actually plays differently. `state_hash` is
 # still the right tool for same-process determinism (identical seed, identical
 # trace), which is checked separately just above.
+# Re-pinned when `play_destinations` began enforcing 806.3 ("a Unit can only be
+# played to your base or a Battlefield you control"). Games got roughly 3x
+# longer -- mean steps 20.4 -> 56.9 at victory 3 -- because dropping a unit onto
+# an empty Battlefield was a Conquer that never had to survive a Combat, and it
+# was the fastest line in the game. Measured, not predicted.
 GOLDEN: dict[tuple[int, int], tuple] = {
-    (12345, 3): (1, 3, 13, [0, 3]),
-    (12345, 8): (1, 6, 76, [1, 8]),
+    (12345, 3): (1, 5, 70, [0, 3]),
+    (12345, 8): (1, 9, 152, [1, 9]),
 }
 
 
@@ -59,18 +65,38 @@ def make_game(table, cfg, seed):
     return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
 
 
-def main(n_games=2000, victory=3, check=True):
+def make_v1_game(table, cfg, seed):
+    """A spell game -- real deck size, real spell density, the DSL pool."""
+    from rl.ppo import v1_deal            # imported lazily: ppo pulls in torch
+    decks, runes, bfs = v1_deal(table)(seed)
+    return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
+
+
+def main(n_games=2000, victory=3, check=True, spells=False):
+    """Random-game gate. `spells=True` fuzzes the v1 game instead of v0.
+
+    v1 had no standing fuzz for most of the build -- it was checked with
+    throwaway scripts, which meant the one command that exercises the Chain,
+    targeting, damage and the response windows was rewritten from memory each
+    time and never ran in the same shape twice. v0's golden outcome does not
+    cover any of that code, because units resolve immediately (337.2) and v0
+    never opens a priority window at all.
+    """
     table = full_table()
     cfg = Config().at_victory_score(victory)
-    print(f"fuzzing {n_games} games at victory_score={victory}, "
-          f"invariants={'on' if check else 'off'}", flush=True)
+    if spells:
+        cfg = replace(cfg, units_only=False)
+    build = make_v1_game if spells else make_game
+    print(f"fuzzing {n_games} {'v1 spell' if spells else 'v0'} games at "
+          f"victory_score={victory}, invariants={'on' if check else 'off'}",
+          flush=True)
 
     t0 = time.time()
     winners, turns, steps, trunc = Counter(), [], [], 0
     every = max(1, n_games // 20)
     for i in range(n_games):
         rng = np.random.default_rng(i)
-        s = make_game(table, cfg, i)
+        s = build(table, cfg, i)
         r = game.play_game(table, cfg, s, [game.random_agent(rng)] * 2,
                            check=check)
         winners[r["winner"]] += 1
@@ -98,9 +124,9 @@ def main(n_games=2000, victory=3, check=True):
           + ("  <-- ABOVE 2%, games are stalling" if rate > 0.02 else "  ok"))
 
     # Determinism: same seed, same trace.
-    a = game.play_game(table, cfg, make_game(table, cfg, 12345),
+    a = game.play_game(table, cfg, build(table, cfg, 12345),
                        [game.random_agent(np.random.default_rng(7))] * 2)
-    b = game.play_game(table, cfg, make_game(table, cfg, 12345),
+    b = game.play_game(table, cfg, build(table, cfg, 12345),
                        [game.random_agent(np.random.default_rng(7))] * 2)
     assert a == b, f"non-deterministic:\n  {a}\n  {b}"
     print(f"  determinism: identical replay under seed (hash {a['hash']})")
@@ -109,7 +135,7 @@ def main(n_games=2000, victory=3, check=True):
     # alters the units-only game is a deliberate act rather than a surprise.
     # Neither resumable combat nor the Chain moved it: units resolve
     # immediately (337.2) and a priority window nobody can act in is skipped.
-    if (12345, victory) in GOLDEN:
+    if not spells and (12345, victory) in GOLDEN:
         got = (a["winner"], a["turns"], a["steps"], a["points"])
         want = GOLDEN[(12345, victory)]
         if got != want:
@@ -125,6 +151,7 @@ def main(n_games=2000, victory=3, check=True):
 
 
 if __name__ == "__main__":
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 2000
-    v = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-    main(n, v)
+    argv = [a for a in sys.argv[1:] if a != "--spells"]
+    n = int(argv[0]) if len(argv) > 0 else 2000
+    v = int(argv[1]) if len(argv) > 1 else 3
+    main(n, v, spells="--spells" in sys.argv)

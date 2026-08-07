@@ -33,11 +33,11 @@ from rl.config import DOMAINS, Config
 from rl.engine import actions as A
 from rl.engine import combat
 from rl.engine.cardtable import CardTable
-from rl.engine.state import (F_NO_COMBAT_DAMAGE, F_STUNNED, N_BF, N_DOMAINS,
-                             N_SEATS, P_ALIVE, P_ARRIVED, P_CARD, P_CTRL,
-                             P_DMG, P_FLAGS, P_LOC, P_READY, PHASE_NAMES,
-                             GameState, base_loc, bf_index, bf_loc,
-                             is_battlefield)
+from rl.engine.state import (F_NO_COMBAT_DAMAGE, F_STUNNED, MAX_PERMS, N_BF,
+                             N_DOMAINS, N_SEATS, P_ALIVE, P_ARRIVED, P_CARD,
+                             P_CTRL, P_DMG, P_FLAGS, P_LOC, P_READY,
+                             PHASE_NAMES, GameState, base_loc, bf_index,
+                             bf_loc, is_battlefield)
 
 # --- per-row context block, appended to every card feature row --------------
 # Uniform across zones so a single shared card encoder can process all of them
@@ -51,11 +51,16 @@ from rl.engine.state import (F_NO_COMBAT_DAMAGE, F_STUNNED, N_BF, N_DOMAINS,
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)
 CTX_DIM = 23
 
-# Slot counts. Overflow is a bug, not a resize -- both are far above anything a
-# legal game reaches, and silently dropping a card from the observation would be
-# invisible in training.
+# Slot counts. Overflow is a bug, not a resize -- silently dropping a card from
+# the observation would be invisible in training.
 HAND_SLOTS = 16   # spells draw cards; 12 was reachable
-BOARD_SLOTS = 24
+# **Derived, not chosen.** This was 24, picked as "far above anything a legal
+# game reaches" -- and then 806.3 landed, games got ~3x longer, and boards of 31
+# live permanents appeared in ordinary random play. A hand-tuned headroom
+# constant has to be re-tuned every time the game changes and only announces
+# itself by crashing mid-run. `MAX_PERMS` is the engine's own hard cap, so
+# tracking it is the one value that cannot be outgrown.
+BOARD_SLOTS = MAX_PERMS
 
 GLOBAL_DIM = 39 + 5 * N_DOMAINS
 
