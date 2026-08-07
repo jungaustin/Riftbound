@@ -370,8 +370,15 @@ def open_showdown(state: GameState, bf: int, attacker: int) -> None:
 
 def showdown_responses(state: GameState, table: CardTable, cfg: Config,
                        seat: int) -> list:
-    """Cards this seat could play at Reaction speed right now. Empty in v1."""
-    return []
+    """Hand indices this seat could play into the current window.
+
+    Delegates to the Chain, because a Showdown window is not a separate
+    mechanism -- 342.1: a spell played in a Showdown creates a Chain as normal.
+    Imported here rather than at module scope only to keep the dependency one
+    way: `chain` reaches into `resolve`, which must not reach back into combat.
+    """
+    from rl.engine import chain
+    return chain.playable_hand_indices(state, table, cfg, seat)
 
 
 def showdown_pass(state: GameState) -> bool:

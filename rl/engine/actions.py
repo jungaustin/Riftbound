@@ -32,18 +32,25 @@ from typing import NamedTuple
 import numpy as np
 
 from rl.config import DOMAINS, Config
-from rl.engine import combat, phases
+from rl.engine import chain, combat, phases
+from rl.engine import resolve as rsv
+# Payment lives in `cost` so combat can ask about affordability without
+# importing the action layer. Re-exported: callers still say A.plan_payment.
+from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, card_domains,
+                            pay, plan_payment)
 from rl.engine.cardtable import CardTable
-from rl.engine.state import (MAIN, N_BF, N_DOMAINS, N_SEATS, P_ALIVE, P_CARD,
-                             P_CTRL, P_LOC, P_READY, GameState, base_loc,
-                             bf_loc, is_battlefield)
+from rl.engine.effects import spec_for
+from rl.engine.state import (C_BOUND_BF, C_CARD, C_CTRL, MAIN, N_BF,
+                             N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
+                             P_LOC, P_READY, GameState, base_loc, bf_loc,
+                             is_battlefield)
 
 # Action kinds. Wire format -- append only, never reorder.
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
- A_RETREAT) = range(9)
+ A_RETREAT, A_TARGET) = range(10)
 
 KIND_NAMES = ("pass", "end_turn", "play", "play_at", "declare", "add",
-              "commit", "cancel", "retreat")
+              "commit", "cancel", "retreat", "target")
 
 
 class Action(NamedTuple):
@@ -58,88 +65,6 @@ class Action(NamedTuple):
 
 
 PASS = Action(A_PASS)
-
-
-# ---------------------------------------------------------------------------
-# Payment
-# ---------------------------------------------------------------------------
-# Power symbols on a multi-domain card: each symbol may be paid by a rune of ANY
-# of the card's domains. The card data records a domain list and a power count
-# but not the per-symbol breakdown, so a stricter reading cannot be
-# distinguished from the data alone. Permissive never blocks a play a human
-# could make; verify against card images before trusting a result that hinges on
-# a multi-domain Power cost.
-MULTI_DOMAIN_POWER_IS_PERMISSIVE = True
-
-
-def card_domains(table: CardTable, card: int) -> list[int]:
-    mask = int(table.domain_mask[card])
-    return [d for d in range(N_DOMAINS) if mask >> d & 1]
-
-
-def plan_payment(state: GameState, table: CardTable, seat: int,
-                 card: int) -> list[int] | None:
-    """Which domains to recycle for Power, or None if the card is unaffordable.
-
-    Energy is generic (163.1.a) and comes from exhausting ready runes. Power is
-    domain-bound (163.2) and comes from recycling, which may take an already
-    exhausted rune -- so the two requirements are checked against *overlapping*
-    pools, and a card needs max(energy, power) runes rather than their sum.
-    """
-    need_e = int(table.energy[card]) - int(state.pool_energy[seat])
-    need_e = max(0, need_e)
-    if need_e > state.total_ready_runes(seat):
-        return None
-
-    need_p = int(table.power[card])
-    if need_p <= 0:
-        return []
-    doms = card_domains(table, card)
-    if not doms:
-        return None      # a Power cost with no domain is unpayable
-
-    floating = sum(int(state.pool_power[seat, d]) for d in doms)
-    need_p = max(0, need_p - floating)
-    if need_p == 0:
-        return []
-
-    # Recycle from the domain held most, keeping scarce domains available.
-    in_play = state.runes_in_play(seat)
-    avail = sorted(doms, key=lambda d: (-int(in_play[d]), d))
-    picks: list[int] = []
-    left = {d: int(in_play[d]) for d in doms}
-    for _ in range(need_p):
-        best = max(avail, key=lambda d: (left[d], -d))
-        if left[best] <= 0:
-            return None
-        left[best] -= 1
-        picks.append(best)
-    return picks
-
-
-def pay(state: GameState, table: CardTable, seat: int, card: int,
-        recycle: list[int]) -> None:
-    """Exhaust for Energy, then recycle for Power. Order matters.
-
-    Exhausting first is what makes one rune pay both halves: the recycle step
-    can then take a rune that was just spent on Energy.
-    """
-    need_e = max(0, int(table.energy[card]) - int(state.pool_energy[seat]))
-    state.pool_energy[seat] = max(
-        0, int(state.pool_energy[seat]) - int(table.energy[card]))
-    for _ in range(need_e):
-        dom = int(np.argmax(state.runes_ready[seat]))
-        assert state.runes_ready[seat, dom] > 0, "energy payment underflow"
-        state.runes_ready[seat, dom] -= 1
-        state.runes_spent[seat, dom] += 1
-
-    need_p = int(table.power[card])
-    for d in card_domains(table, card):
-        use = min(need_p, int(state.pool_power[seat, d]))
-        state.pool_power[seat, d] -= use
-        need_p -= use
-    for dom in recycle:
-        state.recycle_rune(seat, dom)
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +108,17 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     if is_terminal(state):
         return []
 
+    # --- mid-decision: a target slot is open ------------------------------
+    # Targets are chosen one slot at a time -- the same add-one loop as a Move
+    # declaration, which is why that machinery was written generically. Each
+    # slot's options depend on the slots already filled (Facebreaker's "at the
+    # same battlefield"), so they cannot be enumerated as a product.
+    if state.pend_slot >= 0:
+        item = chain.oldest_pending(state)
+        if item < 0 or int(state.chain[item, C_CTRL]) != seat:
+            return []
+        return [Action(A_TARGET, p) for p in _slot_options(state, table, item)]
+
     # --- mid-decision: a factored choice is open -------------------------
     if state.pend_play >= 0:
         if seat != state.active:
@@ -201,11 +137,15 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         out.append(Action(A_CANCEL))
         return out
 
-    # --- showdown priority ------------------------------------------------
-    if state.showdown_bf >= 0:
+    # --- Closed State: a Chain exists, so both players get priority -------
+    # 310.2 / 310.4 and 312.2.c-d. This is the same window whether or not a
+    # Showdown is running -- 342.1 says a spell played in a Showdown creates a
+    # Chain as normal, so there is deliberately only one priority loop.
+    if state.n_chain > 0 or state.showdown_bf >= 0:
         if seat != state.priority:
             return []
-        return [PASS] + combat.showdown_responses(state, table, cfg, seat)
+        return [PASS] + [Action(A_PLAY, i) for i in
+                         chain.playable_hand_indices(state, table, cfg, seat)]
 
     # --- Main Phase, Neutral Open ----------------------------------------
     # 316.5.b: only the Turn Player may act in a Neutral Open State.
@@ -215,10 +155,11 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     out: list[Action] = []
     for i in _hand_choices(state, seat):
         card = int(state.hand[seat, i])
-        if cfg.units_only and not table.is_type(card, "Unit"):
-            continue
-        if plan_payment(state, table, seat, card) is None:
-            continue
+        if table.is_type(card, "Unit"):
+            if plan_payment(state, table, seat, card) is None:
+                continue
+            out.append(Action(A_PLAY, i))
+    for i in chain.playable_hand_indices(state, table, cfg, seat):
         out.append(Action(A_PLAY, i))
 
     for loc in combat.move_destinations(state, table, cfg):
@@ -246,16 +187,29 @@ def apply(state: GameState, table: CardTable, cfg: Config,
     k = action.kind
 
     if k == A_PASS:
-        if state.showdown_bf >= 0 and combat.showdown_pass(state):
-            # Both players passed in succession, so the Showdown Step is over
-            # and Combat resumes at the Damage Step.
+        if not chain.pass_priority(state):
+            return {}                     # 339.2 -- priority moves on
+        # 339.1 -- everyone passed in sequence with nothing added.
+        if state.n_chain > 0:
+            log = chain.resolve_top(state, table, cfg)   # 340.1, one item
+            chain.after_resolution(state)                # 340.2-340.4
+            return log
+        if state.showdown_bf >= 0:
+            # No Chain, so the Showdown Step itself is over and Combat resumes.
             return combat.advance_combat(
                 state, table, cfg, {"combat_at": int(state.showdown_bf)})
         return {}
 
     if k == A_PLAY:
-        state.pend_play = action.arg
-        return {}
+        seat = int(state.priority)        # not `active`: responses happen on
+        card = int(state.hand[seat, action.arg])  # the opponent's turn too
+        if table.is_type(card, "Unit"):
+            state.pend_play = action.arg
+            return {}
+        return _play_spell(state, table, cfg, seat, action.arg)
+
+    if k == A_TARGET:
+        return _choose_target(state, table, cfg, action.arg)
 
     if k == A_PLAY_AT:
         return _resolve_play(state, table, cfg, seat, action.arg)
@@ -285,6 +239,79 @@ def apply(state: GameState, table: CardTable, cfg: Config,
         return {}
 
     raise ValueError(f"unknown action kind {k}")
+
+
+def _slot_options(state: GameState, table: CardTable, item: int) -> list[int]:
+    """Legal permanents for the slot currently being filled."""
+    card = int(state.chain[item, C_CARD])
+    spec = spec_for(table, card)
+    assert spec is not None
+    seat = int(state.chain[item, C_CTRL])
+    slot = int(state.pend_slot)
+    chosen = [int(x) for x in state.chain_targets[item, :slot]]
+    # `choosable_targets`, not `legal_targets`: a choice that leaves a later
+    # slot unfillable is itself illegal (359.3.e.14.a) and would deadlock.
+    return rsv.choosable_targets(state, table, spec, slot, seat, chosen,
+                                 int(state.chain[item, C_BOUND_BF]))
+
+
+def _play_spell(state: GameState, table: CardTable, cfg: Config, seat: int,
+                hand_idx: int) -> dict:
+    """Announce a spell: it goes on the Chain Pending, then targets are chosen.
+
+    The card leaves hand now but does **not** resolve -- that is the whole point
+    of the Chain. It waits for a priority window in which the opponent may
+    respond, and only resolves when everyone passes (339.1).
+    """
+    card = int(state.hand[seat, hand_idx])
+    n = int(state.n_hand[seat])
+    state.hand[seat, hand_idx:n - 1] = state.hand[seat, hand_idx + 1:n]
+    state.hand[seat, n - 1] = -1
+    state.n_hand[seat] = n - 1
+
+    item = chain.push(state, card, seat, from_hand=True, bound_bf=-1)
+    spec = spec_for(table, card)
+    assert spec is not None, f"{table.names[card]!r} has no spec"
+    if spec.n_targets:
+        state.pend_slot = 0
+        return {"announced": table.names[card]}
+    return _finalize_pending(state, table, cfg, item)
+
+
+def _choose_target(state: GameState, table: CardTable, cfg: Config,
+                   perm: int) -> dict:
+    item = chain.oldest_pending(state)
+    assert item >= 0 and state.pend_slot >= 0, "no slot open"
+    chain.set_target(state, item, int(state.pend_slot), perm)
+
+    spec = spec_for(table, int(state.chain[item, C_CARD]))
+    assert spec is not None
+    if state.pend_slot + 1 < spec.n_targets:
+        state.pend_slot = int(state.pend_slot) + 1
+        return {}
+    return _finalize_pending(state, table, cfg, item)
+
+
+def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
+                      item: int) -> dict:
+    """337.1 -- pay costs and mark Finalized. Does not pass priority (337.1.a).
+
+    Costs are paid here rather than on announcement because that is when the
+    rules say a card is played (349), and it matters: a card whose targets all
+    became illegal before finalization never gets played, and never gets paid
+    for.
+    """
+    card = int(state.chain[item, C_CARD])
+    seat = int(state.chain[item, C_CTRL])
+    recycle = plan_payment(state, table, seat, card)
+    assert recycle is not None, "unaffordable spell reached finalization"
+    pay(state, table, seat, card, recycle)
+    chain.finalize(state, item)
+    # 337.1.a: the caster keeps priority, so they may respond to their own card.
+    state.priority = seat
+    return {"finalized": table.names[card],
+            "targets": [int(x) for x in
+                        state.chain_targets[item, :spec_for(table, card).n_targets]]}
 
 
 def _resolve_play(state: GameState, table: CardTable, cfg: Config,
@@ -337,6 +364,10 @@ def acting_seat(state: GameState) -> int:
     """Which seat is being asked to choose, or -1 if none is."""
     if is_terminal(state):
         return -1
-    if state.showdown_bf >= 0:
+    if state.pend_slot >= 0:
+        item = chain.oldest_pending(state)
+        if item >= 0:
+            return int(state.chain[item, C_CTRL])
+    if state.n_chain > 0 or state.showdown_bf >= 0:
         return int(state.priority)
     return int(state.active)

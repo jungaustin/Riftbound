@@ -87,22 +87,43 @@ def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
             and _matches(state, table, t, i, seat, chosen, bound_bf)]
 
 
+def _can_complete(state: GameState, table: CardTable, spec: CardSpec, slot: int,
+                  seat: int, chosen: list[int], bound_bf: int) -> bool:
+    """Can slots `slot`..end still all be filled, given `chosen` so far?
+
+    Backtracking, not greedy. Greedy is wrong here: Facebreaker's slots are
+    coupled, so committing to the *first* friendly unit can leave the enemy slot
+    empty while a different friendly unit would have worked. That was a real
+    deadlock -- the enumerator offered a slot-0 choice with no slot-1 follow-up,
+    and the player was then to act with an empty action list.
+    """
+    if slot >= spec.n_targets:
+        return True
+    return any(
+        _can_complete(state, table, spec, slot + 1, seat, chosen + [p], bound_bf)
+        for p in legal_targets(state, table, spec, slot, seat, chosen, bound_bf))
+
+
+def choosable_targets(state: GameState, table: CardTable, spec: CardSpec,
+                      slot: int, seat: int, chosen: list[int],
+                      bound_bf: int) -> list[int]:
+    """Targets for `slot` that do not dead-end the slots after it.
+
+    359.3.e.14.a says a card whose targets cannot all be chosen legally cannot
+    be played. That applies *per choice*, not only up front: picking a target
+    that makes a later slot unfillable is itself an illegal choice, because it
+    would leave a card that can never be finalized.
+    """
+    return [p for p in legal_targets(state, table, spec, slot, seat, chosen,
+                                     bound_bf)
+            if _can_complete(state, table, spec, slot + 1, seat, chosen + [p],
+                             bound_bf)]
+
+
 def can_be_cast(state: GameState, table: CardTable, spec: CardSpec, seat: int,
                 bound_bf: int) -> bool:
-    """Is there any legal way to fill every slot?
-
-    359.3.e.14.a -- a card that cannot legally choose all its targets cannot be
-    played at all. Checked greedily, which is exact for the current specs (at
-    most two slots) and would need a proper matching if a card ever wanted three
-    mutually-constrained targets.
-    """
-    chosen: list[int] = []
-    for slot in range(spec.n_targets):
-        opts = legal_targets(state, table, spec, slot, seat, chosen, bound_bf)
-        if not opts:
-            return False
-        chosen.append(opts[0])
-    return True
+    """Is there any legal way to fill every slot? (359.3.e.14.a)"""
+    return _can_complete(state, table, spec, 0, seat, [], bound_bf)
 
 
 # ---------------------------------------------------------------------------

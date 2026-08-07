@@ -141,17 +141,43 @@ def check_actions(state: GameState, table, cfg, seat: int, actions) -> None:
     looking game.
     """
     from rl.engine import actions as A
+    from rl.engine import chain as chain_mod
     from rl.engine.combat import can_move
+    from rl.engine.effects import spec_for
 
     kinds = {a.kind for a in actions}
 
     # Confirmed with the project owner: you cannot CHOOSE to move on the
     # opponent's turn. Only card effects move units then.
     if seat != state.active:
-        for bad in (A.A_DECLARE, A.A_ADD, A.A_COMMIT, A.A_RETREAT, A.A_PLAY):
+        for bad in (A.A_DECLARE, A.A_ADD, A.A_COMMIT, A.A_RETREAT):
             if bad in kinds:
                 _fail(f"{A.KIND_NAMES[bad]} offered to seat {seat} on "
                       f"seat {state.active}'s turn")
+        # Playing IS allowed on the opponent's turn, but only as a response:
+        # you must hold priority, and there must be a window to respond in --
+        # a Chain (310.2/310.4) or a Showdown. `speed_ok` then decides whether
+        # the specific card may be played, which is checked below.
+        if A.A_PLAY in kinds:
+            if seat != int(state.priority):
+                _fail(f"play offered to seat {seat}, who does not have priority,"
+                      f" on seat {state.active}'s turn")
+            if state.n_chain == 0 and state.showdown_bf < 0:
+                _fail(f"play offered to seat {seat} on seat {state.active}'s "
+                      f"turn with no Chain and no Showdown to respond in")
+
+    # A card offered must actually be playable at this speed right now.
+    for a in actions:
+        if a.kind != A.A_PLAY:
+            continue
+        card = int(state.hand[seat, a.arg])
+        if table.is_type(card, "Unit"):
+            continue                       # units are Main-speed by 337.2
+        spec = spec_for(table, card)
+        if spec is None:
+            _fail(f"card {table.names[card]!r} offered with no DSL spec")
+        elif not chain_mod.speed_ok(state, cfg, seat, spec.speed):
+            _fail(f"{table.names[card]!r} offered outside its speed window")
 
     # Every movement offered must pass the same filter the engine would apply --
     # in particular, lateral battlefield-to-battlefield movement needs [Ganking].

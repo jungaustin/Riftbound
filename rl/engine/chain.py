@@ -37,9 +37,64 @@ from __future__ import annotations
 from rl.config import Config
 from rl.engine import resolve as rsv
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import spec_for
+from rl.engine.cost import plan_payment
+from rl.engine.effects import SPEED_ACTION, SPEED_REACTION, spec_for
 from rl.engine.state import (C_BOUND_BF, C_CARD, C_CTRL, C_FINAL, C_FROM_HAND,
-                             MAX_CHAIN, MAX_TARGETS, N_SEATS, GameState)
+                             MAIN, MAX_CHAIN, MAX_TARGETS, N_SEATS, GameState)
+
+
+def speed_ok(state: GameState, cfg: Config, seat: int, speed: int) -> bool:
+    """May `seat` play a card of this speed in the current window?
+
+    The three speeds are printed permissions, not DSL:
+
+      main      no keyword. Neutral Open State, your Main Phase (316.5.b).
+      [Action]  "Play on your turn or in showdowns."
+      [Reaction] "Play any time" -- any window in which you hold priority.
+
+    `[Action]` is the interesting one: it is *your turn* OR *a showdown*, so it
+    covers responding on the opponent's turn only while a Showdown is running.
+    That is what makes Back Off a combat trick rather than a sorcery.
+    """
+    if speed == SPEED_REACTION:
+        return True
+    if speed == SPEED_ACTION:
+        return seat == int(state.active) or state.showdown_bf >= 0
+    return (seat == int(state.active) and state.phase == MAIN
+            and state.n_chain == 0 and state.showdown_bf < 0)
+
+
+def playable_hand_indices(state: GameState, table: CardTable, cfg: Config,
+                          seat: int) -> list[int]:
+    """Hand indices `seat` may legally play right now, duplicates collapsed.
+
+    Shared by the action layer and by `combat.window_is_live`, which needs to
+    know whether a priority window is a real decision before it opens one.
+    Three identical cards are one choice: they are interchangeable, so offering
+    all three triples the branching for nothing.
+    """
+    if cfg.units_only:
+        return []
+    seen: set[int] = set()
+    out: list[int] = []
+    for i in range(int(state.n_hand[seat])):
+        card = int(state.hand[seat, i])
+        if card in seen:
+            continue
+        seen.add(card)
+        spec = spec_for(table, card)
+        if spec is None:
+            continue                       # not implemented in the DSL yet
+        if not speed_ok(state, cfg, seat, spec.speed):
+            continue
+        if plan_payment(state, table, seat, card) is None:
+            continue
+        # 359.3.e.14.a -- a card that cannot legally choose all of its targets
+        # cannot be played at all.
+        if not rsv.can_be_cast(state, table, spec, seat, -1):
+            continue
+        out.append(i)
+    return out
 
 
 def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
