@@ -384,26 +384,96 @@ def explained_variance(pred: np.ndarray, target: np.ndarray) -> float:
 SPELLS = ("Back Off", "Facebreaker", "Smoke and Mirrors")
 
 
-def v1_deal(table, deck_size: int = 30, spell_rate: float = 0.30):
-    """Decks with the implemented spells mixed in.
+# Measured from the 29 decklists in `decks/`, not assumed:
+#   main deck   39 cards, every single deck
+#   copies      at most 3 of any one card
+#   spells      28% - 62% of the main deck, median 49%
+#
+# An earlier version of this file used 30 cards and called a 30% spell rate
+# "well above what a real decklist would run". Both were wrong, and the second
+# was wrong in the opposite direction -- 30% is near the LOW end of the real
+# range. The project owner's Lillia lists run 54%.
+MAIN_DECK_SIZE = 39
+MAX_COPIES = 3
+SPELL_RATE_RANGE = (0.28, 0.62)
 
-    `spell_rate` is well above what a real decklist would run. That is
-    deliberate for now: response windows are the thing being learned, and at a
-    natural rate they are too rare for a short run to see many of them.
+
+def v1_deal(table, deck_size: int = MAIN_DECK_SIZE,
+            spell_rate: tuple[float, float] | float = SPELL_RATE_RANGE):
+    """Decks built to the real constraints, with the implemented spells.
+
+    `spell_rate` may be a fixed fraction or a (lo, hi) range sampled per deal.
+    A range is the default because the real decks span 28-62% and an agent
+    trained on one density would be tuned for one archetype.
+
+    **The card pool, not this rate, is what currently limits realism.** Only
+    three spells are implemented, so the 3-copy limit caps a deck at 9 spells
+    -- 23% of 39, below even the lowest real deck. Until roughly seven more
+    spells exist in the DSL, a realistic spell density is unreachable and this
+    function will silently fall short of the requested rate. It reports the
+    shortfall rather than hiding it (see `deal_stats`).
     """
     spells = [table.id_of(n) for n in SPELLS]
     units = v0_pool(table)
     bfs = [c for c in range(table.n) if table.is_type(c, "Battlefield")][:2]
 
+    def _build(rng, want_spells: int) -> list[int]:
+        """Fill a deck respecting the 3-copy limit, spells first."""
+        deck: list[int] = []
+        counts: dict[int, int] = {}
+
+        def take(pool, n):
+            tries = 0
+            while n > 0 and tries < 500:
+                tries += 1
+                c = int(rng.choice(pool))
+                if counts.get(c, 0) >= MAX_COPIES:
+                    continue
+                counts[c] = counts.get(c, 0) + 1
+                deck.append(c)
+                n -= 1
+            return n
+
+        take(spells, want_spells)
+        take(units, deck_size - len(deck))
+        return deck
+
     def deal(seed):
         rng = np.random.default_rng(seed)
-        decks = [[int(rng.choice(spells if rng.random() < spell_rate else units))
-                  for _ in range(deck_size)] for _ in range(2)]
+        decks = []
+        for _ in range(2):
+            rate = (rng.uniform(*spell_rate)
+                    if isinstance(spell_rate, tuple) else spell_rate)
+            decks.append(_build(rng, int(round(deck_size * rate))))
         runes = [[int(rng.integers(6)) for _ in range(12)] for _ in range(2)]
         return decks, runes, bfs
     return deal
 
 
+def deal_stats(table, deal_fn, n: int = 500) -> dict:
+    """What the deal function actually produces, as opposed to what it was asked
+    for. Worth checking whenever the card pool changes."""
+    spells = {table.id_of(x) for x in SPELLS}
+    fracs, sizes, copies = [], [], []
+    for i in range(n):
+        for deck in deal_fn(i)[0]:
+            sizes.append(len(deck))
+            fracs.append(sum(c in spells for c in deck) / max(1, len(deck)))
+            counts: dict[int, int] = {}
+            for c in deck:
+                counts[c] = counts.get(c, 0) + 1
+            copies.append(max(counts.values()))
+    return {"deck_size": sorted(set(sizes)),
+            "spell_frac_mean": float(np.mean(fracs)),
+            "spell_frac_max": float(np.max(fracs)),
+            "max_copies": int(np.max(copies))}
+
+
+# Deliberately still 30, not MAIN_DECK_SIZE. Every Phase 1-4 number was
+# measured with 30-card decks, and `fuzz.make_game`'s golden outcome pins that.
+# Changing it would silently invalidate the whole gate suite. Recorded as a
+# known caveat instead: the v0 results describe a 30-card game, which is not
+# the real one.
 def v0_deal(table, deck_size: int = 30):
     """The Phase 1-3 deal, so training results stay comparable to the gates."""
     pool = v0_pool(table)

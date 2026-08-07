@@ -1280,6 +1280,33 @@ curriculum is a more lopsided game than the real one, and seat-swapped paired
 seeds (which `eval.duel` already does) are mandatory for every number reported
 from it — an unpaired measurement here would be off by ~14 points.
 
+### Deck construction, measured rather than assumed
+
+Read off the 29 decklists in `decks/`:
+
+| Property | Value |
+|---|---|
+| Main deck size | **39**, every deck |
+| Copies of any one card | **at most 3** |
+| Spell fraction | 28% - 62%, **median 49%** |
+
+An earlier `v1_deal` used 30-card decks and a 30% spell rate documented as
+"well above what a real decklist would run". Both were wrong, and the second in
+the opposite direction: 30% is near the *low* end. The project owner's Lillia
+lists run 54% and one netdeck runs 62%.
+
+**The implemented card pool, not the rate parameter, is what limits realism.**
+With three spells in the DSL and a 3-copy limit, a deck tops out at 9 spells =
+23% of 39 — below even the lowest real deck. Roughly seven more spells are
+needed before a realistic density is reachable at all. `deal_stats()` reports
+what the deal function actually produced versus what it was asked for, so this
+gap stays visible instead of being assumed away.
+
+**Phase 1-4 numbers describe a 30-card game.** `v0_deal` and `fuzz.make_game`
+are deliberately left at 30 so the golden outcome and the gate suite stay
+valid; that makes those results internally consistent but not a description of
+the real game.
+
 **Caveat to carry forward.** Greedy is a deliberately shallow baseline (three
 rules, §Phase 2), so 74.5% against it is a floor on competence, not evidence of
 strong play. The meaningful measurements are Phase 5's Elo against held-out
