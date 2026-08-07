@@ -467,4 +467,62 @@ if s.n_chain != 2:
     die("order", f"both triggers should be on the chain, got {s.n_chain}")
 ok("the choice is a real action, and both triggers reach the Chain")
 
+
+# ---------------------------------------------------------------------------
+print("\n[14] Gear -- a permanent that is not a Unit")
+
+from rl.engine import phases
+
+FOUNTAIN = T.id_of("Sprite Fountain")     # [Temporary], ETB + Deathknell Sprite
+
+s = fresh(hand=[FOUNTAIN])
+acts = A.legal_actions(s, T, V1, 0)
+if not any(a.kind == A.A_PLAY for a in acts):
+    die("gear", "Gear was never offered in the Main Phase")
+A.apply(s, T, V1, A.Action(A.A_PLAY, 0))
+dsts = [a.arg for a in A.legal_actions(s, T, V1, 0)]
+if dsts != [base_loc(0)]:
+    die("gear", f"149.2 -- Gear is base-only, but got destinations {dsts}")
+ok("Gear is offered, and only to its controller's base (149.2)")
+
+A.apply(s, T, V1, A.Action(A.A_PLAY_AT, base_loc(0)))
+gear_row = next(i for i in range(s.n_perms) if int(s.perms[i, P_CARD]) == FOUNTAIN)
+if not s.perms[gear_row, P_READY]:
+    die("gear", "359.2.d -- non-unit Gear enters READY, unlike a unit")
+ok("it enters ready (359.2.d), where a unit would enter exhausted")
+
+# It must not count as a garrison. `seats_at` decides Control and whether a
+# Combat happens, so a gear counted there would defend a battlefield.
+if s.units_at(base_loc(0), 0).size != 0:
+    die("gear", "units_at counted a gear -- seats_at would garrison with it")
+if s.permanents_at(base_loc(0), 0).size != 1:
+    die("gear", "permanents_at should still see the gear")
+ok("units_at excludes it; permanents_at still sees it")
+
+drain(s, V1)
+def _sprites(st):
+    return [i for i in range(st.n_perms)
+            if int(st.perms[i, P_CARD]) == SPRITE and st.perms[i, P_ALIVE] == 1]
+if len(_sprites(s)) != 1:
+    die("gear", f"the ETB should have made one Sprite, got {len(_sprites(s))}")
+ok("its 'when you play this' trigger fires like a unit's")
+
+# [Temporary] kills it at the start of the Beginning Phase; its Deathknell
+# then repeats the play effect. That loop is the whole Sprite archetype.
+phases.expire_temporary(s, T)
+A._settle(s, T, V1)
+drain(s, V1)
+if s.perms[gear_row, P_ALIVE]:
+    die("gear", "[Temporary] did not kill the gear")
+if len(_sprites(s)) != 1:
+    die("gear", f"the Deathknell should have replaced the expired Sprite, "
+                f"got {len(_sprites(s))}")
+ok("[Temporary] expiry fires its [Deathknell], which makes another Sprite")
+
+# 185.3 -- the token ceased to exist; only the gear CARD reached the trash.
+if int(s.n_trash[0]) != 1:
+    die("gear", f"trash holds {int(s.n_trash[0])}; a token that dies must "
+                f"cease to exist rather than being trashed (185.3)")
+ok("185.3 -- the dead token left no card behind, only the gear did")
+
 print("\n\033[32mall trigger tests passed\033[0m")

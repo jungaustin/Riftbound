@@ -71,9 +71,14 @@ N_PERM_COLS = 9
 # adding the next one costs nothing.
 F_STUNNED = 1 << 0           # rule 423: the game status itself
 F_NO_COMBAT_DAMAGE = 1 << 1  # 423.1.b, and any effect worded "deals no damage"
+# Set on any permanent that is NOT a Unit -- Gear. Stored as a flag rather than
+# looked up through the CardTable so `units_at` can filter without it: that
+# method is called from `seats_at`, which decides Control and whether a Combat
+# happens, and it must never count a gear as a garrison.
+F_NON_UNIT = 1 << 2
 
 # Statuses that expire during the end-of-turn cleanup (423.1.a.2, 317.2).
-TURN_SCOPED_FLAGS = F_STUNNED | F_NO_COMBAT_DAMAGE
+TURN_SCOPED_FLAGS = F_STUNNED | F_NO_COMBAT_DAMAGE   # NOT F_NON_UNIT
 
 # Capacities. Generous enough that overflow means a real bug, small enough that
 # cloning stays cheap.
@@ -327,7 +332,7 @@ class GameState:
         self.n_perms = k
 
     def add_permanent(self, card: int, ctrl: int, loc: int,
-                      ready: bool = True) -> int:
+                      ready: bool = True, is_unit: bool = True) -> int:
         assert self.n_perms < MAX_PERMS, (
             f"MAX_PERMS overflow ({MAX_PERMS} rows). Rows are compacted at "
             f"end of turn, so this is more permanents in ONE turn than the "
@@ -341,7 +346,7 @@ class GameState:
         row[P_DMG] = 0
         row[P_ALIVE] = 1
         row[P_ARRIVED] = self.turn
-        row[P_FLAGS] = 0
+        row[P_FLAGS] = 0 if is_unit else F_NON_UNIT
         row[P_MIGHT_MOD] = 0
         self.n_perms = i + 1
         return i
@@ -365,7 +370,23 @@ class GameState:
         return self.perms[:self.n_perms, P_ALIVE] == 1
 
     def units_at(self, loc: int, seat: int | None = None) -> np.ndarray:
-        """Indices of live permanents at `loc`, optionally filtered by seat."""
+        """Indices of live **Units** at `loc`, optionally filtered by seat.
+
+        Genuinely units, not permanents. It returned every permanent while
+        every permanent was a unit, and the name was true by accident; Gear
+        made it false. `seats_at` is built on this and decides Control (190.4)
+        and whether a Combat happens, so a gear counted here would garrison a
+        battlefield and defend it.
+        """
+        p = self.perms[:self.n_perms]
+        m = ((p[:, P_ALIVE] == 1) & (p[:, P_LOC] == loc)
+             & ((p[:, P_FLAGS] & F_NON_UNIT) == 0))
+        if seat is not None:
+            m &= p[:, P_CTRL] == seat
+        return np.flatnonzero(m)
+
+    def permanents_at(self, loc: int, seat: int | None = None) -> np.ndarray:
+        """Indices of live permanents at `loc`, Units and Gear alike."""
         p = self.perms[:self.n_perms]
         m = (p[:, P_ALIVE] == 1) & (p[:, P_LOC] == loc)
         if seat is not None:

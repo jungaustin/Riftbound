@@ -221,7 +221,10 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     out: list[Action] = []
     for i in _hand_choices(state, seat):
         card = int(state.hand[seat, i])
-        if table.is_type(card, "Unit"):
+        # Gear is a permanent like a unit: it is played, it goes on the board,
+        # and 337.2 resolves it immediately with no Chain. The only differences
+        # are where it lands (base, 149.2) and that it enters READY (359.2.d).
+        if table.is_type(card, "Unit") or table.is_type(card, "Gear"):
             if plan_payment(state, table, seat, card) is None:
                 continue
             out.append(Action(A_PLAY, i))
@@ -355,7 +358,7 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
     if k == A_PLAY:
         seat = int(state.priority)        # not `active`: responses happen on
         card = int(state.hand[seat, action.arg])  # the opponent's turn too
-        if table.is_type(card, "Unit"):
+        if table.is_type(card, "Unit") or table.is_type(card, "Gear"):
             state.pend_play = action.arg
             return {}
         return _play_spell(state, table, cfg, seat, action.arg)
@@ -638,7 +641,11 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     # then become ready", so nothing that watches for a unit becoming ready
     # fires (805.6.a). Passing `ready=True` rather than readying afterwards is
     # what implements that distinction.
-    src = state.add_permanent(card, seat, loc, ready=fast)
+    #
+    # 359.2.d -- non-unit Gear enters READY at its controller's base instead.
+    is_unit = bool(table.is_type(card, "Unit"))
+    src = state.add_permanent(card, seat, loc, ready=(fast or not is_unit),
+                              is_unit=is_unit)
 
     # 359.2.b -- rules text executes as the permanent enters, so "When you play
     # me" triggers here, after it is on the board. 337.2 already resolved the

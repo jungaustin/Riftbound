@@ -95,6 +95,12 @@ def includable(table: CardTable, cid: int) -> bool:
         return not table.is_token(cid)
     if table.is_type(cid, "Spell"):
         return table.names[cid] in SPECS
+    if table.is_type(cid, "Gear"):
+        # Gear is a permanent the engine can now play (149.2, base only), so a
+        # gear whose text is transcribed goes in as itself. One without a spec
+        # would sit on the board doing nothing, which is a worse lie than a
+        # substitution, so it still has to be swapped out.
+        return table.names[cid] in ABILITIES or table.names[cid] in STATICS
     return False
 
 

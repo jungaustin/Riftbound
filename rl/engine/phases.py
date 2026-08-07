@@ -59,11 +59,21 @@ def awaken(state: GameState) -> None:
 
 
 def expire_temporary(state: GameState, table: CardTable) -> list[int]:
-    """Kill the turn player's [Temporary] units (start of Beginning, pre-scoring).
+    """Kill the turn player's [Temporary] permanents (start of Beginning,
+    pre-scoring).
 
     Reminder text: "Kill it at the start of its controller's Beginning Phase,
     before scoring."
+
+    Routed through `combat._destroy` rather than clearing P_ALIVE inline. This
+    used to blank the row directly, which was invisible while the only
+    [Temporary] things were tokens -- 185.3 makes a token cease to exist, so
+    there was nothing to trash and nothing to trigger. A [Temporary] CARD is
+    different: Sprite Fountain expires every Beginning Phase and its
+    [Deathknell] is the whole engine of the deck, and the card belongs in the
+    trash afterwards.
     """
+    from rl.engine import combat
     seat = state.active
     killed = []
     for i in range(state.n_perms):
@@ -71,7 +81,7 @@ def expire_temporary(state: GameState, table: CardTable) -> list[int]:
         if row[P_ALIVE] != 1 or row[P_CTRL] != seat:
             continue
         if table.has(int(row[P_CARD]), "Temporary"):
-            row[P_ALIVE] = 0
+            combat._destroy(state, table, i)
             killed.append(i)
     return killed
 

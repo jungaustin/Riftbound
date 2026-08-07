@@ -257,6 +257,15 @@ def _destroy(state: GameState, table: CardTable, perm: int) -> None:
         chain_queue(state, TR_DEATH, perm, int(row[P_LOC]))
     row[P_ALIVE] = 0
     seat, card = int(row[P_CTRL]), int(row[P_CARD])
+    # 185.3 -- a token that leaves the board ceases to exist; it does not go to
+    # a trash, hand or deck. `OP_RETURN_TO_HAND` had this right for bounce and
+    # this path did not, so every Sprite that died has been silently padding
+    # its controller's trash. It stayed invisible because nothing reads the
+    # trash yet -- but Rhasa the Sunderer costs less per card in it, and Fizz
+    # and Spectral Matron replay from it, so a padded trash is a real number
+    # being wrong rather than a cosmetic one.
+    if table.is_token(card):
+        return
     n = int(state.n_trash[seat])
     assert n < state.trash.shape[1], "trash overflow"
     state.trash[seat, n] = card

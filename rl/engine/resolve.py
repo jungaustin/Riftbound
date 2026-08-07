@@ -291,7 +291,8 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # from hiding, with no special case here.
             card = table.id_of(op.token)
             loc = a if a >= 0 else base_loc(seat)
-            made = [state.add_permanent(card, seat, loc, ready=op.ready)
+            made = [state.add_permanent(card, seat, loc, ready=op.ready,
+                                        is_unit=bool(table.is_type(card, "Unit")))
                     for _ in range(op.n)]
             log["tokens"] = made
             # No cleanup here: 321 forbids one while Chain Items are resolving.

@@ -187,8 +187,12 @@ def check_actions(state: GameState, table, cfg, seat: int, actions) -> None:
         if a.kind != A.A_PLAY:
             continue
         card = int(state.hand[seat, a.arg])
-        if table.is_type(card, "Unit"):
-            continue                       # units are Main-speed by 337.2
+        # 337.2 resolves Units and Gear immediately, without a Chain, so
+        # neither has a *speed* to check -- both are Main-phase permanents.
+        # Gear reached here as soon as it became playable and tripped a check
+        # that was really "every non-unit is a spell".
+        if table.is_type(card, "Unit") or table.is_type(card, "Gear"):
+            continue
         spec = spec_for(table, card)
         if spec is None:
             _fail(f"card {table.names[card]!r} offered with no DSL spec")

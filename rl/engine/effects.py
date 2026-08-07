@@ -474,6 +474,25 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
         Ability(TR_DEATH, ops=(Op(OP_DRAW, n=1),)),
     ),
 
+    # [Temporary]
+    # When you play this, play a ready 3 Might Sprite unit token with
+    # [Temporary] to your base.
+    # [Deathknell][>] Repeat this gear's play effect.
+    #
+    # The single most-played card in the corpus (39 slots) and the engine of
+    # every Sprite deck: [Temporary] kills it at the start of each Beginning
+    # Phase, its Deathknell repeats the play effect, so it makes a Sprite when
+    # it lands and another one every time it expires. "Repeat this gear's play
+    # effect" is the same op, which is why both abilities are literally the
+    # same line -- no Repeat machinery involved (820 is a paid additional cost;
+    # this is printed text).
+    "Sprite Fountain": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_CREATE_TOKEN, n=1, token=SPRITE_TOKEN, ready=True),)),
+        Ability(TR_DEATH,
+                ops=(Op(OP_CREATE_TOKEN, n=1, token=SPRITE_TOKEN, ready=True),)),
+    ),
+
     # Ferrous Forerunner, Carrion Dredger and Honest Broker are deliberately
     # absent. Their Deathknells play Mech, Bird and Gold tokens, and none of
     # those token cards exist in `data/cards.json` -- only Recruit and Sprite
