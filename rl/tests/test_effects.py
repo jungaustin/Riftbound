@@ -55,7 +55,21 @@ def unit(might, kw=None, exclude=("Tank", "Backline")):
 
 
 PLAIN = {m: unit(m) for m in (2, 3, 5)}
-TEMP = unit(2, "Temporary", exclude=())
+
+def temporary_unit():
+    """Any non-token unit with [Temporary]; its Might is incidental here.
+
+    This asked for `might=2` and found one only because `keyword_mask` used to
+    credit a card with every keyword its text MENTIONED. With attribution
+    fixed, the pool holds exactly two [Temporary] units and neither is a 2.
+    """
+    for c in range(T.n):
+        if T.is_type(c, "Unit") and T.has(c, "Temporary") and not T.is_token(c):
+            return c
+    raise LookupError("no non-token [Temporary] unit in the pool")
+
+
+TEMP = temporary_unit()
 
 
 def fresh():

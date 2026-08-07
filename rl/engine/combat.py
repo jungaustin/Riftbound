@@ -47,6 +47,7 @@ import numpy as np
 
 from rl.config import Config
 from rl.engine.cardtable import CardTable
+from rl.engine.effects import ST_MIGHT, SC_SELF, statics_for
 from rl.engine.state import (P_MIGHT_MOD, F_NO_COMBAT_DAMAGE, N_BF, N_SEATS, P_ALIVE,
                              P_ARRIVED, P_CARD, P_CTRL, P_DMG, P_FLAGS, P_LOC,
                              P_READY, SD_CLEANUP, SD_DAMAGE, SD_NONE,
@@ -60,8 +61,68 @@ POINTS_PER_CONQUER = 1
 # Unit characteristics
 # ---------------------------------------------------------------------------
 
+def static_might(state: GameState, table: CardTable, perm: int) -> int:
+    """Might granted to `perm` right now by static abilities on the board.
+
+    Derived on every read rather than cached. A static is continuous: Petal
+    Pixie grows the instant a Sprite arrives beside her, with nothing on the
+    Chain and no window to respond in, so there is no moment at which a cached
+    value could be refreshed that is not "all of them". Caching would need
+    invalidation on every move, death, arrival and control change -- the exact
+    set of events most likely to be missed.
+
+    It is O(live permanents) per call and `might` is hot, so this is the first
+    place to look if the engine gets slow. Measured at 48 rows it is not yet
+    the bottleneck.
+    """
+    row = state.perms[perm]
+    if row[P_ALIVE] != 1:
+        return 0
+    seat, loc = int(row[P_CTRL]), int(row[P_LOC])
+    is_token = table.is_token(int(row[P_CARD]))
+    total = 0
+    for i in range(state.n_perms):
+        src = state.perms[i]
+        if src[P_ALIVE] != 1:
+            continue
+        for st in statics_for(table, int(src[P_CARD])):
+            if st.kind != ST_MIGHT:
+                continue
+            src_seat = int(src[P_CTRL])
+            if st.scope == SC_SELF:
+                if i != perm:
+                    continue
+            else:                               # SC_FRIENDLY_UNITS
+                if src_seat != seat:
+                    continue
+                if st.scope_token and not is_token:
+                    continue
+                if not table.is_type(int(row[P_CARD]), "Unit"):
+                    continue
+            if st.per_keyword is None:
+                total += st.n
+                continue
+            # "for each of your units with [X] at my battlefield"
+            src_loc = int(src[P_LOC])
+            n = 0
+            for j in range(state.n_perms):
+                o = state.perms[j]
+                if o[P_ALIVE] != 1:
+                    continue
+                if st.per_friendly and int(o[P_CTRL]) != src_seat:
+                    continue
+                if st.per_same_loc and int(o[P_LOC]) != src_loc:
+                    continue
+                if not table.has(int(o[P_CARD]), st.per_keyword):
+                    continue
+                n += 1
+            total += st.n * n
+    return total
+
+
 def might(state: GameState, table: CardTable, perm: int) -> int:
-    """Current Might: printed value plus any "this turn" modifier, floored at 0.
+    """Current Might: printed value, static abilities, and any "this turn"
+    modifier, floored at 0.
 
     143.2.b -- "If a unit's Might is ever less than 0, it is treated as 0 when
     referenced by spells and abilities, and when summing Might to be assigned as
@@ -71,7 +132,38 @@ def might(state: GameState, table: CardTable, perm: int) -> int:
     fail to apply (PLAN.md §1.3.d).
     """
     row = state.perms[perm]
-    return max(0, int(table.might[int(row[P_CARD])]) + int(row[P_MIGHT_MOD]))
+    return max(0, int(table.might[int(row[P_CARD])]) + int(row[P_MIGHT_MOD])
+               + static_might(state, table, perm))
+
+
+def enforce_lethal(state: GameState, table: CardTable) -> list[int]:
+    """143.2.a across the whole board. Returns the rows it killed.
+
+    `set_might_mod` and `mark_damage` check the unit they touched, which was
+    enough while Might only changed one unit at a time. A static changes other
+    units' Might as a side effect of something happening to its SOURCE: kill
+    Soul Shepherd and every damaged token she was pumping becomes lethally
+    damaged at that instant, with nothing having touched the tokens at all.
+
+    143.2.a is worded as a continuous check for exactly this reason, so the
+    sweep is the honest implementation. It loops because a death can shrink
+    another unit in turn.
+    """
+    killed: list[int] = []
+    for _ in range(state.n_perms + 1):
+        again = False
+        for i in range(state.n_perms):
+            row = state.perms[i]
+            if row[P_ALIVE] != 1:
+                continue
+            dmg = int(row[P_DMG])
+            if dmg > 0 and dmg >= might(state, table, i):
+                _destroy(state, i)
+                killed.append(i)
+                again = True
+        if not again:
+            return killed
+    raise AssertionError("enforce_lethal did not reach a fixed point")
 
 
 def set_might_mod(state: GameState, table: CardTable, perm: int, delta: int,
@@ -93,7 +185,10 @@ def set_might_mod(state: GameState, table: CardTable, perm: int, delta: int,
     3 Might and dies. Checking only at damage-assignment time would miss it.
     """
     row = state.perms[perm]
-    base = int(table.might[int(row[P_CARD])])
+    # The printed floor is on EFFECTIVE Might, so statics count toward it:
+    # Stupefy's "to a minimum of 1 Might" on a Sprite that Soul Shepherd has
+    # pumped to 4 leaves it at 1, not at 0.
+    base = int(table.might[int(row[P_CARD])]) + static_might(state, table, perm)
     new = int(row[P_MIGHT_MOD]) + delta
     if floor is not None:
         new = max(new, floor - base)      # never take effective Might below floor
@@ -279,6 +374,15 @@ def cleanup(state: GameState, table: CardTable, cfg: Config,
     log: dict = {}
     if not state.is_open:
         return log
+
+    # 143.2.a board-wide. A Cleanup follows every board change in an Open
+    # State, which makes it the one place that catches a unit becoming lethally
+    # damaged because some OTHER unit changed -- a static's source dying or
+    # moving away. Nothing touched the shrinking unit, so no per-unit check
+    # would have fired.
+    dead = enforce_lethal(state, table)
+    if dead:
+        log["lethal_static"] = dead
 
     # A Cleanup resolves EVERY staged Combat, not just the first. v0 could only
     # ever stage one at a time -- a single Move declaration has one destination

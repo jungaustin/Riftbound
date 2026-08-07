@@ -42,9 +42,13 @@ from rl.engine.cardtable import full_table
 # longer -- mean steps 20.4 -> 56.9 at victory 3 -- because dropping a unit onto
 # an empty Battlefield was a Conquer that never had to survive a Combat, and it
 # was the fastest line in the game. Measured, not predicted.
+# Re-pinned again when `keyword_mask` stopped crediting a card with every
+# keyword its text merely MENTIONED. `v0_pool` filters on that mask, so the
+# vanilla pool itself changed composition -- this move is a different deal, not
+# different play.
 GOLDEN: dict[tuple[int, int], tuple] = {
-    (12345, 3): (1, 5, 70, [0, 3]),
-    (12345, 8): (1, 9, 152, [1, 9]),
+    (12345, 3): (1, 4, 63, [1, 3]),
+    (12345, 8): (1, 8, 100, [4, 8]),
 }
 
 

@@ -73,13 +73,69 @@ for _kw in TIER1_KEYWORDS:
 COMPLEX_TEXT_CHARS = 90
 
 
+# A bracketed token, optionally with a numeric value: [Assault 2], [Shield 3].
+_KW_TOKEN = re.compile(r"\[([A-Za-z][A-Za-z ]*?)\s*\d*\]")
+# Things that may sit between owned keywords in the leading run without ending
+# it: whitespace, an em dash, a cost like {1 energy}, an ability marker [>].
+_KW_FILLER = re.compile(r"\s+|[—-]|\{[^}]*\}|\[>+\]")
+
+
 def keyword_mask(text: str) -> int:
-    """Bitmask of bracketed keywords appearing in a card's text."""
+    """Bitmask of the keywords a card actually **has**.
+
+    Not "keywords appearing in the text", which is what this used to be and is
+    a different set. Card text mentions keywords it does not have, constantly:
+
+        Petal Pixie   "I have +1 Might for each of your units with [Temporary]
+                       at my battlefield."
+        Fading Memories  "Give a unit at a battlefield or a gear [Temporary]."
+        Block         "Give a unit [Shield 3] and [Tank] this turn."
+
+    Petal Pixie was therefore flagged `[Temporary]` and would have been killed
+    at the start of every Beginning Phase -- a 32-slot card in the corpus,
+    silently unplayable. The old version also scanned reminder text, so
+    [Ambush]'s own reminder ("You may play me as a [Reaction]...") granted
+    Reaction to every Ambush card.
+
+    Two signals separate having from mentioning, and a keyword needs either:
+
+      1. It is in the **leading run** of bracketed tokens, before any prose.
+         This is how nearly every card prints its keywords.
+      2. It is **immediately followed by its reminder text** -- `[Ganking] (I
+         can move from battlefield to battlefield.)` on Atakhan, whose
+         keywords come after a sentence of additional cost. Immediately
+         matters: "give it [Temporary]. (Kill it at...)" has a sentence break
+         first and is a grant, not a possession.
+
+    Conservative by construction. A keyword this misses is treated as not
+    implemented, which understates coverage; a keyword it wrongly grants
+    changes how the engine plays the card.
+    """
+    raw = text or ""
     mask = 0
-    for kw in _BRACKET.findall(text or ""):
-        bit = _KW_BIT.get(kw)
+
+    # (1) the leading run, scanned on text with reminders stripped.
+    t = body_text(raw)
+    i = 0
+    while i < len(t):
+        m = _KW_FILLER.match(t, i)
+        if m and m.end() > i:
+            i = m.end()
+            continue
+        m = _KW_TOKEN.match(t, i)
+        if not m:
+            break
+        bit = _KW_BIT.get(m.group(1))
         if bit is not None:
             mask |= 1 << bit
+        i = m.end()
+
+    # (2) anywhere, if its own reminder text follows immediately.
+    for m in _KW_TOKEN.finditer(raw):
+        if raw[m.end():m.end() + 2].lstrip().startswith("("):
+            bit = _KW_BIT.get(m.group(1))
+            if bit is not None:
+                mask |= 1 << bit
     return mask
 
 

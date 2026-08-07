@@ -323,6 +323,63 @@ SPECS: dict[str, CardSpec] = {
 }
 
 
+# --- static abilities -----------------------------------------------------
+# A trigger is an *event*: it fires, goes on the Chain, resolves, and is done.
+# A static is a *continuous* property of the board -- Petal Pixie's Might
+# changes the instant a Sprite arrives beside her, with nothing on the Chain and
+# no window to respond in. So it cannot be an Op, and it is not recomputed at
+# any particular moment: `combat.might` derives it on every read.
+#
+# The consequence that is easy to miss: because 143.2.a is itself a continuous
+# check ("if a Unit EVER has damage equalling or exceeding its Might"), a static
+# going away can kill. Killing Soul Shepherd shrinks every token she was pumping
+# and any of them already carrying damage dies with her.
+ST_MIGHT = 0
+ST_NAMES = ("might",)
+
+# Who a static applies to.
+SC_SELF, SC_FRIENDLY_UNITS = range(2)
+
+
+class Static(NamedTuple):
+    """One continuous ability.
+
+    Flat when `per_keyword` is None ("Your token units have +1 Might"), and
+    scaled by a board count when it is not ("I have +1 Might for each of your
+    units with [Temporary] at my battlefield").
+    """
+    kind: int = ST_MIGHT
+    n: int = 0
+    scope: int = SC_SELF
+    scope_token: bool = False        # ...and only token units
+    # Counting clause. `per_same_loc` is "at my battlefield"; `per_friendly`
+    # is the "of your units" in the same sentence.
+    per_keyword: str | None = None
+    per_friendly: bool = True
+    per_same_loc: bool = True
+
+
+STATICS: dict[str, tuple[Static, ...]] = {
+
+    # I have +1 Might for each of your units with [Temporary] at my battlefield.
+    "Petal Pixie": (
+        Static(ST_MIGHT, n=1, scope=SC_SELF, per_keyword="Temporary",
+               per_friendly=True, per_same_loc=True),
+    ),
+
+    # Your token units have +1 Might.  No location clause: it reaches the whole
+    # board, which is what makes it the payoff for a token deck.
+    "Soul Shepherd": (
+        Static(ST_MIGHT, n=1, scope=SC_FRIENDLY_UNITS, scope_token=True),
+    ),
+}
+
+
+def statics_for(table, card: int) -> tuple[Static, ...]:
+    """Every static ability printed on a card id."""
+    return STATICS.get(table.names[card], ())
+
+
 # ---------------------------------------------------------------------------
 # Unit abilities. Same shape as SPECS, keyed the same way; a card may have
 # several, which is why the value is a tuple.
