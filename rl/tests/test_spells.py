@@ -323,4 +323,35 @@ if here not in opts:
     die("hidden", f"a bound slot should reach its own battlefield: {opts}")
 ok("811.1.d.2.a -- targets are bound to the battlefield it was hidden at")
 
+
+# ---------------------------------------------------------------------------
+print("\n[8] when the Chain empties into a staged Combat, the DEFENDER acts first")
+# 340.2.a. The opposite of 464.2.d, which gives the Attacker Focus when a Move
+# declaration opens the Showdown -- the two routes into a Showdown hand priority
+# to opposite players. This is the window in which a defender answers a spell
+# that dragged a unit in, before combat locks in.
+CHARM, GUST = T.id_of("Charm"), T.id_of("Gust")
+s = fresh(hand0=(CHARM,), hand1=(GUST,))
+s.n_deck[:] = 5
+s.deck[:, :5] = T.id_of("Stupefy")
+mine = s.add_permanent(unit(3), 0, bf_loc(0))
+s.bf_ctrl[0] = 0
+foe = s.add_permanent(unit(2), 1, base_loc(1))
+
+play = next(a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY)
+A.apply(s, T, V1, play)
+A.apply(s, T, V1, A.Action(A.A_TARGET, foe))
+A.apply(s, T, V1, A.Action(A.A_TARGET, bf_loc(0)))
+A.apply(s, T, V1, A.PASS)
+A.apply(s, T, V1, A.PASS)                       # Charm resolves, chain empties
+
+if s.showdown_bf < 0:
+    die("priority", "dragging an enemy in should stage a Combat (461)")
+if A.acting_seat(s) != 1:
+    die("priority", f"340.2.a -- the defender should hold priority when the "
+                    f"chain empties, got seat {A.acting_seat(s)}")
+if not any(a.kind == A.A_PLAY for a in A.legal_actions(s, T, V1, 1)):
+    die("priority", "the defender must be able to answer before combat locks in")
+ok("the defender gets Focus and Priority, and can answer with a Reaction")
+
 print("\n\033[32mall spell tests passed\033[0m")

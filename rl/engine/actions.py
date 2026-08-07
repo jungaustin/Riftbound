@@ -215,10 +215,24 @@ def apply(state: GameState, table: CardTable, cfg: Config,
                 # and a Cleanup can finally happen. It could not happen during
                 # resolution (321: "while Chain Items are Resolving, a Cleanup
                 # cannot occur"), so a spell that moved a unit onto an enemy
-                # staged a Combat that nothing had yet initiated. That left
-                # battlefields holding units from both seats outside combat.
+                # staged a Combat that nothing had yet initiated.
                 log.update(combat.cleanup(state, table, cfg,
                                           mover=int(state.active), dst=-1))
+                if state.showdown_bf >= 0:
+                    # 340.2.a -- when the Chain empties, Focus and Priority pass
+                    # to the next player, so the DEFENDER acts first. That is
+                    # the opposite of 464.2.d, which gives the Attacker Focus
+                    # when a Move declaration opens the Showdown: the two paths
+                    # into a Showdown hand priority to opposite players.
+                    #
+                    # It matters because this is the window in which the
+                    # defender answers a spell that dragged a unit in -- Gust it
+                    # away, or Stupefy the blocker -- before combat locks in.
+                    # Confirmed with the project owner.
+                    d = 1 - int(state.attacker)
+                    state.focus = d
+                    state.priority = d
+                    state.passes = 0
             return log
         if state.showdown_bf >= 0:
             # No Chain, so the Showdown Step itself is over and Combat resumes.
