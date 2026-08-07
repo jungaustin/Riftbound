@@ -18,6 +18,8 @@ each one is a case where a plausible implementation is wrong:
 """
 import sys
 
+import numpy as np
+
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))
 
 from rl.config import Config
@@ -399,5 +401,38 @@ if s.perms[tokn, P_ALIVE] == 1:
 if int(s.n_hand[1]) != before:
     die("bounce", "185.3 -- a token must cease to exist, not go to hand")
 ok("185.3 -- a bounced token ceases to exist rather than entering a hand")
+
+# ---------------------------------------------------------------------------
+print("\n[6] cost discounts: ordering is solved, not chosen (356.1/356.4.e)")
+
+from itertools import permutations
+from functools import reduce
+from rl.engine.cost import apply_discounts, order_discounts
+
+# The rulebook's own example. Eager Apprentice is -1 with a floor of 1; Sky
+# Splitter's own discount is -7 with no floor. 8 -> 7 -> 0, not 8 -> 1 -> 1.
+if apply_discounts(8, [(1, 1), (7, 0)]) != 0:
+    die("discounts", "356.4.e -- the floored discount must be applied first, "
+                     "so the unfloored one can take the cost to 0")
+ok("Sky Splitter reaches 0 Energy, not 1 -- the floor binds only its own discount")
+
+# Descending floor is OPTIMAL, not a heuristic: it must equal exhaustive search.
+def fold(cost, ds):
+    return reduce(lambda c, d: min(c, max(c - d[0], d[1])), ds, cost)
+
+rng = np.random.default_rng(7)
+for _ in range(3000):
+    cost = int(rng.integers(0, 13))
+    ds = [(int(rng.integers(0, 6)), int(rng.choice([0, 0, 1, 2, 3])))
+          for _ in range(int(rng.integers(2, 5)))]
+    best = min(fold(cost, p) for p in permutations(ds))
+    if apply_discounts(cost, ds) != best:
+        die("discounts", f"greedy order was not optimal for cost={cost} ds={ds}")
+ok("descending-floor order matches exhaustive search on 3000 random cases")
+
+# A discount never raises a cost, and never goes below zero.
+if apply_discounts(2, [(9, 0)]) != 0 or apply_discounts(0, [(3, 2)]) != 0:
+    die("discounts", "a discount must never raise a cost or go below 0")
+ok("discounts never raise a cost and never go negative")
 
 print("\n\033[32mall effect tests passed\033[0m")
