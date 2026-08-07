@@ -54,6 +54,7 @@ from rl.config import Config
 from rl.engine.cardtable import full_table
 from rl.eval import report
 from rl.nets import RiftboundNet, count_params, to_torch
+from rl.pool import Ladder, OpponentPool, elo_from_winrate
 from rl.tests.fuzz import v0_pool
 from rl.vec import BatchObs, VecRiftbound, batch
 
@@ -74,6 +75,16 @@ class HP:
     max_grad_norm: float = 0.5
     anneal_lr: bool = True
 
+    # --- opponent pool (Phase 5) ------------------------------------------
+    # `pool_frac` of envs play a sampled frozen past self; the rest are pure
+    # self-play. Mixing rather than replacing: pure pool play loses the
+    # sharpening that comes from facing your exact current strength, pure
+    # self-play is what produced the 8.8-point drift against greedy.
+    pool_frac: float = 0.5
+    pool_every: int = 10          # snapshot the learner every N iterations
+    pool_capacity: int = 20
+    pfsp_p: float = 2.0
+
 
 # ---------------------------------------------------------------------------
 # Rollout storage
@@ -89,6 +100,20 @@ def slice_obs(b: BatchObs, i: int) -> dict:
         "action_mask": b.action_mask[i].copy(),
         "privileged": None if b.privileged is None else b.privileged[i].copy(),
     }
+
+
+def _subset(b: BatchObs, slots: list[int]) -> BatchObs:
+    """A BatchObs restricted to some env slots, for a per-opponent forward."""
+    return BatchObs(
+        zones={k: v[slots] for k, v in b.zones.items()},
+        zone_mask={k: v[slots] for k, v in b.zone_mask.items()},
+        globals=b.globals[slots],
+        legal_actions=b.legal_actions[slots],
+        action_mask=b.action_mask[slots],
+        to_move=b.to_move[slots],
+        n_legal=b.n_legal[slots],
+        privileged=None if b.privileged is None else b.privileged[slots],
+    )
 
 
 def stack_obs(rows: list[dict], device: str) -> dict:
@@ -166,28 +191,85 @@ class Trainer:
         self.pending: list[list[Step]] = [[] for _ in range(hp.n_envs)]
         self.global_step = 0
 
+        # Opponent pool. `env_opp[i]` is the frozen opponent assigned to slot i
+        # (None = pure self-play) and `learner_seat[i]` which side the learner
+        # is on there -- alternated, because a learner that always sits in seat
+        # 0 would never train the going-second game, and victory 3 has a large
+        # first-player edge (measured 64% self-play seat 0).
+        self.pool = OpponentPool(capacity=hp.pool_capacity, p=hp.pfsp_p)
+        self.rng = np.random.default_rng(seed)
+        self.env_opp: list = [None] * hp.n_envs
+        self.learner_seat = [i % 2 for i in range(hp.n_envs)]
+        self._opp_cache: dict[int, RiftboundNet] = {}
+
+    def _opp_net(self, entry) -> RiftboundNet:
+        """Instantiate (and cache) a frozen opponent."""
+        key = id(entry)
+        net = self._opp_cache.get(key)
+        if net is None:
+            net = RiftboundNet(self.vec.shapes()).to(self.device)
+            net.load_state_dict(entry.state_dict)
+            net.eval()
+            if len(self._opp_cache) > self.hp.pool_capacity + 2:
+                self._opp_cache.clear()
+            self._opp_cache[key] = net
+        return net
+
+    def _assign(self, i: int) -> None:
+        """Pick who slot i plays next episode, and which seat the learner takes."""
+        self.learner_seat[i] = int(self.rng.integers(2))
+        self.env_opp[i] = (self.pool.sample(self.rng)
+                           if self.pool.entries
+                           and self.rng.random() < self.hp.pool_frac else None)
+
     # -- collect ---------------------------------------------------------
 
     @torch.no_grad()
     def collect(self) -> Rollout:
         hp, out = self.hp, Rollout()
         while len(out.steps) < hp.rollout:
-            t = to_torch(self.obs, self.device)
-            idx, logp, _, value = self.net.act(t, generator=self.gen)
-            idx_np = idx.cpu().numpy()
-            logp_np = logp.cpu().numpy()
-            val_np = value.cpu().numpy()
+            # Which slots is the learner acting in? The rest are driven by a
+            # frozen opponent and produce no training data -- recording them
+            # would teach the learner to imitate an old checkpoint.
+            mine = [i for i in range(hp.n_envs)
+                    if self.env_opp[i] is None
+                    or int(self.obs.to_move[i]) == self.learner_seat[i]]
+            idx_np = np.zeros(hp.n_envs, np.int64)
 
+            if mine:
+                t = to_torch(self.obs, self.device)
+                idx, logp, _, value = self.net.act(t, generator=self.gen)
+                idx_np[mine] = idx.cpu().numpy()[mine]
+                logp_np = logp.cpu().numpy()
+                val_np = value.cpu().numpy()
+                for i in mine:
+                    self.pending[i].append(Step(
+                        obs=slice_obs(self.obs, i), action=int(idx_np[i]),
+                        logp=float(logp_np[i]), value=float(val_np[i]),
+                        seat=int(self.obs.to_move[i])))
+
+            # Group the remaining slots by opponent so each frozen net runs one
+            # batched forward rather than one per slot.
+            others: dict[int, list[int]] = {}
             for i in range(hp.n_envs):
-                self.pending[i].append(Step(
-                    obs=slice_obs(self.obs, i), action=int(idx_np[i]),
-                    logp=float(logp_np[i]), value=float(val_np[i]),
-                    seat=int(self.obs.to_move[i])))
+                if i not in mine:
+                    others.setdefault(id(self.env_opp[i]), []).append(i)
+            for _, slots in others.items():
+                opp = self._opp_net(self.env_opp[slots[0]])
+                sub = to_torch(_subset(self.obs, slots), self.device)
+                with torch.no_grad():
+                    oidx, *_ = opp.act(sub, generator=self.gen)
+                idx_np[slots] = oidx.cpu().numpy()
 
             self.obs, rewards, done, infos = self.vec.step(idx_np)
             self.global_step += hp.n_envs
 
             for i in np.flatnonzero(done):
+                if self.env_opp[i] is not None:
+                    self.pool.record(
+                        self.env_opp[i],
+                        learner_won=(rewards[i][self.learner_seat[i]] > 0))
+                self._assign(i)
                 finish_episode(self.pending[i], rewards[i], hp)
                 ep = infos[i]["episode"]
                 out.steps.extend(self.pending[i])
@@ -396,11 +478,16 @@ def main(argv=None) -> int:
               f"clip={stats['clipfrac']:.2f} ev={stats['explained_var']:+.2f} "
               f"| {tr.global_step / dt:.0f} st/s", flush=True)
 
+        if hp.pool_every and it % hp.pool_every == 0:
+            tr.pool.add(tr.net, it)
+
         if a.eval_every and it % a.eval_every == 0:
             r = report(tr.net, table, cfg, deal, n=a.eval_games, device=a.device)
             flag = "  <-- PHASE 4 EXIT MET" if r["pass"] else ""
             print(f"       eval: vs_random {r['vs_random']:.1%}  "
-                  f"vs_greedy {r['vs_greedy']:.1%}{flag}", flush=True)
+                  f"vs_greedy {r['vs_greedy']:.1%}  "
+                  f"elo(greedy=0) {elo_from_winrate(r['vs_greedy']):+.0f}"
+                  f"{flag}\n       {tr.pool.summary()}", flush=True)
             score = r["vs_random"] + r["vs_greedy"]
             if score > best:
                 best = score
