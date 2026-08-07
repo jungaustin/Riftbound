@@ -53,6 +53,8 @@ ENGINE_KEYWORDS = {
     "Hidden":    "chain.hideable -- may be hidden in the Facedown Zone",
     "Accelerate": "actions.legal_actions -- the A_PLAY_AT_FAST variant, and "
                   "cost.accelerate_cost for the additional cost (805)",
+    "Shield":    "combat.combat_role_bonus -- +X Might while a defender (814)",
+    "Assault":   "combat.combat_role_bonus -- +X Might while an attacker (807)",
     "Action":    "effects.SPEED_ACTION, via a card's DSL spec",
     "Reaction":  "effects.SPEED_REACTION, via a card's DSL spec",
 }

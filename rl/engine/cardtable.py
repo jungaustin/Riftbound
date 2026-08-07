@@ -139,6 +139,20 @@ def keyword_mask(text: str) -> int:
     return mask
 
 
+def keyword_value(text: str, keyword: str) -> int:
+    """The X in "[Shield 3]", or 1 when the card has it bare, or 0 if absent.
+
+    814.1.b.3 / 807.1.b.3: "if X is omitted, it is presumed to be 1." Only
+    counts keywords the card actually HAS -- `keyword_mask` decides that, so a
+    spell that GRANTS "[Shield 3] this turn" does not gain Shield itself.
+    """
+    bit = _KW_BIT.get(keyword)
+    if bit is None or not (keyword_mask(text) >> bit & 1):
+        return 0
+    m = re.search(rf"\[{keyword}\s*(\d*)\]", text or "")
+    return int(m.group(1)) if (m and m.group(1)) else 1
+
+
 def body_text(text: str) -> str:
     """Rules text with reminder text stripped -- the part we must implement."""
     return _REMINDER.sub("", text or "").strip()
@@ -159,6 +173,12 @@ class CardTable:
     type_id: np.ndarray       # int8, index into CARD_TYPES
     domain_mask: np.ndarray   # uint8, bit per DOMAINS
     kw_mask: np.ndarray       # uint32, bit per ALL_KEYWORDS
+    # Keyword VALUES. [Shield 3] and [Assault 2] carry a number the bitmask
+    # cannot hold, and "if X is omitted, it is presumed to be 1" (814.1.b.3,
+    # 807.1.b.3). Dense int16 columns rather than a dict because `might` reads
+    # them on every call.
+    shield: np.ndarray        # int16, 0 = no [Shield]
+    assault: np.ndarray       # int16, 0 = no [Assault]
     text_len: np.ndarray      # int16, reminder text stripped
     token: np.ndarray         # bool, supertype == Token (185.3)
 
@@ -257,6 +277,8 @@ def _rows(cards: list[Card]) -> CardTable:
             [sum(1 << _DOMAIN_BIT[d] for d in c.domains if d in _DOMAIN_BIT)
              for c in cards], np.uint8),
         kw_mask=np.array([keyword_mask(c.text) for c in cards], np.uint32),
+        shield=np.array([keyword_value(c.text, "Shield") for c in cards], np.int16),
+        assault=np.array([keyword_value(c.text, "Assault") for c in cards], np.int16),
         text_len=np.array([len(body_text(c.text)) for c in cards], np.int16),
         token=np.array([c.name in _tokens for c in cards], bool),
     )

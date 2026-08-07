@@ -39,7 +39,7 @@ from rl.engine import resolve as rsv
 from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
                             card_domains, pay, plan_payment)
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import TR_PLAY_ME, spec_for
+from rl.engine.effects import TR_PLAY_ME, TR_PLAY_SPELL, spec_for
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
                              MAX_CHAIN, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
@@ -529,6 +529,16 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
         assert recycle is not None, "unaffordable spell reached finalization"
         pay(state, table, seat, card, recycle)
     chain.finalize(state, item)
+    # "When you play a spell" -- 349 makes a card *played* at finalization, not
+    # at resolution, so Ravenbloom Student grows the moment the spell is
+    # committed to the Chain and keeps the Might even if it is countered.
+    if table.is_type(card, "Spell"):
+        for u in range(state.n_perms):
+            row = state.perms[u]
+            if row[P_ALIVE] != 1 or int(row[P_CTRL]) != seat:
+                continue
+            if chain.has_trigger(table, int(row[P_CARD]), TR_PLAY_SPELL):
+                chain.queue(state, TR_PLAY_SPELL, u, int(row[P_LOC]))
     # 337.1.a: the caster keeps priority, so they may respond to their own card.
     state.priority = seat
     return {"finalized": table.names[card],

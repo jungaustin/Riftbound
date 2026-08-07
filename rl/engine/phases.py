@@ -119,7 +119,7 @@ def _to_trash(state: GameState, seat: int, card: int) -> None:
     state.n_trash[seat] = n + 1
 
 
-def score_holds(state: GameState, cfg: Config) -> int:
+def score_holds(state: GameState, cfg: Config, table: CardTable | None = None) -> int:
     """Scoring Step -- the turn player Holds each battlefield they control.
 
     Scores for battlefields ALREADY controlled at the start of your turn
@@ -131,12 +131,21 @@ def score_holds(state: GameState, cfg: Config) -> int:
     stops a Battlefield lost and retaken later in the same turn from paying
     twice.
     """
+    from rl.engine.chain import has_trigger, queue as chain_queue
+    from rl.engine.effects import TR_HOLD
     seat = state.active
     gained = 0
     for i in range(N_BF):
         if state.bf_ctrl[i] == seat and not state.bf_scored[seat, i]:
             state.bf_scored[seat, i] = 1
             gained += POINTS_PER_HOLD
+            # "When I hold" fires for the units standing there, not for the
+            # player -- Trevor Snoozebottom garrisons the battlefield he is
+            # already holding.
+            if table is not None:
+                for u in state.units_at(bf_loc(i), seat):
+                    if has_trigger(table, int(state.perms[u, P_CARD]), TR_HOLD):
+                        chain_queue(state, TR_HOLD, int(u), bf_loc(i))
     if gained:
         state.points[seat] += gained
     state.winner = state.check_winner(cfg.victory_score)
@@ -252,7 +261,7 @@ def start_turn(state: GameState, table: CardTable, cfg: Config) -> dict:
     # Order matters -- see module docstring.
     log["temporary_died"] = expire_temporary(state, table)
     log["control_lost"] = control_cleanup(state)
-    log["held"] = score_holds(state, cfg)
+    log["held"] = score_holds(state, cfg, table)
     if state.winner >= 0:
         return log
 

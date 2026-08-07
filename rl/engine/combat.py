@@ -121,6 +121,29 @@ def static_might(state: GameState, table: CardTable, perm: int) -> int:
     return total
 
 
+def combat_role_bonus(state: GameState, table: CardTable, perm: int) -> int:
+    """[Shield] and [Assault] -- Might that exists only during a Combat.
+
+    807.1.c "while I am an attacker, I have +X [M]"; 814.1.c the same for a
+    defender. Both are keyed to the Attacker/Defender **designation** (459), not
+    to who moved: `state.attacker` holds it, and it survives for as long as the
+    Combat does (807.1.d.1, 814.1.d.1).
+
+    The value is a real number, not a flag -- [Assault 2], [Shield 3] -- and "if
+    X is omitted, it is presumed to be 1".
+    """
+    bf = int(state.showdown_bf)
+    if bf < 0:
+        return 0
+    row = state.perms[perm]
+    if int(row[P_LOC]) != bf_loc(bf):
+        return 0
+    card = int(row[P_CARD])
+    if int(row[P_CTRL]) == int(state.attacker):
+        return int(table.assault[card])
+    return int(table.shield[card])
+
+
 def might(state: GameState, table: CardTable, perm: int) -> int:
     """Current Might: printed value, static abilities, and any "this turn"
     modifier, floored at 0.
@@ -134,7 +157,8 @@ def might(state: GameState, table: CardTable, perm: int) -> int:
     """
     row = state.perms[perm]
     return max(0, int(table.might[int(row[P_CARD])]) + int(row[P_MIGHT_MOD])
-               + static_might(state, table, perm))
+               + static_might(state, table, perm)
+               + combat_role_bonus(state, table, perm))
 
 
 def enforce_lethal(state: GameState, table: CardTable) -> list[int]:
@@ -493,6 +517,12 @@ def _establish_control(state: GameState, table: CardTable, cfg: Config,
         state.points[holder] += POINTS_PER_CONQUER
         state.winner = state.check_winner(cfg.victory_score)
         scored.append((holder, "conquer"))
+        # "When I conquer" fires for the units that took the ground.
+        from rl.engine.chain import has_trigger, queue as chain_queue
+        from rl.engine.effects import TR_CONQUER
+        for u in state.units_at(loc, holder):
+            if has_trigger(table, int(state.perms[u, P_CARD]), TR_CONQUER):
+                chain_queue(state, TR_CONQUER, int(u), loc)
     return scored
 
 

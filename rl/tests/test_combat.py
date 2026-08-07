@@ -24,11 +24,30 @@ def card_with(might, kw=None, exclude_kw=()):
         return cid
     raise LookupError(f"no unit with might={might} kw={kw}")
 
-PLAIN = {m: card_with(m, exclude_kw=("Tank", "Backline", "Temporary"))
+# [Shield] and [Assault] change Might DURING combat (814.1.c / 807.1.c), so a
+# fixture carrying either has a different Might in the very step under test.
+# TANK3 used to resolve to Shen - Kinkou, who has [Shield 2] and is therefore a
+# 5-Might defender -- the "3 damage kills the Tank" assertion started failing
+# the moment the engine stopped ignoring the keyword. The fixtures now exclude
+# them so the numbers in these tests mean what they say.
+_COMBAT_MODIFIERS = ("Shield", "Assault")
+
+PLAIN = {m: card_with(m, exclude_kw=("Tank", "Backline", "Temporary")
+                      + _COMBAT_MODIFIERS)
          for m in (1, 2, 3, 4, 5)}
-TANK3 = card_with(3, "Tank")
+# The smallest shieldless Tank the pool offers. No 3-Might one exists, so the
+# tests below take their numbers from the card rather than hardcoding them.
+TANK3 = next(cid for m in (1, 2, 3, 4, 5)
+             for cid in [card_with(m, "Tank", exclude_kw=_COMBAT_MODIFIERS)
+                         if any(T.is_type(c, "Unit") and T.might[c] == m
+                                and T.has(c, "Tank")
+                                and not any(T.has(c, k) for k in _COMBAT_MODIFIERS)
+                                for c in range(len(T.names))) else None]
+             if cid is not None)
+TANK_M = int(T.might[TANK3])
 BACK = next(cid for cid in range(len(T.names))
-            if T.is_type(cid, "Unit") and T.has(cid, "Backline"))
+            if T.is_type(cid, "Unit") and T.has(cid, "Backline")
+            and not any(T.has(cid, k) for k in _COMBAT_MODIFIERS))
 
 print(f"cards: plain={ {m: T.names[c] for m, c in PLAIN.items()} }")
 print(f"       tank3={T.names[TANK3]!r}  backline={T.names[BACK]!r} "
@@ -179,21 +198,21 @@ ok("defender alive at the Resolution Step -> attacker walked home for nothing")
 print("\n[4] [Tank] cannot be skipped")
 s = fresh()
 s.active = 0
-atk = [put(s, PLAIN[3], 0, base_loc(0))]          # pool 3
-tank = put(s, TANK3, 1, bf_loc(0))                # 3 might, Tank
+atk = [put(s, PLAIN[TANK_M], 0, base_loc(0))]     # pool exactly lethal on it
+tank = put(s, TANK3, 1, bf_loc(0))
 juicy = put(s, PLAIN[1], 1, bf_loc(0))            # 1 might, would be free
 s.bf_ctrl[0] = 1
 combat.declare_move(s, bf_loc(0))
 combat.add_to_declaration(s, atk[0])
 combat.commit_declaration(s, T, CFG)
-assert s.perms[tank, P_ALIVE] == 0, "3 damage must go to the Tank"
+assert s.perms[tank, P_ALIVE] == 0, f"{TANK_M} damage must go to the Tank"
 assert s.perms[juicy, P_ALIVE] == 1, "the 1-might unit is unreachable behind Tank"
-ok("3 damage kills the Tank, not the cheap unit behind it")
+ok(f"{TANK_M} damage kills the Tank, not the cheap unit behind it")
 
 print("[4b] pool too small for the Tank kills nothing at all")
 s = fresh()
 s.active = 0
-a = put(s, PLAIN[2], 0, base_loc(0))
+a = put(s, PLAIN[TANK_M - 1], 0, base_loc(0))     # one short of the Tank
 tank = put(s, TANK3, 1, bf_loc(0))
 soft = put(s, PLAIN[1], 1, bf_loc(0))
 s.bf_ctrl[0] = 1
@@ -201,8 +220,8 @@ combat.declare_move(s, bf_loc(0))
 combat.add_to_declaration(s, a)
 combat.commit_declaration(s, T, CFG)
 assert s.perms[tank, P_ALIVE] == 1 and s.perms[soft, P_ALIVE] == 1, "nothing dies"
-assert s.perms[a, P_ALIVE] == 0, "attacker eats 4 might"
-ok("2 damage into Tank 3 + unit 1 destroys nothing")
+assert s.perms[a, P_ALIVE] == 0, "attacker eats the defending pool"
+ok(f"{TANK_M - 1} damage into Tank {TANK_M} + unit 1 destroys nothing")
 
 print("[4c] [Backline] is reached only once everything else is dead")
 s = fresh()

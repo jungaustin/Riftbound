@@ -132,8 +132,14 @@ class CardSpec(NamedTuple):
 # the source leaving a location, and its captured `ctx` is the location it left
 # -- Lillia's "play a Sprite unit token THERE" means where she came from, and
 # 359.3.f.3 fixes that at trigger time, not at resolution.
-(TR_PLAY_ME, TR_DEATH, TR_MOVE) = range(3)
-TRIGGER_NAMES = ("play_me", "death", "move")
+(TR_PLAY_ME, TR_DEATH, TR_MOVE, TR_HOLD, TR_CONQUER,
+ TR_PLAY_SPELL) = range(6)
+TRIGGER_NAMES = ("play_me", "death", "move", "hold", "conquer", "play_spell")
+
+# TR_HOLD and TR_CONQUER are the two ways a battlefield Scores (469/470), and
+# they fire for the units standing there rather than for the player. TR_PLAY_SPELL
+# fires on its controller playing any spell -- 349 makes "played" mean finalized,
+# so it fires when the spell is put on the Chain, not when it resolves.
 
 
 # [Repeat] (820), not implemented yet -- the constraint is recorded because it
@@ -467,6 +473,31 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     "Thousand-Tailed Watcher": (
         Ability(TR_PLAY_ME,
                 ops=(Op(OP_MODIFY_MIGHT_ALL, n=-3, floor=1),)),
+    ),
+
+    # [Shield] When I hold, play a ready 3 Might Sprite unit token with
+    # [Temporary] here.
+    "Trevor Snoozebottom": (
+        Ability(TR_HOLD,
+                ops=(Op(OP_CREATE_TOKEN, target=T_HERE, n=1,
+                        token=SPRITE_TOKEN, ready=True),)),
+    ),
+
+    # When you play a spell, give me +1 Might this turn.
+    # "me" is the source, which is not a target -- hence T_SELF.
+    "Ravenbloom Student": (
+        Ability(TR_PLAY_SPELL,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=1),)),
+    ),
+
+    # [Accelerate] When I conquer, draw 1.
+    "Kai'Sa, Survivor": (
+        Ability(TR_CONQUER, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # When I move, draw 1.
+    "Stellacorn Herder": (
+        Ability(TR_MOVE, ops=(Op(OP_DRAW, n=1),)),
     ),
 
     # [Deathknell] - Draw 1.
