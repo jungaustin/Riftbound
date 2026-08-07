@@ -36,8 +36,8 @@ from rl.engine import chain, combat, phases
 from rl.engine import resolve as rsv
 # Payment lives in `cost` so combat can ask about affordability without
 # importing the action layer. Re-exported: callers still say A.plan_payment.
-from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, card_domains,
-                            pay, plan_payment)
+from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
+                            card_domains, pay, plan_payment)
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import TR_PLAY_ME, spec_for
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
@@ -49,11 +49,11 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
 # Action kinds. Wire format -- append only, never reorder.
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
  A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN,
- A_ACCEPT, A_DECLINE) = range(15)
+ A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST) = range(16)
 
 KIND_NAMES = ("pass", "end_turn", "play", "play_at", "declare", "add",
               "commit", "cancel", "retreat", "target", "hide", "hide_at",
-              "play_hidden", "accept", "decline")
+              "play_hidden", "accept", "decline", "play_at_fast")
 
 
 class Action(NamedTuple):
@@ -164,8 +164,19 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         if seat != state.active:
             return []
         card = int(state.hand[seat, state.pend_play])
-        return [Action(A_PLAY_AT, loc)
-                for loc in play_destinations(state, table, cfg, seat, card)]
+        dsts = play_destinations(state, table, cfg, seat, card)
+        out = [Action(A_PLAY_AT, loc) for loc in dsts]
+        # 805.2 -- [Accelerate] is an Optional Additional Cost paid *as* the
+        # unit is played, so it belongs to this decision rather than a later
+        # one. Folding it into the destination choice keeps the pair atomic:
+        # where to put it and whether to pay for haste are the same decision,
+        # and splitting them would offer a second decision point with two
+        # options and no new information.
+        acc = accelerate_cost(table, card)
+        if acc is not None and plan_payment(state, table, seat, card,
+                                            acc[0], acc[1]) is not None:
+            out += [Action(A_PLAY_AT_FAST, loc) for loc in dsts]
+        return out
 
     if state.declaring:
         if seat != state.active:
@@ -233,6 +244,41 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
 def apply(state: GameState, table: CardTable, cfg: Config,
           action: Action) -> dict:
     """Mutate `state` by `action`. Returns a small log dict for replays."""
+    log = _apply_one(state, table, cfg, action)
+    log.update(_settle(state, table, cfg))
+    return log
+
+
+def _settle(state: GameState, table: CardTable, cfg: Config) -> dict:
+    """Drain queued triggers onto the Chain and finalize what needs no choice.
+
+    **One central place, deliberately.** Triggers are queued from wherever the
+    condition is met -- inside combat damage, inside a Cleanup, inside a
+    spell's resolution -- and every one of those sites would otherwise have to
+    remember to drain the queue. Doing it once at the end of `apply` means a
+    new trigger site cannot forget; the worst it can do is fire late by one
+    action, and there is no priority window in between for that to matter.
+
+    Nothing happens while a decision is already open: a queued trigger waits
+    for the player to finish choosing targets rather than clobbering
+    `pend_slot` mid-selection.
+    """
+    if (state.pend_slot >= 0 or state.pend_may >= 0 or state.pend_play >= 0
+            or state.pend_hide >= 0 or state.declaring or is_terminal(state)):
+        return {}
+    log: dict = {}
+    for _ in range(MAX_CHAIN + 1):
+        if state.n_trig:
+            log.update(chain.flush(state, table, cfg))
+        log.update(_advance_pending(state, table, cfg))
+        # A decision is required, or there is nothing left to drain.
+        if state.pend_slot >= 0 or state.pend_may >= 0 or state.n_trig == 0:
+            return log
+    raise AssertionError("the trigger queue is not draining")
+
+
+def _apply_one(state: GameState, table: CardTable, cfg: Config,
+               action: Action) -> dict:
     seat = state.active
     k = action.kind
 
@@ -317,6 +363,9 @@ def apply(state: GameState, table: CardTable, cfg: Config,
 
     if k == A_PLAY_AT:
         return _resolve_play(state, table, cfg, seat, action.arg)
+
+    if k == A_PLAY_AT_FAST:
+        return _resolve_play(state, table, cfg, seat, action.arg, fast=True)
 
     if k == A_DECLARE:
         combat.declare_move(state, action.arg)
@@ -537,7 +586,7 @@ def _play_from_hidden(state: GameState, table: CardTable, cfg: Config,
 
 
 def _resolve_play(state: GameState, table: CardTable, cfg: Config,
-                  seat: int, loc: int) -> dict:
+                  seat: int, loc: int, fast: bool = False) -> dict:
     """Pay for the pending card and put it on the board.
 
     Units enter **exhausted** unless `[Accelerate]` was paid, so a unit played to
@@ -547,9 +596,12 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     """
     idx = state.pend_play
     card = int(state.hand[seat, idx])
-    recycle = plan_payment(state, table, seat, card)
+    extra = accelerate_cost(table, card) if fast else None
+    assert not fast or extra is not None, "accelerated a card without [Accelerate]"
+    ee, ep = extra if extra else (0, 0)
+    recycle = plan_payment(state, table, seat, card, ee, ep)
     assert recycle is not None, "unaffordable card reached _resolve_play"
-    pay(state, table, seat, card, recycle)
+    pay(state, table, seat, card, recycle, ee, ep)
 
     n = int(state.n_hand[seat])
     state.hand[seat, idx:n - 1] = state.hand[seat, idx + 1:n]
@@ -557,23 +609,24 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     state.n_hand[seat] = n - 1
     state.pend_play = -1
 
-    # v0 never pays [Accelerate]'s additional cost, so everything enters
-    # exhausted. When Accelerate lands it becomes a choice at payment time, not
-    # a property of the card.
-    src = state.add_permanent(card, seat, loc, ready=False)
+    # 359.2.c -- units enter exhausted, unless [Accelerate] was paid. 805.6 is
+    # precise that this is a REPLACEMENT: the unit "does not enter exhausted and
+    # then become ready", so nothing that watches for a unit becoming ready
+    # fires (805.6.a). Passing `ready=True` rather than readying afterwards is
+    # what implements that distinction.
+    src = state.add_permanent(card, seat, loc, ready=fast)
 
     # 359.2.b -- rules text executes as the permanent enters, so "When you play
     # me" triggers here, after it is on the board. 337.2 already resolved the
     # unit itself without a window; the trigger is a separate Chain Item and
     # *is* respondable.
-    if chain.fire(state, table, cfg, TR_PLAY_ME, src):
+    if chain.has_trigger(table, card, TR_PLAY_ME):
+        chain.queue(state, TR_PLAY_ME, src, loc)
         # 321 -- a Cleanup cannot happen while Chain Items are pending, so the
         # Combat this unit's arrival may have staged waits. The pass loop runs
         # `cleanup` the moment the Chain empties, which is the same path a
         # spell that moves a unit already takes.
-        log = {"played": table.names[card], "at": loc}
-        log.update(_advance_pending(state, table, cfg))
-        return log
+        return {"played": table.names[card], "at": loc}
     return combat.cleanup(state, table, cfg, mover=seat, dst=loc)
 
 

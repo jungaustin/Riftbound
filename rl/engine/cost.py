@@ -36,26 +36,49 @@ def card_domains(table: CardTable, card: int) -> list[int]:
     return [d for d in range(N_DOMAINS) if mask >> d & 1]
 
 
-def plan_payment(state: GameState, table: CardTable, seat: int,
-                 card: int) -> list[int] | None:
+def accelerate_cost(table: CardTable, card: int) -> tuple[int, int] | None:
+    """The [Accelerate] additional cost, or None if the card lacks it.
+
+    805.1.a -- "As you play me, you may pay [1][C] as an additional cost. If
+    you do, I enter ready." One Energy and one Power, where the Power must
+    match one of the unit's own domains (805.1.a.1) or any domain if it has
+    none (805.1.a.2). `plan_payment` handles that second case.
+    """
+    if not table.has(card, "Accelerate"):
+        return None
+    return (1, 1)
+
+
+def plan_payment(state: GameState, table: CardTable, seat: int, card: int,
+                 extra_energy: int = 0,
+                 extra_power: int = 0) -> list[int] | None:
     """Which domains to recycle for Power, or None if the card is unaffordable.
 
     Energy is generic (163.1.a) and comes from exhausting ready runes. Power is
     domain-bound (163.2) and comes from recycling, which may take an already
     exhausted rune -- so the two requirements are checked against *overlapping*
     pools, and a card needs max(energy, power) runes rather than their sum.
+
+    `extra_energy`/`extra_power` are Optional Additional Costs -- currently only
+    [Accelerate]. They are part of the same payment, not a second one, so they
+    share the overlapping-pool rule: a unit costing {2 energy} accelerated for
+    {1 energy}{1 power} needs max(3, 1) = 3 runes, not 4.
     """
-    need_e = int(table.energy[card]) - int(state.pool_energy[seat])
+    need_e = int(table.energy[card]) + extra_energy - int(state.pool_energy[seat])
     need_e = max(0, need_e)
     if need_e > state.total_ready_runes(seat):
         return None
 
-    need_p = int(table.power[card])
+    need_p = int(table.power[card]) + extra_power
     if need_p <= 0:
         return []
     doms = card_domains(table, card)
     if not doms:
-        return None      # a Power cost with no domain is unpayable
+        # 805.1.a.2 -- a domainless unit may pay Accelerate's Power with a rune
+        # of ANY domain. A *printed* Power cost with no domain stays unpayable.
+        if int(table.power[card]) > 0 or extra_power <= 0:
+            return None
+        doms = list(range(N_DOMAINS))
 
     floating = sum(int(state.pool_power[seat, d]) for d in doms)
     need_p = max(0, need_p - floating)
@@ -77,23 +100,25 @@ def plan_payment(state: GameState, table: CardTable, seat: int,
 
 
 def pay(state: GameState, table: CardTable, seat: int, card: int,
-        recycle: list[int]) -> None:
+        recycle: list[int], extra_energy: int = 0,
+        extra_power: int = 0) -> None:
     """Exhaust for Energy, then recycle for Power. Order matters.
 
     Exhausting first is what makes one rune pay both halves: the recycle step
     can then take a rune that was just spent on Energy.
     """
-    need_e = max(0, int(table.energy[card]) - int(state.pool_energy[seat]))
-    state.pool_energy[seat] = max(
-        0, int(state.pool_energy[seat]) - int(table.energy[card]))
+    total_e = int(table.energy[card]) + extra_energy
+    need_e = max(0, total_e - int(state.pool_energy[seat]))
+    state.pool_energy[seat] = max(0, int(state.pool_energy[seat]) - total_e)
     for _ in range(need_e):
         dom = int(np.argmax(state.runes_ready[seat]))
         assert state.runes_ready[seat, dom] > 0, "energy payment underflow"
         state.runes_ready[seat, dom] -= 1
         state.runes_spent[seat, dom] += 1
 
-    need_p = int(table.power[card])
-    for d in card_domains(table, card):
+    need_p = int(table.power[card]) + extra_power
+    doms = card_domains(table, card) or list(range(N_DOMAINS))
+    for d in doms:
         use = min(need_p, int(state.pool_power[seat, d]))
         state.pool_power[seat, d] -= use
         need_p -= use

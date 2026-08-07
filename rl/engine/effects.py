@@ -58,10 +58,11 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
 # --- ops ------------------------------------------------------------------
 (OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT, OP_COUNTER,
  OP_NO_SPELLS, OP_CREATE_TOKEN, OP_MOVE_TO, OP_RETURN_TO_HAND,
- OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER, OP_READY) = range(13)
+ OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER, OP_READY,
+ OP_MODIFY_MIGHT_ALL) = range(14)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
-            "damage", "kill", "draw_controller", "ready")
+            "damage", "kill", "draw_controller", "ready", "modify_might_all")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -126,8 +127,13 @@ class CardSpec(NamedTuple):
 
 # --- triggered abilities (382-383) ----------------------------------------
 # Trigger conditions. Wire format: append only.
-(TR_PLAY_ME,) = range(1)
-TRIGGER_NAMES = ("play_me",)
+#
+# TR_DEATH is [Deathknell] (808.1.c, "When I die, [Effect]"). TR_MOVE fires on
+# the source leaving a location, and its captured `ctx` is the location it left
+# -- Lillia's "play a Sprite unit token THERE" means where she came from, and
+# 359.3.f.3 fixes that at trigger time, not at resolution.
+(TR_PLAY_ME, TR_DEATH, TR_MOVE) = range(3)
+TRIGGER_NAMES = ("play_me", "death", "move")
 
 
 class Ability(NamedTuple):
@@ -426,6 +432,40 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
                 targets=(TargetSpec(who=W_ANY, not_self=True),),
                 ops=(Op(OP_READY, target=0),)),
     ),
+
+    # [Accelerate] When I move from a location, play a 3 Might Sprite unit
+    # token with [Temporary] there.
+    #
+    # "there" is the location she LEFT, and by the time this resolves she is
+    # somewhere else -- so it cannot be read off her row and must come from
+    # `ctx`, captured when the trigger fired (359.3.f.3). No "ready": unlike
+    # Sprite Mother's token this one enters exhausted.
+    "Lillia - Fae Fawn": (
+        Ability(TR_MOVE,
+                ops=(Op(OP_CREATE_TOKEN, target=T_CTX, n=1,
+                        token=SPRITE_TOKEN),)),
+    ),
+
+    # [Accelerate] When you play me, give enemy units -3 Might this turn, to a
+    # minimum of 1 Might.
+    #
+    # "enemy units" with no count and no choice: not targets (355.10), so no
+    # slot and no restriction -- it simply applies to all of them.
+    "Thousand-Tailed Watcher": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_MODIFY_MIGHT_ALL, n=-3, floor=1),)),
+    ),
+
+    # [Deathknell] - Draw 1.
+    "Watchful Sentry": (
+        Ability(TR_DEATH, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # Ferrous Forerunner, Carrion Dredger and Honest Broker are deliberately
+    # absent. Their Deathknells play Mech, Bird and Gold tokens, and none of
+    # those token cards exist in `data/cards.json` -- only Recruit and Sprite
+    # do. There is nothing to instantiate, so they stay substituted rather
+    # than approximated with the wrong body.
 }
 
 

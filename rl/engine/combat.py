@@ -47,7 +47,8 @@ import numpy as np
 
 from rl.config import Config
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import ST_MIGHT, SC_SELF, statics_for
+from rl.engine.effects import (SC_SELF, ST_MIGHT, TR_DEATH, TR_MOVE,
+                               abilities_for, statics_for)
 from rl.engine.state import (P_MIGHT_MOD, F_NO_COMBAT_DAMAGE, N_BF, N_SEATS, P_ALIVE,
                              P_ARRIVED, P_CARD, P_CTRL, P_DMG, P_FLAGS, P_LOC,
                              P_READY, SD_CLEANUP, SD_DAMAGE, SD_NONE,
@@ -158,7 +159,7 @@ def enforce_lethal(state: GameState, table: CardTable) -> list[int]:
                 continue
             dmg = int(row[P_DMG])
             if dmg > 0 and dmg >= might(state, table, i):
-                _destroy(state, i)
+                _destroy(state, table, i)
                 killed.append(i)
                 again = True
         if not again:
@@ -196,7 +197,7 @@ def set_might_mod(state: GameState, table: CardTable, perm: int, delta: int,
 
     dmg = int(row[P_DMG])
     if dmg > 0 and dmg >= might(state, table, perm):
-        _destroy(state, perm)
+        _destroy(state, table, perm)
         return True
     return False
 
@@ -207,14 +208,14 @@ def mark_damage(state: GameState, table: CardTable, perm: int,
     state.perms[perm, P_DMG] += amount
     dmg = int(state.perms[perm, P_DMG])
     if dmg > 0 and dmg >= might(state, table, perm):
-        _destroy(state, perm)
+        _destroy(state, table, perm)
         return True
     return False
 
 
-def destroy(state: GameState, perm: int) -> None:
+def destroy(state: GameState, table: CardTable, perm: int) -> None:
     """Kill outright (428) -- no damage involved, so no lethal check."""
-    _destroy(state, perm)
+    _destroy(state, table, perm)
 
 
 def might_for_pool(state: GameState, table: CardTable, perm: int) -> int:
@@ -241,9 +242,19 @@ def lethal_cost(state: GameState, table: CardTable, perm: int) -> int:
     return max(1, might(state, table, perm) - int(state.perms[perm, P_DMG]))
 
 
-def _destroy(state: GameState, perm: int) -> None:
-    """Kill a permanent and put its card in its controller's trash."""
+def _destroy(state: GameState, table: CardTable, perm: int) -> None:
+    """Kill a permanent and put its card in its controller's trash.
+
+    808.1.d.2 -- a Deathknell is added to the Chain as a Pending Item *before*
+    the card moves to the Trash, and 808.1.d.3 says to note its location first.
+    Queueing here does both: the location is captured at the moment of death,
+    and the actual Chain push happens at the next safe point (see
+    `chain.queue`, which explains why it cannot happen inline).
+    """
+    from rl.engine.chain import queue as chain_queue   # cycle: chain -> resolve -> combat
     row = state.perms[perm]
+    if any(a.trigger == TR_DEATH for a in abilities_for(table, int(row[P_CARD]))):
+        chain_queue(state, TR_DEATH, perm, int(row[P_LOC]))
     row[P_ALIVE] = 0
     seat, card = int(row[P_CTRL]), int(row[P_CARD])
     n = int(state.n_trash[seat])
@@ -312,6 +323,19 @@ def cancel_declaration(state: GameState) -> None:
     state.clear_declaration()
 
 
+def queue_move_trigger(state: GameState, table: CardTable, perm: int,
+                       from_loc: int) -> None:
+    """"When I move from a location" -- ctx is the location LEFT (359.3.f.3).
+
+    Captured at the moment of the move rather than read at resolution: by then
+    the unit is somewhere else, and Lillia's Sprite goes where she came from.
+    """
+    from rl.engine.chain import queue as chain_queue   # cycle: chain -> resolve -> combat
+    card = int(state.perms[perm, P_CARD])
+    if any(a.trigger == TR_MOVE for a in abilities_for(table, card)):
+        chain_queue(state, TR_MOVE, int(perm), int(from_loc))
+
+
 def commit_declaration(state: GameState, table: CardTable, cfg: Config) -> dict:
     """Resolve the declaration: everyone arrives at once, exhausted (445-453).
 
@@ -326,6 +350,7 @@ def commit_declaration(state: GameState, table: CardTable, cfg: Config) -> dict:
     assert moved, "cannot commit an empty declaration"
     for i in moved:
         row = state.perms[i]
+        queue_move_trigger(state, table, i, int(row[P_LOC]))
         row[P_LOC] = dst
         row[P_READY] = 0          # units arrive exhausted
         row[P_ARRIVED] = state.turn
@@ -342,6 +367,7 @@ def retreat(state: GameState, table: CardTable, cfg: Config, perm: int) -> dict:
     """
     row = state.perms[perm]
     assert is_battlefield(int(row[P_LOC])), "not at a battlefield"
+    queue_move_trigger(state, table, perm, int(row[P_LOC]))
     row[P_LOC] = base_loc(int(row[P_CTRL]))
     row[P_READY] = 0
     return cleanup(state, table, cfg, mover=state.active, dst=-1)
@@ -732,7 +758,7 @@ def damage_step(state: GameState, table: CardTable, cfg: Config,
     killed = [_assign(state, table, pools[s], units[1 - s]) for s in range(N_SEATS)]
     for side in killed:
         for i in side:
-            _destroy(state, i)
+            _destroy(state, table, i)
     return {"pools": tuple(pools), "killed": tuple(killed)}
 
 

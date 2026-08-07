@@ -82,6 +82,13 @@ MAX_HAND = 20
 MAX_DECK = 60
 MAX_TRASH = 80
 MAX_CHAIN = 16
+# Triggers waiting to be put on the Chain. A trigger fires from wherever the
+# game action happens -- deep inside combat damage, inside a Cleanup -- and at
+# those moments the Chain must stay empty, because `is_open` is `n_chain == 0`
+# and a Cleanup refuses to run in a Closed State. Pushing directly from
+# `_destroy` would therefore block the very Cleanup that finishes the Combat.
+# So a trigger is QUEUED where it fires and drained at the next safe point.
+MAX_TRIGGERS = 32
 RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 
 # Chain columns (rules 337-340).
@@ -130,7 +137,7 @@ class GameState:
         "bf_card", "bf_ctrl", "bf_contested", "fd_owner", "fd_card", "fd_ply",
         "bf_scored",
         "chain", "n_chain", "chain_targets", "pend_slot", "chain_uid",
-        "pend_may",
+        "pend_may", "trig", "n_trig",
         "points", "burned_out", "no_spells",
         "legend", "champion",
         "turn", "ply", "active", "phase", "priority", "focus",
@@ -196,6 +203,9 @@ class GameState:
         # Chain index of an optional Triggered Ability awaiting its controller's
         # yes/no at finalization (383.3.a). -1 when nothing is waiting.
         self.pend_may = -1
+        # [trigger kind, source permanent row, captured context int]
+        self.trig = np.full((MAX_TRIGGERS, 3), -1, np.int16)
+        self.n_trig = 0
         self.chain_uid = 0        # monotone; next id for a chain item
 
         self.points = np.zeros(N_SEATS, np.int16)
@@ -299,6 +309,8 @@ class GameState:
         """
         assert self.n_chain == 0, \
             "compacting with a live Chain would silently repoint its targets"
+        assert self.n_trig == 0, \
+            "compacting with queued triggers would repoint their sources"
         assert not self.declaring and self.decl_mask == 0, \
             "compacting mid-declaration would repoint decl_mask"
         assert self.showdown_bf < 0, "compacting during a Showdown"

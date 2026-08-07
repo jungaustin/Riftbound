@@ -42,7 +42,8 @@ from rl.engine.effects import (SPEED_ACTION, SPEED_REACTION, abilities_for,
                                spec_for)
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
                              C_FINAL, C_FROM_HAND, C_SRC, C_UID,
-                             MAIN, MAX_CHAIN, MAX_TARGETS, N_BF, N_SEATS,
+                             MAIN, MAX_CHAIN, MAX_TARGETS, MAX_TRIGGERS,
+                             N_BF, N_SEATS,
                              P_CARD, P_CTRL, GameState)
 
 
@@ -211,6 +212,53 @@ def item_spec(state: GameState, table: CardTable, item: int):
     abilities = abilities_for(table, card)
     assert abil < len(abilities), f"ability {abil} missing on {table.names[card]!r}"
     return abilities[abil]
+
+
+def has_trigger(table: CardTable, card: int, trigger: int) -> bool:
+    """Does this card have an ability on `trigger`? Cheap pre-filter so the
+    queue only ever holds triggers that will actually produce something."""
+    return any(a.trigger == trigger for a in abilities_for(table, card))
+
+
+def queue(state: GameState, trigger: int, src: int, ctx: int = -1) -> None:
+    """Record that a trigger condition was met. Drained by `flush`.
+
+    **Not put on the Chain here, deliberately.** Trigger conditions are met
+    wherever the game action happens -- inside the Combat Damage Step, inside a
+    Cleanup, inside a spell's resolution -- and `state.is_open` is
+    `n_chain == 0`, so anything on the Chain makes a Cleanup refuse to run
+    (321). Pushing a Deathknell straight from `_destroy` would therefore block
+    the very Cleanup that was killing the unit, and combat would never finish.
+
+    Queueing also gets 808.1.d.3 right for free: "before the card is moved to
+    the Trash, note its location ... to process the trigger after it has been
+    Finalized." `ctx` is captured now, at the moment the condition was met,
+    not read later off a row that has since changed or been reused.
+    """
+    i = int(state.n_trig)
+    assert i < MAX_TRIGGERS, "trigger queue overflow"
+    state.trig[i] = (trigger, src, ctx)
+    state.n_trig = i + 1
+
+
+def flush(state: GameState, table: CardTable, cfg: Config) -> dict:
+    """Put every queued trigger on the Chain (383.3), oldest first.
+
+    383.3.d orders simultaneous triggers by their controller's choice; queue
+    order stands in for that. It is a real decision only when one player has
+    two triggers firing at once with different useful orderings, which no card
+    in the pool can currently produce.
+    """
+    n = int(state.n_trig)
+    if not n:
+        return {}
+    added = 0
+    for i in range(n):
+        trigger, src, ctx = (int(x) for x in state.trig[i])
+        added += fire(state, table, cfg, trigger, src, ctx)
+    state.trig[:n] = -1
+    state.n_trig = 0
+    return {"triggered": added} if added else {}
 
 
 def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,

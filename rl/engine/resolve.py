@@ -38,7 +38,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                OP_RETURN_TO_HAND,
                                OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
-                               OP_READY, OP_SWAP_LOC,
+                               OP_MODIFY_MIGHT_ALL, OP_READY, OP_SWAP_LOC,
                                REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
                                TK_LOCATION, TK_SPELL, W_FRIENDLY,
@@ -304,7 +304,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             if combat.mark_damage(state, table, a, op.n):
                 log.setdefault("killed", []).append(a)
         elif op.op == OP_KILL:
-            combat.destroy(state, a)
+            combat.destroy(state, table, a)
             log.setdefault("killed", []).append(a)
         elif op.op == OP_DRAW_CONTROLLER:
             # The TARGET's controller draws, not the caster.
@@ -315,6 +315,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             if dst < 0:
                 log["fizzled"].append(op.op)
                 continue
+            combat.queue_move_trigger(state, table, a, int(state.perms[a, P_LOC]))
             state.perms[a, P_LOC] = dst
             if op.then_ready:
                 state.perms[a, P_READY] = 1
@@ -365,6 +366,19 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["stunned"] = log.get("stunned", [])
             if state.stun(a):
                 log["stunned"].append(a)
+        elif op.op == OP_MODIFY_MIGHT_ALL:
+            # "give enemy units -3 Might this turn" -- no count, no choice, so
+            # not targets (355.10) and no slot. It reaches every enemy unit on
+            # the board, and each one gets the same 143.2.a re-check a single
+            # Might change would.
+            for i in range(state.n_perms):
+                r = state.perms[i]
+                if r[P_ALIVE] != 1 or int(r[P_CTRL]) == seat:
+                    continue
+                if not table.is_type(int(r[P_CARD]), "Unit"):
+                    continue
+                if combat.set_might_mod(state, table, i, op.n, op.floor):
+                    log.setdefault("killed_by_might", []).append(i)
         elif op.op == OP_READY:
             state.perms[a, P_READY] = 1
             log.setdefault("readied", []).append(a)
@@ -374,6 +388,8 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                 log["fizzled"].append(op.op)
                 continue
             la, lb = int(state.perms[a, P_LOC]), int(state.perms[b, P_LOC])
+            combat.queue_move_trigger(state, table, a, la)
+            combat.queue_move_trigger(state, table, b, lb)
             state.perms[a, P_LOC], state.perms[b, P_LOC] = lb, la
             log["swapped"] = (a, b)
         else:

@@ -139,7 +139,7 @@ if not s.perms[tok, P_ALIVE]:
     die("kill", "the token died to sub-lethal damage")
 ok(f"a pumped token survives {full - 1} damage at {full} Might")
 
-combat.destroy(s, shep)                          # the pump goes away
+combat.destroy(s, T, shep)                          # the pump goes away
 if m(s, tok) != full - 1:
     die("kill", f"token should drop to {full - 1}, got {m(s, tok)}")
 if not s.perms[tok, P_ALIVE]:

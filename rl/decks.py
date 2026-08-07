@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "sim"))
 from engine.cards import find  # noqa: E402
 
-from rl.config import DOMAINS  # noqa: E402
+from rl.config import ABILITY_KEYWORDS, DOMAINS  # noqa: E402
 from rl.engine.cardtable import CardTable, read_decklist  # noqa: E402
 from rl.engine.effects import ABILITIES, SPECS, STATICS  # noqa: E402
 
@@ -116,14 +116,19 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
         return False
     if table.is_type(cid, "Spell"):
         return True                       # a spec transcribes the whole text
-    if table.unread_keywords(cid):
+    name = table.names[cid]
+    unread = set(table.unread_keywords(cid))
+    if name in ABILITIES:
+        # 808.1 -- [Deathknell] IS the ability, not a property alongside it, so
+        # transcribing the ability is what implements the keyword.
+        unread -= set(ABILITY_KEYWORDS)
+    if unread:
         return False
     # Presence in ABILITIES or STATICS means the same thing presence in SPECS
     # does: the card's whole text is transcribed. Cards with one implemented
     # ability and one unimplemented one (Scuttle Crab: an ETB draw and a
     # Deathknell) are deliberately absent, so this stays an allowlist rather
     # than a guess.
-    name = table.names[cid]
     return (not table.residual_text(cid)
             or name in ABILITIES or name in STATICS)
 

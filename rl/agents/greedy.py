@@ -7,17 +7,37 @@ after a training run.
 
 Priority order, and why:
 
-  1. **Play a unit onto an empty Battlefield.** Free points: an immediate
-     Conquer with no Showdown to lose (194.1.b). A greedy agent that does not
-     take free points is not a useful baseline.
-  2. **Attack only when the maths says you wipe them.** Because attackers are
+  1. **Attack only when the maths says you wipe them.** Because attackers are
      Recalled if any defender survives (466.1.a.2), a failed attack achieves
      *nothing at all* -- no chip damage, no ground. So the bar is not "I win the
      fight", it is "my pool kills every defender".
-  3. **Otherwise develop**, biggest body first, and never retreat.
+  2. **Otherwise develop**, biggest body first, and never retreat.
 
 The attack test is exact rather than heuristic, because with vanilla units the
 outcome is a closed-form function of summed Might (see `combat.py`).
+
+**This used to open with "play a unit onto an empty Battlefield -- free points,
+an immediate Conquer with no Showdown to lose."** That line described an engine
+bug, not the game: 806.3 restricts playing units to your base or a battlefield
+you already **control**, so the free Conquer never existed. When the engine was
+corrected the heuristic did not merely become useless, it became actively
+harmful -- its filter looked for battlefields `bf_ctrl != seat`, which the
+action list can no longer contain, so every unit fell through to the "stay
+home" branch and greedy stopped garrisoning anything at all. A heuristic that
+silently turns into a no-op is worse than one that is wrong out loud, which is
+why the reasoning is written down here rather than left implicit in a filter.
+Found by the project owner reading this file.
+
+Deployment is now: **reinforce a battlefield we control whose garrison the
+opponent could currently wipe**, otherwise stay at base where the unit keeps
+its options. The test has to be about our garrison's survival, not about enemy
+presence -- in a Neutral Open State we can never be sharing a battlefield,
+because a unit arriving where the enemy stands stages a Combat that the next
+Cleanup initiates. And greedy pays
+[Accelerate] when it is playing to base, because a unit that enters ready can
+join an attack this turn while an exhausted one cannot act until the next --
+worth one rune of attrition to a shallow baseline. It does not accelerate a
+unit it is parking on a battlefield, where readiness buys only a retreat.
 """
 
 from __future__ import annotations
@@ -26,7 +46,7 @@ import numpy as np
 
 from rl.engine import actions as A
 from rl.engine import combat
-from rl.engine.state import (P_CARD, P_CTRL, GameState, bf_index,
+from rl.engine.state import (P_ALIVE, P_CARD, P_CTRL, GameState, bf_index,
                              is_battlefield)
 
 
@@ -51,6 +71,29 @@ def _can_wipe(state: GameState, table, cfg, dst: int) -> bool:
     """Could every movable unit together wipe `dst`? The go/no-go for attacking."""
     movable = combat.movable_units(state, table, cfg, dst)
     return bool(movable) and _would_wipe(state, table, cfg, dst, movable)
+
+
+def _garrison_at_risk(state: GameState, table, loc: int, seat: int) -> bool:
+    """Could the opponent, committing everything, wipe our units at `loc`?
+
+    The test that decides whether to reinforce. It has to be about *our*
+    garrison rather than about sharing the battlefield, because in a Neutral
+    Open State we can never be sharing one: a unit arriving where the enemy
+    stands stages a Combat (461) and the next Cleanup initiates it, so by the
+    time anyone is offered a Main-Phase action the battlefield is decided.
+    Two successive versions of this heuristic tested for enemy presence here
+    and were therefore unreachable code that quietly did nothing.
+    """
+    foe = 1 - seat
+    ours = list(state.units_at(loc, seat))
+    if not ours:
+        return False
+    theirs = [i for i in range(state.n_perms)
+              if state.perms[i, P_ALIVE] == 1
+              and int(state.perms[i, P_CTRL]) == foe
+              and table.is_type(int(state.perms[i, P_CARD]), "Unit")]
+    pool = sum(combat.might_for_pool(state, table, i) for i in theirs)
+    return len(combat.solve_kills(state, table, pool, ours)) == len(ours)
 
 
 def _biggest_enemy(state: GameState, table, seat: int, cands):
@@ -91,27 +134,30 @@ def greedy_agent(rng: np.random.Generator):
             return kinds[A.A_PASS][0]
 
         # Mid-decision points: finish what was started.
-        if A.A_PLAY_AT in kinds:
-            # Prefer an uncontrolled, undefended battlefield -- that is the
-            # free Conquer. Otherwise stay home.
-            #
-            # Within that, prefer one NOT yet Scored this turn. At one point
-            # from victory the Final Point by Conquer requires having Scored
-            # every Battlefield this turn (471.1.b), so conquering a
-            # already-scored battlefield can score literally nothing. Without
-            # this, greedy fell below its own 80% gate against random once the
-            # rule landed.
-            foe = 1 - seat
-            cands = [a for a in kinds[A.A_PLAY_AT]
-                     if (is_battlefield(a.arg)
-                         and state.bf_ctrl[bf_index(a.arg)] != seat
-                         and not state.has_units_at(a.arg, foe))]
-            if cands:
-                return min(cands,
+        if A.A_PLAY_AT in kinds or A.A_PLAY_AT_FAST in kinds:
+            # 806.3 -- every destination offered here is our base or a
+            # battlefield we already control. Reinforce one whose garrison the
+            # opponent could wipe; otherwise stay home, where the unit can move
+            # next turn instead of being locked down exhausted.
+            normal = kinds.get(A.A_PLAY_AT, [])
+            at_risk = [a for a in normal
+                       if is_battlefield(a.arg)
+                       and _garrison_at_risk(state, table, a.arg, seat)]
+            if at_risk:
+                # Prefer one not yet Scored this turn: at one point from
+                # victory the Final Point by Conquer needs every battlefield
+                # Scored this turn (471.1.b), so holding an already-scored one
+                # can be worth nothing.
+                return min(at_risk,
                            key=lambda a: int(state.bf_scored[seat,
                                                              bf_index(a.arg)]))
-            return next(a for a in kinds[A.A_PLAY_AT]
-                        if not is_battlefield(a.arg))
+            # Going to base. Pay [Accelerate] if offered -- a ready unit can
+            # join this turn's attack, an exhausted one cannot act at all.
+            for k in (A.A_PLAY_AT_FAST, A.A_PLAY_AT):
+                home = [a for a in kinds.get(k, []) if not is_battlefield(a.arg)]
+                if home:
+                    return home[0]
+            return (normal or kinds[A.A_PLAY_AT_FAST])[0]
 
         if A.A_ADD in kinds or A.A_COMMIT in kinds:
             # Recomputed each step rather than remembered: `GameState` has
@@ -136,8 +182,8 @@ def greedy_agent(rng: np.random.Generator):
         if A.A_HIDE in kinds:
             return kinds[A.A_HIDE][0]
 
-        # 1 + 3. Play a card if we have one; the destination choice above then
-        # steers it onto an empty battlefield when that is available.
+        # Develop: play a card if we have one. The destination choice above
+        # then decides between reinforcing and staying home.
         if A.A_PLAY in kinds:
             return max(kinds[A.A_PLAY],
                        key=lambda a: int(table.might[int(state.hand[seat, a.arg])]))

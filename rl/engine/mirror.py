@@ -50,11 +50,11 @@ UNCHANGED = (
     # in the acting seat's own hand -- none of them names a seat.
     "fd_ply", "ply", "pend_hide", "chain_uid",
     # A chain INDEX, not a seat: which pending item is waiting on a "you may".
-    "pend_may",
+    "pend_may", "n_trig",
 )
 
 # Handled by hand below: they carry seat ids *inside* a matrix.
-SPECIAL = ("perms", "chain")
+SPECIAL = ("perms", "chain", "trig")
 
 _CLASSIFIED = set(SEAT_AXIS + SEAT_VALUED_SCALAR + SEAT_VALUED_ARRAY
                   + UNCHANGED + SPECIAL)
@@ -111,6 +111,12 @@ def mirror(state: GameState) -> GameState:
         # C_SRC is a permanent row and rows keep their order under mirroring.
         # C_CTX is a captured LOCATION, so it moves with the bases (359.3.f.3).
         c[:, C_CTX] = [mirror_loc(int(x)) for x in c[:, C_CTX]]
+
+    if s.n_trig:
+        # [trigger kind, source ROW, captured LOCATION]. The row survives
+        # mirroring untouched (rows keep their order); the location does not.
+        t = s.trig[:s.n_trig]
+        t[:, 2] = [mirror_loc(int(x)) for x in t[:, 2]]
 
     # A declaration only ever targets a Battlefield, so it needs no mirroring.
     # Assert rather than assume: if lateral or base-targeted movement ever

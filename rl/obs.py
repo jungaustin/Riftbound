@@ -299,7 +299,7 @@ class Encoder:
         k = act.kind
         if k == A.A_PLAY:
             card = int(state.hand[seat, act.arg])
-        elif k == A.A_PLAY_AT:
+        elif k in (A.A_PLAY_AT, A.A_PLAY_AT_FAST):
             loc = act.arg
             if state.pend_play >= 0:
                 card = int(state.hand[seat, state.pend_play])

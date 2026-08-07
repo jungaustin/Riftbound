@@ -31,7 +31,7 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]
 
 from rl.config import Config
 from rl.engine import actions as A
-from rl.engine import chain
+from rl.engine import chain, combat
 from rl.engine.cardtable import full_table
 from rl.engine.effects import ABILITIES, TR_PLAY_ME, abilities_for
 from rl.engine.state import (C_ABIL, C_CARD, C_SRC, MAIN, P_ALIVE, P_CARD,
@@ -301,5 +301,105 @@ try:
     ok("accepting performs it; declining removes it from the chain (383.3.a.2)")
 finally:
     del ABILITIES[_probe]
+
+# ---------------------------------------------------------------------------
+print("\n[10] [Accelerate] -- an Optional Additional Cost (805)")
+
+from rl.engine.cost import accelerate_cost, plan_payment
+
+RAMP = T.id_of("Legion Rearguard")          # text is [Accelerate] and nothing else
+if accelerate_cost(T, RAMP) != (1, 1):
+    die("accel", "Legion Rearguard should carry the {1 energy}{C} cost")
+if accelerate_cost(T, PLAIN2) is not None:
+    die("accel", "a card without [Accelerate] must have no additional cost")
+
+s = fresh(hand=[RAMP], runes=6)
+kinds = {a.kind for a in A.legal_actions(s, T, V1, 0)}
+A.apply(s, T, V1, A.Action(A.A_PLAY, 0))
+acts = A.legal_actions(s, T, V1, 0)
+if not any(a.kind == A.A_PLAY_AT_FAST for a in acts):
+    die("accel", "the accelerated variant was not offered with runes to spare")
+ok("both variants are offered at the destination choice, not a later one")
+
+# Normal: enters exhausted (359.2.c).
+s1 = fresh(hand=[RAMP], runes=6)
+play(s1, V1, 0, base_loc(0))
+if s1.perms[0, P_READY]:
+    die("accel", "a unit played normally must enter exhausted")
+
+# Accelerated: enters READY, and costs one more energy and one power.
+s2 = fresh(hand=[RAMP], runes=6)
+A.apply(s2, T, V1, A.Action(A.A_PLAY, 0))
+A.apply(s2, T, V1, A.Action(A.A_PLAY_AT_FAST, base_loc(0)))
+if not s2.perms[0, P_READY]:
+    die("accel", "805.1.a -- paying the cost must make it enter ready")
+if s2.total_ready_runes(0) >= s1.total_ready_runes(0):
+    die("accel", "the additional Energy was never paid")
+ok("805.6 -- it ENTERS ready rather than entering exhausted and then readying")
+
+# Unaffordable: the variant simply is not offered.
+s3 = fresh(hand=[RAMP], runes=0)
+s3.runes_ready[0, :] = 0
+s3.runes_ready[0, 0] = int(T.energy[RAMP])      # exactly the printed cost
+A.apply(s3, T, V1, A.Action(A.A_PLAY, 0))
+if any(a.kind == A.A_PLAY_AT_FAST for a in A.legal_actions(s3, T, V1, 0)):
+    die("accel", "offered [Accelerate] with no rune to pay the extra Energy")
+ok("with only the printed cost affordable, the fast variant is not offered")
+
+
+# ---------------------------------------------------------------------------
+print("\n[11] TR_MOVE captures the location LEFT (359.3.f.3)")
+
+LILLIA = T.id_of("Lillia - Fae Fawn")
+s = fresh(hand=[])
+lil = s.add_permanent(LILLIA, 0, base_loc(0))
+s.bf_ctrl[0] = -1
+# Declare and commit an ordinary Move from base to battlefield 0.
+A.apply(s, T, V1, A.Action(A.A_DECLARE, bf_loc(0)))
+A.apply(s, T, V1, A.Action(A.A_ADD, lil))
+A.apply(s, T, V1, A.Action(A.A_COMMIT))
+drain(s, V1)
+sprites = [i for i in range(s.n_perms)
+           if int(s.perms[i, P_CARD]) == SPRITE and s.perms[i, P_ALIVE] == 1]
+if len(sprites) != 1:
+    die("move", f"expected 1 Sprite from Lillia's move, got {len(sprites)}")
+if int(s.perms[sprites[0], P_LOC]) != base_loc(0):
+    die("move", f"the Sprite went to {int(s.perms[sprites[0], P_LOC])}; 'there' "
+                f"is the location she LEFT ({base_loc(0)}), not the one she "
+                f"arrived at")
+if int(s.perms[lil, P_LOC]) != bf_loc(0):
+    die("move", "Lillia did not actually move")
+ok("Lillia's Sprite appears where she came from, not where she went")
+
+
+# ---------------------------------------------------------------------------
+print("\n[12] [Deathknell] fires from a death, through the queue (808)")
+
+SENTRY = T.id_of("Watchful Sentry")
+s = fresh(hand=[])
+sen = s.add_permanent(SENTRY, 0, bf_loc(0))
+before = int(s.n_hand[0])
+combat.destroy(s, T, sen)
+if s.n_trig != 1:
+    die("death", "the Deathknell was not queued at the moment of death")
+if s.n_chain != 0:
+    die("death", "808 must not push straight onto the Chain -- `is_open` is "
+                 "`n_chain == 0`, so that blocks the Cleanup that killed it")
+ok("the trigger is QUEUED at death, not pushed onto the Chain")
+
+chain.flush(s, T, V1)
+drain(s, V1)
+if int(s.n_hand[0]) != before + 1:
+    die("death", f"Deathknell draw did not happen: hand {int(s.n_hand[0])}, "
+                 f"expected {before + 1}")
+ok("flushing puts it on the Chain and it resolves: draw 1")
+
+# A card with no death ability must not queue anything -- the queue is bounded.
+s = fresh(hand=[])
+p0 = s.add_permanent(PLAIN2, 0, bf_loc(0))
+combat.destroy(s, T, p0)
+if s.n_trig:
+    die("death", "a unit with no Deathknell queued a trigger anyway")
+ok("a unit without one queues nothing, so the queue stays bounded")
 
 print("\n\033[32mall trigger tests passed\033[0m")

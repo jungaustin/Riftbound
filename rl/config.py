@@ -51,9 +51,18 @@ ENGINE_KEYWORDS = {
     "Backline":  "combat._tiers -- assigned combat damage last",
     "Ganking":   "combat.can_move -- may move battlefield to battlefield",
     "Hidden":    "chain.hideable -- may be hidden in the Facedown Zone",
+    "Accelerate": "actions.legal_actions -- the A_PLAY_AT_FAST variant, and "
+                  "cost.accelerate_cost for the additional cost (805)",
     "Action":    "effects.SPEED_ACTION, via a card's DSL spec",
     "Reaction":  "effects.SPEED_REACTION, via a card's DSL spec",
 }
+# Keywords that ARE a triggered ability rather than a passive property --
+# 808.1 makes [Deathknell] short for "When I die, [Effect]", and the effect is
+# the card's own text. There is no separate keyword implementation to check: a
+# card carrying one is played as printed exactly when its ability is
+# transcribed in `effects.ABILITIES`, which `decks.plays_as_printed` tests.
+ABILITY_KEYWORDS = ("Deathknell", "Vision", "Hunt")
+
 # In scope, but nothing executes them yet. Named rather than merely absent so
 # the gap is legible: Deathknell alone is 94 deck slots and is a trigger, so it
 # lands with the triggered-ability machinery rather than on its own.
