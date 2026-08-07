@@ -59,10 +59,11 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
 (OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT, OP_COUNTER,
  OP_NO_SPELLS, OP_CREATE_TOKEN, OP_MOVE_TO, OP_RETURN_TO_HAND,
  OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER, OP_READY,
- OP_MODIFY_MIGHT_ALL) = range(14)
+ OP_MODIFY_MIGHT_ALL, OP_DAMAGE_ALL) = range(15)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
-            "damage", "kill", "draw_controller", "ready", "modify_might_all")
+            "damage", "kill", "draw_controller", "ready", "modify_might_all",
+            "damage_all")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -325,6 +326,61 @@ SPECS: dict[str, CardSpec] = {
                  TargetSpec(who=W_ENEMY, at_battlefield=True,
                             rel=REL_SAME_BF, rel_to=0)),
         ops=(Op(OP_STUN, target=0), Op(OP_STUN, target=1)),
+    ),
+
+    # --- transcribed one by one from the card database ---------------------
+    # These need no mechanism the DSL did not already have. Kept together so
+    # the batch is legible; the ordering tool is `rl/tools/triage.py`.
+
+    # [Action] Give a unit +5 Might this turn.
+    "Punch First": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=5),),
+    ),
+
+    # [Action] Stun a unit.
+    "Rune Prison": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_STUN, target=0),),
+    ),
+
+    # Draw 4.
+    "Progress Day": CardSpec(speed=SPEED_MAIN, ops=(Op(OP_DRAW, n=4),)),
+
+    # [Action] Deal 3 to a unit at a battlefield.
+    "Hextech Ray": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY, at_battlefield=True),),
+        ops=(Op(OP_DAMAGE, target=0, n=3),),
+    ),
+
+    # [Reaction] Give two friendly units each +2 Might this turn.
+    # "two friendly units" is two slots; `legal_targets` already refuses to
+    # fill a slot with a permanent an earlier slot took, so they are distinct.
+    "Back to Back": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_FRIENDLY), TargetSpec(who=W_FRIENDLY)),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=2),
+             Op(OP_MODIFY_MIGHT, target=1, n=2)),
+    ),
+
+    # [Reaction] Give a unit +2 Might this turn and another unit -2 Might this
+    # turn.  No printed floor, so the general 143.2.b floor of 0 applies.
+    "Defiant Dance": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_ANY), TargetSpec(who=W_ANY)),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=2),
+             Op(OP_MODIFY_MIGHT, target=1, n=-2)),
+    ),
+
+    # [Reaction] Deal 1 to all units at battlefields.
+    # Untargeted and unbounded, so no slots -- the same shape as Thousand-
+    # Tailed Watcher's mass Might reduction, and it hits BOTH sides.
+    "Flurry of Blades": CardSpec(
+        speed=SPEED_REACTION,
+        ops=(Op(OP_DAMAGE_ALL, n=1),),
     ),
 
     # [Hidden] [Action] Choose a unit you control and another unit you control

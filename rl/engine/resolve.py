@@ -38,7 +38,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                OP_RETURN_TO_HAND,
                                OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
-                               OP_MODIFY_MIGHT_ALL, OP_READY, OP_SWAP_LOC,
+                               OP_DAMAGE_ALL, OP_MODIFY_MIGHT_ALL,
+                               OP_READY, OP_SWAP_LOC,
                                REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
                                TK_LOCATION, TK_SPELL, W_FRIENDLY,
@@ -367,6 +368,17 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["stunned"] = log.get("stunned", [])
             if state.stun(a):
                 log["stunned"].append(a)
+        elif op.op == OP_DAMAGE_ALL:
+            # "Deal N to all units at battlefields" -- untargeted (355.10) and
+            # indiscriminate: it hits the caster's units too.
+            for i in range(state.n_perms):
+                r = state.perms[i]
+                if r[P_ALIVE] != 1 or not is_battlefield(int(r[P_LOC])):
+                    continue
+                if not table.is_type(int(r[P_CARD]), "Unit"):
+                    continue
+                if combat.mark_damage(state, table, i, op.n):
+                    log.setdefault("killed", []).append(i)
         elif op.op == OP_MODIFY_MIGHT_ALL:
             # "give enemy units -3 Might this turn" -- no count, no choice, so
             # not targets (355.10) and no slot. It reaches every enemy unit on

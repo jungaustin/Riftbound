@@ -381,11 +381,19 @@ def explained_variance(pred: np.ndarray, target: np.ndarray) -> float:
 
 # ---------------------------------------------------------------------------
 
-SPELLS = ("Stupefy", "Discipline", "Smoke Screen", "Lilting Lullaby",
-          "Defy", "Sprite Call", "Sprite Burst", "Ride The Wind",
-          "Charm", "Gust", "Star-Crossed", "Back Off",
-          "Facebreaker", "Smoke and Mirrors", "En Garde",
-          "Hidden Blade", "Falling Star")
+# Derived from SPECS, not listed. This was a hand-maintained tuple, which meant
+# every spell transcribed into the DSL had to be remembered here too or it
+# would never appear in a training deck -- a silent omission that looks like
+# nothing at all, since the card simply never gets drawn. The DSL is the single
+# source of truth for "the engine can play this".
+def _spell_pool() -> tuple[str, ...]:
+    from rl.engine.cardtable import full_table
+    from rl.engine.effects import SPECS
+    t = full_table()
+    return tuple(sorted(n for n in SPECS if t.is_type(t.id_of(n), "Spell")))
+
+
+SPELLS = _spell_pool()
 
 
 # Measured from the 29 decklists in `decks/`, not assumed:
@@ -410,12 +418,14 @@ def v1_deal(table, deck_size: int = MAIN_DECK_SIZE,
     A range is the default because the real decks span 28-62% and an agent
     trained on one density would be tuned for one archetype.
 
-    **The card pool, not this rate, is what currently limits realism.** Only
-    three spells are implemented, so the 3-copy limit caps a deck at 9 spells
-    -- 23% of 39, below even the lowest real deck. Until roughly seven more
-    spells exist in the DSL, a realistic spell density is unreachable and this
-    function will silently fall short of the requested rate. It reports the
-    shortfall rather than hiding it (see `deal_stats`).
+    **The card pool used to be what limited realism, and no longer is.** With
+    only three spells implemented the 3-copy limit capped a deck at 9 spells --
+    23% of 39, below even the lowest real deck -- so this function silently
+    fell short of whatever rate it was asked for. The DSL now holds enough
+    spells that the measured output spans the real range: mean 48%, max 67%
+    against a corpus of 28-67%, median 49%. `deal_stats` still reports the
+    actual distribution rather than the requested one, because that gap is
+    exactly the sort of thing that comes back.
     """
     spells = [table.id_of(n) for n in SPELLS]
     units = v0_pool(table)
