@@ -249,4 +249,78 @@ if not 0.42 <= seat0 <= 0.58:
 ok(f"{N} spell-heavy games: 0 truncated, invariants held, "
    f"seat0 {seat0:.1%}, {np.mean(steps):.0f} decisions/game")
 
+
+# ---------------------------------------------------------------------------
+print("\n[7] [Hidden]: hide, wait a turn, then react for free")
+from rl.engine import phases
+
+s = fresh(hand0=(BACK_OFF,))
+mine = s.add_permanent(unit(3), 0, bf_loc(0))
+s.bf_ctrl[0] = 0
+runes_before = int(s.runes_ready[0].sum())
+
+acts = A.legal_actions(s, T, V1, 0)
+hide = [a for a in acts if a.kind == A.A_HIDE]
+if not hide:
+    die("hidden", "a [Hidden] card at a controlled battlefield must be hideable")
+A.apply(s, T, V1, hide[0])
+spots = A.legal_actions(s, T, V1, 0)
+assert {a.kind for a in spots} == {A.A_HIDE_AT}, spots
+A.apply(s, T, V1, A.Action(A.A_HIDE_AT, 0))
+
+if int(s.fd_owner[0]) != 0 or int(s.fd_card[0]) != BACK_OFF:
+    die("hidden", "the card is not in the facedown zone")
+if s.n_chain != 0:
+    die("hidden", "811.1.c.2 -- hiding must NOT open a chain")
+if int(s.runes_ready[0].sum()) != runes_before - 1:
+    die("hidden", "hiding should cost exactly one rune")
+ok("hiding costs one rune, opens no chain, and fills the facedown zone")
+
+# 811.1.b -- "Beginning on the NEXT turn". Not playable yet.
+if chain.hidden_playable(s, T, V1, 0):
+    die("hidden", "811.1.b -- a card hidden this turn must not be playable "
+                  "this turn")
+ok("it is NOT playable on the turn it was hidden (811.1.b)")
+
+phases.end_turn(s, V1)
+if not chain.hidden_playable(s, T, V1, 0):
+    die("hidden", "it should be live from the next turn")
+ok("it becomes live once the turn ends")
+
+# It has [Reaction] while facedown (811.6), so seat 0 may play it on seat 1's
+# turn -- and for free.
+s.priority = 0
+s.showdown_bf = 0
+s.bf_contested[0] = 1
+s.attacker = 1
+victim = s.add_permanent(unit(4), 1, bf_loc(0))
+runes_before = int(s.runes_ready[0].sum())
+acts = A.legal_actions(s, T, V1, 0)
+ph = [a for a in acts if a.kind == A.A_PLAY_HIDDEN]
+if not ph:
+    die("hidden", "811.6 -- a facedown card must be playable on the "
+                  "opponent's turn")
+A.apply(s, T, V1, ph[0])
+A.apply(s, T, V1, A.Action(A.A_TARGET, victim))
+if int(s.runes_ready[0].sum()) != runes_before:
+    die("hidden", "811.1.b -- playing from hidden must cost 0 energy")
+if int(s.fd_owner[0]) >= 0:
+    die("hidden", "the facedown zone should be empty after playing the card")
+ok("played from hiding on the opponent's turn, for free")
+
+# 811.1.d.2.a -- a BOUND slot only reaches that battlefield.
+s2 = fresh(hand0=())
+s2.bf_ctrl[0] = 0
+s2.fd_owner[0], s2.fd_card[0], s2.fd_ply[0] = 0, BACK_OFF, -1
+s2.add_permanent(unit(3), 0, bf_loc(0))
+here = s2.add_permanent(unit(2), 1, bf_loc(0))
+there = s2.add_permanent(unit(4), 1, bf_loc(1))
+A.apply(s2, T, V1, A.Action(A.A_PLAY_HIDDEN, 0))
+opts = [a.arg for a in A.legal_actions(s2, T, V1, 0)]
+if there in opts:
+    die("hidden", f"a bound slot reached B2 from a card hidden at B1: {opts}")
+if here not in opts:
+    die("hidden", f"a bound slot should reach its own battlefield: {opts}")
+ok("811.1.d.2.a -- targets are bound to the battlefield it was hidden at")
+
 print("\n\033[32mall spell tests passed\033[0m")

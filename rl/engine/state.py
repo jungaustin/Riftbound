@@ -102,13 +102,14 @@ class GameState:
         "hand", "n_hand", "deck", "deck_ptr", "n_deck", "trash", "n_trash",
         "runes_ready", "runes_spent", "rune_deck", "rune_head", "rune_left",
         "pool_energy", "pool_power",
-        "bf_card", "bf_ctrl", "bf_contested", "fd_owner", "fd_card", "bf_scored",
+        "bf_card", "bf_ctrl", "bf_contested", "fd_owner", "fd_card", "fd_ply",
+        "bf_scored",
         "chain", "n_chain", "chain_targets", "pend_slot",
         "points", "burned_out",
         "legend", "champion",
-        "turn", "active", "phase", "priority", "focus",
+        "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "attacker", "passes",
-        "decl_dst", "decl_mask", "pend_play",
+        "decl_dst", "decl_mask", "pend_play", "pend_hide",
         "winner", "truncated",
         "rng",
     )
@@ -146,6 +147,14 @@ class GameState:
         # (107.3.f). Only the battlefield's controller may occupy it (107.3.c).
         self.fd_owner = np.full(N_BF, -1, np.int8)
         self.fd_card = np.full(N_BF, -1, np.int16)
+        # 811.1.b: "Beginning on the NEXT turn, this gains [Reaction]". So a
+        # card hidden this turn cannot be played this turn. `ply` is a
+        # monotone count of turn transitions and `fd_ply` records the ply the
+        # card was hidden at; it is live once `ply` has moved past it.
+        #
+        # A plain ply counter rather than (turn, active): the latter encodes a
+        # seat, which would break the canonicalization test in mirror.py.
+        self.fd_ply = np.full(N_BF, -1, np.int16)
         # Rule 470: a player may Score a given Battlefield only once per turn,
         # by either method. Reset for both seats at the start of every turn.
         self.bf_scored = np.zeros((N_SEATS, N_BF), np.int8)
@@ -165,6 +174,7 @@ class GameState:
         self.champion = np.full(N_SEATS, -1, np.int16)
 
         self.turn = 1
+        self.ply = 0        # monotone; incremented at every end of turn
         self.active = 0
         self.phase = MAIN
         self.priority = 0
@@ -181,6 +191,8 @@ class GameState:
         # Hand index of a card whose location choice is still open, or -1. The
         # second factored decision point; target selection joins these later.
         self.pend_play = -1
+        # Hand index of a card whose Hide destination is still open, or -1.
+        self.pend_hide = -1
 
         self.winner = -1
         self.truncated = False

@@ -96,6 +96,7 @@ def control_cleanup(state: GameState) -> list[int]:
                 _to_trash(state, int(state.fd_owner[i]), int(state.fd_card[i]))
                 state.fd_owner[i] = -1
                 state.fd_card[i] = -1
+                state.fd_ply[i] = -1
             lost.append(i)
     return lost
 
@@ -235,6 +236,7 @@ def start_turn(state: GameState, table: CardTable, cfg: Config) -> dict:
 def end_turn(state: GameState, cfg: Config) -> None:
     ending(state)
     control_cleanup(state)
+    state.ply += 1
     if state.active == 1:
         state.turn += 1
     state.active = 1 - state.active

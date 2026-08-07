@@ -40,7 +40,8 @@ from rl.engine.cardtable import CardTable
 from rl.engine.cost import plan_payment
 from rl.engine.effects import SPEED_ACTION, SPEED_REACTION, spec_for
 from rl.engine.state import (C_BOUND_BF, C_CARD, C_CTRL, C_FINAL, C_FROM_HAND,
-                             MAIN, MAX_CHAIN, MAX_TARGETS, N_SEATS, GameState)
+                             MAIN, MAX_CHAIN, MAX_TARGETS, N_BF, N_SEATS,
+                             GameState)
 
 
 def speed_ok(state: GameState, cfg: Config, seat: int, speed: int) -> bool:
@@ -92,6 +93,68 @@ def playable_hand_indices(state: GameState, table: CardTable, cfg: Config,
         # 359.3.e.14.a -- a card that cannot legally choose all of its targets
         # cannot be played at all.
         if not rsv.can_be_cast(state, table, spec, seat, -1):
+            continue
+        out.append(i)
+    return out
+
+
+def hideable(state: GameState, table: CardTable, cfg: Config,
+             seat: int) -> tuple[list[int], list[int]]:
+    """(hand indices that may be hidden, battlefields they may be hidden at).
+
+    811.1.b -- "While this card is in your hand ... **on your turn during an
+    Open State**, you may pay [A] to hide this facedown at a battlefield you
+    control that doesn't already have a facedown card hidden there."
+
+    Hide is not a Play (811.1.c.1) and does not open a Chain (811.1.c.2), so it
+    cannot be responded to. It is a plain discretionary action.
+    """
+    if cfg.units_only or seat != int(state.active) or state.n_chain != 0:
+        return [], []
+    # 107.3.b/c -- yours to hide at, and not already occupied.
+    spots = [i for i in range(N_BF)
+             if int(state.bf_ctrl[i]) == seat and int(state.fd_owner[i]) < 0]
+    if not spots or state.total_ready_runes(seat) < 1:
+        return [], []
+    seen: set[int] = set()
+    cards: list[int] = []
+    for i in range(int(state.n_hand[seat])):
+        card = int(state.hand[seat, i])
+        if card in seen or not table.has(card, "Hidden"):
+            continue
+        seen.add(card)
+        cards.append(i)
+    return cards, spots
+
+
+def hidden_playable(state: GameState, table: CardTable, cfg: Config,
+                    seat: int) -> list[int]:
+    """Battlefields whose facedown card `seat` may play right now.
+
+    Three gates, and the first is the one most easily missed:
+
+      811.1.b  "**Beginning on the next turn**" -- a card hidden this turn
+               cannot be played this turn. `fd_ply` is what makes that
+               checkable.
+      811.6    while facedown it has [Reaction], so any window will do.
+      811.1.d  it cannot be played at all if its bound targets have no legal
+               options at that battlefield.
+    """
+    if cfg.units_only:
+        return []
+    out = []
+    for i in range(N_BF):
+        if int(state.fd_owner[i]) != seat:
+            continue
+        if int(state.fd_ply[i]) >= int(state.ply):
+            continue                       # hidden this turn -- not live yet
+        card = int(state.fd_card[i])
+        spec = spec_for(table, card)
+        if spec is None:
+            continue
+        # Playing from Hidden costs 0 energy (811.1.b), so there is no payment
+        # gate -- only the targeting one.
+        if not rsv.can_be_cast(state, table, spec, seat, i):
             continue
         out.append(i)
     return out

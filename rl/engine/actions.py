@@ -47,10 +47,11 @@ from rl.engine.state import (C_BOUND_BF, C_CARD, C_CTRL, MAIN, N_BF,
 
 # Action kinds. Wire format -- append only, never reorder.
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
- A_RETREAT, A_TARGET) = range(10)
+ A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN) = range(13)
 
 KIND_NAMES = ("pass", "end_turn", "play", "play_at", "declare", "add",
-              "commit", "cancel", "retreat", "target")
+              "commit", "cancel", "retreat", "target", "hide", "hide_at",
+              "play_hidden")
 
 
 class Action(NamedTuple):
@@ -119,6 +120,12 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
             return []
         return [Action(A_TARGET, p) for p in _slot_options(state, table, item)]
 
+    if state.pend_hide >= 0:
+        if seat != state.active:
+            return []
+        _, spots = chain.hideable(state, table, cfg, seat)
+        return [Action(A_HIDE_AT, i) for i in spots]
+
     # --- mid-decision: a factored choice is open -------------------------
     if state.pend_play >= 0:
         if seat != state.active:
@@ -144,8 +151,13 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     if state.n_chain > 0 or state.showdown_bf >= 0:
         if seat != state.priority:
             return []
-        return [PASS] + [Action(A_PLAY, i) for i in
-                         chain.playable_hand_indices(state, table, cfg, seat)]
+        return ([PASS]
+                + [Action(A_PLAY, i) for i in
+                   chain.playable_hand_indices(state, table, cfg, seat)]
+                # 811.6 -- a facedown card has [Reaction], so it may be played
+                # into any window, including on the opponent's turn.
+                + [Action(A_PLAY_HIDDEN, i) for i in
+                   chain.hidden_playable(state, table, cfg, seat)])
 
     # --- Main Phase, Neutral Open ----------------------------------------
     # 316.5.b: only the Turn Player may act in a Neutral Open State.
@@ -161,6 +173,11 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
             out.append(Action(A_PLAY, i))
     for i in chain.playable_hand_indices(state, table, cfg, seat):
         out.append(Action(A_PLAY, i))
+    hide_cards, _ = chain.hideable(state, table, cfg, seat)
+    for i in hide_cards:
+        out.append(Action(A_HIDE, i))
+    for i in chain.hidden_playable(state, table, cfg, seat):
+        out.append(Action(A_PLAY_HIDDEN, i))
 
     for loc in combat.move_destinations(state, table, cfg):
         out.append(Action(A_DECLARE, loc))
@@ -210,6 +227,17 @@ def apply(state: GameState, table: CardTable, cfg: Config,
 
     if k == A_TARGET:
         return _choose_target(state, table, cfg, action.arg)
+
+    if k == A_HIDE:
+        state.pend_hide = action.arg
+        return {}
+
+    if k == A_HIDE_AT:
+        return _hide_at(state, table, cfg, seat, action.arg)
+
+    if k == A_PLAY_HIDDEN:
+        return _play_from_hidden(state, table, cfg, int(state.priority),
+                                 action.arg)
 
     if k == A_PLAY_AT:
         return _resolve_play(state, table, cfg, seat, action.arg)
@@ -303,15 +331,68 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
     """
     card = int(state.chain[item, C_CARD])
     seat = int(state.chain[item, C_CTRL])
-    recycle = plan_payment(state, table, seat, card)
-    assert recycle is not None, "unaffordable spell reached finalization"
-    pay(state, table, seat, card, recycle)
+    if int(state.chain[item, C_BOUND_BF]) < 0:
+        # 811.1.b -- a card played from Hidden ignores its cost entirely. The
+        # rune was already paid when it was hidden.
+        recycle = plan_payment(state, table, seat, card)
+        assert recycle is not None, "unaffordable spell reached finalization"
+        pay(state, table, seat, card, recycle)
     chain.finalize(state, item)
     # 337.1.a: the caster keeps priority, so they may respond to their own card.
     state.priority = seat
     return {"finalized": table.names[card],
             "targets": [int(x) for x in
                         state.chain_targets[item, :spec_for(table, card).n_targets]]}
+
+
+def _hide_at(state: GameState, table: CardTable, cfg: Config, seat: int,
+             bf: int) -> dict:
+    """Hide the pending card facedown at `bf` for one rune (811.1.b).
+
+    Hide is not a Play (811.1.c.1) and opens no Chain (811.1.c.2), so this
+    resolves immediately and cannot be responded to. `fd_ply` records when, so
+    the "beginning on the NEXT turn" clause can be enforced.
+    """
+    idx = int(state.pend_hide)
+    card = int(state.hand[seat, idx])
+    n = int(state.n_hand[seat])
+    state.hand[seat, idx:n - 1] = state.hand[seat, idx + 1:n]
+    state.hand[seat, n - 1] = -1
+    state.n_hand[seat] = n - 1
+    state.pend_hide = -1
+
+    dom = int(np.argmax(state.runes_ready[seat]))     # pay [A]: any one rune
+    assert state.runes_ready[seat, dom] > 0, "hide with no ready rune"
+    state.runes_ready[seat, dom] -= 1
+    state.runes_spent[seat, dom] += 1
+
+    state.fd_owner[bf] = seat
+    state.fd_card[bf] = card
+    state.fd_ply[bf] = int(state.ply)
+    return {"hid_at": bf}
+
+
+def _play_from_hidden(state: GameState, table: CardTable, cfg: Config,
+                      seat: int, bf: int) -> dict:
+    """Play the facedown card at `bf` for 0 energy (811.1.b).
+
+    Its bound target slots are restricted to that battlefield (811.1.d.2.a),
+    which is carried on the chain item as `C_BOUND_BF` -- free slots ignore it,
+    which is why Smoke and Mirrors still reaches across the board.
+    """
+    card = int(state.fd_card[bf])
+    assert int(state.fd_owner[bf]) == seat, "not this seat's facedown card"
+    state.fd_owner[bf] = -1
+    state.fd_card[bf] = -1
+    state.fd_ply[bf] = -1
+
+    item = chain.push(state, card, seat, from_hand=False, bound_bf=bf)
+    spec = spec_for(table, card)
+    assert spec is not None
+    if spec.n_targets:
+        state.pend_slot = 0
+        return {"announced_from_hidden": table.names[card], "at": bf}
+    return _finalize_pending(state, table, cfg, item)
 
 
 def _resolve_play(state: GameState, table: CardTable, cfg: Config,
