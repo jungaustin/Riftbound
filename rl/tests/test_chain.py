@@ -1,0 +1,187 @@
+"""Chain / FEPR tests (rules 332-340).
+
+Run: python3 rl/tests/test_chain.py
+
+The claim under test, stated by the project owner and confirmed at 340.4:
+*there is a chance to react after each spell on the chain resolves, so you can
+react to something from five spells ago once the ones above it resolve.*
+
+  [1] Ordering -- oldest finalizes (337.1.b), newest resolves (340.1).
+  [2] One item per priority round, and priority reopens after each resolution.
+  [3] Five deep: an item buried under four others is still respondable, and the
+      responses interleave in the right order.
+  [4] Priority routing after a resolution (340.2 / 340.2.a / 340.4).
+  [5] Targets are stored per item and survive other items resolving.
+"""
+import sys
+
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))
+
+from rl.config import Config
+from rl.engine import chain
+from rl.engine.cardtable import full_table
+from rl.engine.state import (C_CARD, F_STUNNED, P_FLAGS, GameState,
+                             bf_loc)
+
+T = full_table()
+CFG = Config()
+
+BACK_OFF = T.id_of("Back Off")
+
+
+def ok(name):
+    print(f"  \033[32mPASS\033[0m {name}")
+
+
+def die(name, msg):
+    print(f"  \033[31mFAIL\033[0m {name}: {msg}")
+    sys.exit(1)
+
+
+def unit(might):
+    for c in range(T.n):
+        if (T.is_type(c, "Unit") and T.might[c] == might
+                and not any(T.has(c, k) for k in ("Tank", "Backline"))):
+            return c
+    raise LookupError(might)
+
+
+U2 = unit(2)
+
+
+def fresh():
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = U2
+    return s
+
+
+# ---------------------------------------------------------------------------
+print("\n[1] oldest finalizes, newest resolves")
+s = fresh()
+a = chain.push(s, BACK_OFF, 0)
+b = chain.push(s, BACK_OFF, 1)
+c = chain.push(s, BACK_OFF, 0)
+assert chain.oldest_pending(s) == a, "337.1.b -- the OLDEST pending finalizes"
+chain.finalize(s, a)
+assert chain.oldest_pending(s) == b
+chain.finalize(s, b)
+chain.finalize(s, c)
+assert chain.newest_finalized(s) == c, "340.1 -- the NEWEST finalized resolves"
+ok("oldest finalizes first, newest resolves first -- opposite ends")
+
+
+# ---------------------------------------------------------------------------
+print("\n[2] one item resolves per priority round")
+s = fresh()
+v = s.add_permanent(U2, 1, bf_loc(0))
+for seat in (0, 1, 0):
+    i = chain.push(s, BACK_OFF, seat)
+    chain.set_target(s, i, 0, v)
+    chain.finalize(s, i)
+assert s.n_chain == 3
+
+chain.resolve_top(s, T, CFG)
+if s.n_chain != 2:
+    die("chain", f"{3 - s.n_chain} items resolved at once; 340.1 says one")
+ok("resolving takes exactly one item off the chain, not the whole stack")
+
+chain.after_resolution(s)
+if s.passes != 0:
+    die("chain", "the pass count must reset so a new window really opens")
+ok("the pass count resets, so a fresh priority window opens (340.4)")
+
+
+# ---------------------------------------------------------------------------
+print("\n[3] five deep: an item buried under four is still respondable")
+s = fresh()
+victim = s.add_permanent(unit(5), 1, bf_loc(0))
+
+# Seat 0 plays the bottom item, then four more pile on top of it.
+bottom = chain.push(s, BACK_OFF, 0)
+chain.set_target(s, bottom, 0, victim)
+chain.finalize(s, bottom)
+for k in range(4):
+    i = chain.push(s, BACK_OFF, (k + 1) % 2)
+    chain.set_target(s, i, 0, victim)
+    chain.finalize(s, i)
+assert s.n_chain == 5
+
+# Resolve the four on top, one at a time. After each, a window opens and the
+# bottom item is still sitting there un-resolved and still respondable.
+windows = 0
+for expected_left in (4, 3, 2, 1):
+    chain.resolve_top(s, T, CFG)
+    chain.after_resolution(s)
+    if s.n_chain != expected_left:
+        die("five-deep", f"expected {expected_left} left, got {s.n_chain}")
+    if s.n_chain:
+        windows += 1
+        # A response added now goes ON TOP of the still-pending bottom item.
+        if chain.newest_finalized(s) == bottom and s.n_chain > 1:
+            die("five-deep", "the bottom item resolved out of order")
+if windows != 4:
+    die("five-deep", f"{windows} priority windows opened, expected 4")
+assert s.n_chain == 1 and int(s.chain[0, C_CARD]) == BACK_OFF
+ok("4 priority windows opened above it; the bottom item is still on the chain")
+
+# And a response played into that last window resolves BEFORE the bottom item.
+late = chain.push(s, BACK_OFF, 1)
+chain.set_target(s, late, 0, victim)
+chain.finalize(s, late)
+assert chain.newest_finalized(s) == late, "a late response must resolve first"
+chain.resolve_top(s, T, CFG)
+assert s.n_chain == 1, "the late response resolved, the original still waits"
+ok("a response added five items later still resolves before the original")
+
+
+# ---------------------------------------------------------------------------
+print("\n[4] priority routing after a resolution")
+s = fresh()
+v = s.add_permanent(U2, 1, bf_loc(0))
+s.active = 0
+i0 = chain.push(s, BACK_OFF, 0); chain.set_target(s, i0, 0, v); chain.finalize(s, i0)
+i1 = chain.push(s, BACK_OFF, 1); chain.set_target(s, i1, 0, v); chain.finalize(s, i1)
+chain.resolve_top(s, T, CFG)          # i1 resolves
+chain.after_resolution(s)
+if int(s.priority) != 0:
+    die("priority", f"340.4: controller of the newest item (seat 0) should hold "
+                    f"priority, got {int(s.priority)}")
+ok("340.4 -- after a resolution, the newest item's controller gains priority")
+
+chain.resolve_top(s, T, CFG)          # i0 resolves; chain now empty
+chain.after_resolution(s)
+if s.n_chain or int(s.priority) != 0:
+    die("priority", f"340.2: outside a showdown the turn player acts again")
+ok("340.2 -- an empty chain outside a showdown returns priority to the turn player")
+
+s.showdown_bf, s.focus = 0, 0
+i = chain.push(s, BACK_OFF, 0); chain.set_target(s, i, 0, v); chain.finalize(s, i)
+chain.resolve_top(s, T, CFG)
+chain.after_resolution(s)
+if int(s.focus) != 1:
+    die("priority", "340.2.a -- focus must pass when the chain empties in a showdown")
+ok("340.2.a -- focus passes when the chain empties during a showdown")
+
+
+# ---------------------------------------------------------------------------
+print("\n[5] each item keeps its own targets")
+s = fresh()
+x = s.add_permanent(unit(4), 1, bf_loc(0))
+y = s.add_permanent(unit(3), 1, bf_loc(1))
+ix = chain.push(s, BACK_OFF, 0); chain.set_target(s, ix, 0, x); chain.finalize(s, ix)
+iy = chain.push(s, BACK_OFF, 0); chain.set_target(s, iy, 0, y); chain.finalize(s, iy)
+
+chain.resolve_top(s, T, CFG)                     # iy resolves -> stuns y
+if not (s.perms[y, P_FLAGS] & F_STUNNED):
+    die("targets", "the newest item did not stun its own target")
+if s.perms[x, P_FLAGS] & F_STUNNED:
+    die("targets", "resolving one item stunned the other item's target")
+ok("the newest item stunned y and left x alone")
+
+chain.resolve_top(s, T, CFG)                     # ix resolves -> stuns x
+if not (s.perms[x, P_FLAGS] & F_STUNNED):
+    die("targets", "the remaining item lost its target when the other resolved")
+ok("the surviving item kept its own target through the other's resolution")
+
+print("\n\033[32mall chain tests passed\033[0m")

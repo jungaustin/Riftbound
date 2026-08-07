@@ -42,6 +42,10 @@ UNCHANGED = (
     "n_perms", "bf_card", "bf_contested", "fd_card", "n_chain", "turn",
     "phase", "showdown_bf", "showdown_step", "passes", "decl_dst",
     "decl_mask", "pend_play", "truncated", "rng",
+    # Chain targets are permanent ROW indices, and mirroring preserves row
+    # order (it rewrites P_CTRL in place rather than reordering), so the
+    # indices stay valid. `pend_slot` is a slot number on a card, not a seat.
+    "chain_targets", "pend_slot",
 )
 
 # Handled by hand below: they carry seat ids *inside* a matrix.

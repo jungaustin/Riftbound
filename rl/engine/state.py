@@ -76,8 +76,19 @@ MAX_TRASH = 80
 MAX_CHAIN = 16
 RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 
-# Chain columns.
-C_CARD, C_CTRL = range(2)
+# Chain columns (rules 337-340).
+#
+# `C_FINAL` is the Pending/Finalized split from 337.1: an item is appended
+# Pending, and Finalizing it (choosing targets, paying costs) is a separate step
+# that does NOT pass priority. `C_BOUND_BF` is the battlefield a [Hidden] card
+# was played from, which binds its bound target slots (811.1.d.2.a); -1 means it
+# was played from hand and nothing is bound.
+C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF = range(5)
+N_CHAIN_COLS = 5
+
+# Target slots stored per chain item. Two is enough for every card in the first
+# batch; overflow is asserted rather than silently truncated.
+MAX_TARGETS = 4
 
 # Showdown steps (PLAN.md Phase 1.3).
 SD_NONE, SD_PRIORITY, SD_DAMAGE, SD_CLEANUP = range(4)
@@ -92,7 +103,7 @@ class GameState:
         "runes_ready", "runes_spent", "rune_deck", "rune_head", "rune_left",
         "pool_energy", "pool_power",
         "bf_card", "bf_ctrl", "bf_contested", "fd_owner", "fd_card", "bf_scored",
-        "chain", "n_chain",
+        "chain", "n_chain", "chain_targets", "pend_slot",
         "points", "burned_out",
         "legend", "champion",
         "turn", "active", "phase", "priority", "focus",
@@ -139,8 +150,14 @@ class GameState:
         # by either method. Reset for both seats at the start of every turn.
         self.bf_scored = np.zeros((N_SEATS, N_BF), np.int8)
 
-        self.chain = np.full((MAX_CHAIN, 2), -1, np.int16)
+        self.chain = np.full((MAX_CHAIN, N_CHAIN_COLS), -1, np.int16)
         self.n_chain = 0
+        # Targets chosen at Finalization, per chain item. Re-checked at
+        # resolution (359.3.e) rather than trusted, because the window between
+        # the two is exactly where a response lands.
+        self.chain_targets = np.full((MAX_CHAIN, MAX_TARGETS), -1, np.int16)
+        # Slot currently being filled for the item being finalized, or -1.
+        self.pend_slot = -1
 
         self.points = np.zeros(N_SEATS, np.int16)
         self.burned_out = np.zeros(N_SEATS, np.int8)

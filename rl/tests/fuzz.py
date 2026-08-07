@@ -26,11 +26,19 @@ from rl.engine import game
 from rl.engine.cardtable import full_table
 
 
-# Recorded v0 replay fingerprints: (deal seed, victory score) -> state_hash.
-# Filled by running fuzz once after a deliberate engine change.
-GOLDEN: dict[tuple[int, int], int] = {
-    (12345, 3): -168154415714110210,
-    (12345, 8): 5238592629090370362,
+# Recorded v0 replay fingerprints: (deal seed, victory) -> (winner, turns,
+# steps, points).
+#
+# **Outcome, not `state_hash`.** The digest covers the whole state blob, so
+# adding a field to `GameState` moves it even when the game plays out
+# identically -- which is precisely when you are relying on it. Pinning the
+# observable outcome instead means the check stays meaningful across state
+# changes and only fires when v0 actually plays differently. `state_hash` is
+# still the right tool for same-process determinism (identical seed, identical
+# trace), which is checked separately just above.
+GOLDEN: dict[tuple[int, int], tuple] = {
+    (12345, 3): (1, 3, 13, [0, 3]),
+    (12345, 8): (1, 6, 76, [1, 8]),
 }
 
 
@@ -97,20 +105,19 @@ def main(n_games=2000, victory=3, check=True):
     assert a == b, f"non-deterministic:\n  {a}\n  {b}"
     print(f"  determinism: identical replay under seed (hash {a['hash']})")
 
-    # Golden fingerprint. `state_hash` is a blake2b digest, so it is stable
-    # across processes and can pin v0's behaviour: any engine change that moves
-    # this number changed how the units-only game plays, and that should be a
-    # deliberate act rather than a surprise. Resumable combat (Reactions) does
-    # NOT move it, because a priority window nobody can act in is skipped.
+    # Golden outcome. Pins how v0 actually plays, so an engine change that
+    # alters the units-only game is a deliberate act rather than a surprise.
+    # Neither resumable combat nor the Chain moved it: units resolve
+    # immediately (337.2) and a priority window nobody can act in is skipped.
     if (12345, victory) in GOLDEN:
+        got = (a["winner"], a["turns"], a["steps"], a["points"])
         want = GOLDEN[(12345, victory)]
-        if a["hash"] != want:
-            print(f"  \033[31mGOLDEN MISMATCH\033[0m v0 replay changed: "
-                  f"{a['hash']} != {want}\n"
-                  f"    {a}\n"
-                  f"    If this was intended, update GOLDEN in fuzz.py.")
+        if got != want:
+            print(f"  \033[31mGOLDEN MISMATCH\033[0m v0 plays differently now:"
+                  f"\n    got  {got}\n    want {want}"
+                  f"\n    If this was intended, update GOLDEN in fuzz.py.")
         else:
-            print(f"  golden: v0 replay unchanged since it was recorded")
+            print(f"  golden: v0 outcome unchanged {got}")
 
     first = winners[0] / max(1, winners[0] + winners[1])
     print(f"  first-player win rate: {first:.1%}")
