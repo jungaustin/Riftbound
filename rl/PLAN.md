@@ -1280,6 +1280,27 @@ curriculum is a more lopsided game than the real one, and seat-swapped paired
 seeds (which `eval.duel` already does) are mandatory for every number reported
 from it — an unpaired measurement here would be off by ~14 points.
 
+### The Final Point changes the curriculum (471.1.b)
+
+Taking the last point **by Conquer** requires having Scored every Battlefield
+that turn; otherwise you draw a card instead. Non-Conquer sources (Hold, spells,
+Burn Out) are exempt (471.1.a.1).
+
+The restriction applies from *one point below* the Victory Score, so the
+curriculum setting decides how much of the game it governs:
+
+| Victory score | Restriction applies from | greedy vs random |
+|---|---|---|
+| 8 (real game) | 7 points — the last stretch | **97.2%** (was 90.5%) |
+| 3 (old curriculum) | 2 points — most of the game | 77.3% |
+
+At victory 8 the rule does what it is for: closing demands the whole board, and
+skill matters *more* — greedy's edge over random grew by 7 points. At victory 3
+it is not an endgame rule at all, it is a permanent tax, and the skill gap
+compresses. **So the curriculum floor is now 5, not 3.** Anything measured at
+victory 3 describes a game with a different rule shape from the real one, which
+retroactively weakens the Phase 4 numbers taken there.
+
 ### Deck construction, measured rather than assumed
 
 Read off the 29 decklists in `decks/`:

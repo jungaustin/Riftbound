@@ -94,12 +94,22 @@ def greedy_agent(rng: np.random.Generator):
         if A.A_PLAY_AT in kinds:
             # Prefer an uncontrolled, undefended battlefield -- that is the
             # free Conquer. Otherwise stay home.
+            #
+            # Within that, prefer one NOT yet Scored this turn. At one point
+            # from victory the Final Point by Conquer requires having Scored
+            # every Battlefield this turn (471.1.b), so conquering a
+            # already-scored battlefield can score literally nothing. Without
+            # this, greedy fell below its own 80% gate against random once the
+            # rule landed.
             foe = 1 - seat
-            for a in kinds[A.A_PLAY_AT]:
-                if (is_battlefield(a.arg)
-                        and state.bf_ctrl[bf_index(a.arg)] != seat
-                        and not state.has_units_at(a.arg, foe)):
-                    return a
+            cands = [a for a in kinds[A.A_PLAY_AT]
+                     if (is_battlefield(a.arg)
+                         and state.bf_ctrl[bf_index(a.arg)] != seat
+                         and not state.has_units_at(a.arg, foe))]
+            if cands:
+                return min(cands,
+                           key=lambda a: int(state.bf_scored[seat,
+                                                             bf_index(a.arg)]))
             return next(a for a in kinds[A.A_PLAY_AT]
                         if not is_battlefield(a.arg))
 
@@ -132,10 +142,13 @@ def greedy_agent(rng: np.random.Generator):
             return max(kinds[A.A_PLAY],
                        key=lambda a: int(table.might[int(state.hand[seat, a.arg])]))
 
-        # 2. Attack only where we can wipe them.
-        for a in kinds.get(A.A_DECLARE, []):
-            if _can_wipe(state, table, cfg, a.arg):
-                return a
+        # 2. Attack only where we can wipe them, preferring a battlefield not
+        # yet Scored this turn -- see the Final Point note above.
+        winnable = [a for a in kinds.get(A.A_DECLARE, [])
+                    if _can_wipe(state, table, cfg, a.arg)]
+        if winnable:
+            return min(winnable,
+                       key=lambda a: int(state.bf_scored[seat, bf_index(a.arg)]))
 
         if A.A_END_TURN in kinds:
             return kinds[A.A_END_TURN][0]

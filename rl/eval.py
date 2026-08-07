@@ -39,7 +39,16 @@ def play_one(net, opponent, table, cfg, enc: Encoder, seed: int, net_seat: int,
     """One game. Returns the winning seat, or -1."""
     env = RiftboundEnv(table, cfg, encoder=enc)
     obs = env.reset(seed, *deal_fn(seed))
+    # `game.play_game` caps steps; this loop did not, so a livelock here hung
+    # a training run silently for half an hour instead of raising. It cost more
+    # to notice than to fix.
+    steps = 0
     while obs is not None:
+        steps += 1
+        if steps > 5000:
+            raise RuntimeError(
+                f"eval game exceeded 5000 decisions (seed {seed}, net_seat "
+                f"{net_seat}) -- livelock, not slowness")
         if obs.to_move == net_seat:
             i = net_choice(net, obs, device, deterministic, generator)
         else:

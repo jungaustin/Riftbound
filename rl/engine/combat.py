@@ -416,7 +416,17 @@ def advance_combat(state: GameState, table: CardTable, cfg: Config,
         assert guard <= N_SEATS * 8, "combat failed to terminate"
 
         if state.showdown_step == SD_PRIORITY:
-            if window_is_live(state, table, cfg):
+            # `window_is_live` decides whether to OPEN a window, never whether
+            # to leave one. Once both players have passed in succession (339.1)
+            # the Showdown Step is over and Combat proceeds, however many
+            # Reactions remain affordable -- re-testing affordability here made
+            # the pass loop unable to terminate, because passing does not make a
+            # card unaffordable.
+            #
+            # Random agents hid this: they eventually play a card and break the
+            # cycle. A deterministic agent that keeps passing never does, which
+            # is why greedy livelocked and the fuzz stayed clean.
+            if state.passes < N_SEATS and window_is_live(state, table, cfg):
                 return log                 # yield; the action layer takes over
             state.passes = 0
 

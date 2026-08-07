@@ -58,7 +58,14 @@ class Config:
     second_player_bonus_runes: int = 1  # rule 485.7
 
     # --- curriculum --------------------------------------------------------
-    victory_score: int = 3            # anneal 3 -> 5 -> 8
+    # Anneal 5 -> 8. NOT 3 any more: the Final Point restriction (471.1.b)
+    # applies once a player is within one point of victory, which at
+    # victory_score=3 means from 2 points onward -- most of the game. That
+    # turns an endgame rule into a permanent one and makes the curriculum a
+    # materially different game. Measured: greedy beats random 97.2% at
+    # victory 8 but only 77.3% at victory 3, because the restriction dominates
+    # there rather than gating the finish.
+    victory_score: int = 5            # anneal 5 -> 8
     turn_cap: int = 30                # truncate -> reward 0
 
     # --- action space ------------------------------------------------------
