@@ -453,6 +453,35 @@ def v1_deal(table, deck_size: int = MAIN_DECK_SIZE,
     return deal
 
 
+def deck_pool_deal(table, min_coverage: float = 0.0, seed_decks=None):
+    """Sample a matchup from the REAL decklists each episode.
+
+    This is what makes domain identity learnable. `v1_deal` builds decks by
+    sampling the implemented pool at random, which produces 6-domain soup with
+    an unrelated rune deck -- cards are frequently uncastable and no archetype
+    signal exists to condition on. Real decks commit: a rune deck of 8 Order /
+    4 Body *is* the deck's identity, and it is what makes Fury play like Fury
+    and Mind play like Mind.
+
+    The network can already represent this -- cards carry a 6-dim domain
+    multi-hot and the globals carry per-domain rune counts for both seats -- so
+    the missing piece was never the architecture, it was the training
+    distribution. Sampling a different matchup per episode is also what stops
+    the policy overfitting to one archetype, which is the failure the project
+    owner asked about: swap the deck and it should not suddenly play worse.
+    """
+    from rl.decks import load_all, matchup
+    pool = [d for d in (seed_decks or load_all(table))
+            if d.coverage >= min_coverage]
+    assert pool, f"no decks at coverage >= {min_coverage:.0%}"
+
+    def deal(seed):
+        rng = np.random.default_rng(seed)
+        i, j = rng.integers(len(pool)), rng.integers(len(pool))
+        return matchup(pool[int(i)], pool[int(j)])
+    return deal
+
+
 def deal_stats(table, deal_fn, n: int = 500) -> dict:
     """What the deal function actually produces, as opposed to what it was asked
     for. Worth checking whenever the card pool changes."""
@@ -497,6 +526,10 @@ def main(argv=None) -> int:
     p.add_argument("--victory", type=int, default=3)
     p.add_argument("--spells", action="store_true",
                    help="enable the DSL spell pool (units_only=False)")
+    p.add_argument("--real-decks", action="store_true",
+                   help="train on sampled real decklists, so domain "
+                        "identity is learnable")
+    p.add_argument("--min-coverage", type=float, default=0.6)
     p.add_argument("--envs", type=int, default=64)
     p.add_argument("--rollout", type=int, default=2048)
     p.add_argument("--device", default="cpu")
@@ -515,7 +548,10 @@ def main(argv=None) -> int:
     if a.spells:
         cfg = dc_replace(cfg, units_only=False)
     hp = HP(n_envs=a.envs, rollout=a.rollout)
-    deal = v1_deal(table) if a.spells else v0_deal(table)
+    if a.real_decks:
+        deal = deck_pool_deal(table, a.min_coverage)
+    else:
+        deal = v1_deal(table) if a.spells else v0_deal(table)
 
     tr = Trainer(table, cfg, deal, hp, device=a.device, seed=a.seed)
     if a.init:
