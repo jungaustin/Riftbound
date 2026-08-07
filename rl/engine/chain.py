@@ -38,11 +38,12 @@ from rl.config import Config
 from rl.engine import resolve as rsv
 from rl.engine.cardtable import CardTable
 from rl.engine.cost import plan_payment
-from rl.engine.effects import SPEED_ACTION, SPEED_REACTION, spec_for
-from rl.engine.state import (C_BOUND_BF, C_CARD, C_CTRL, C_FINAL, C_FROM_HAND,
-                             C_UID,
+from rl.engine.effects import (SPEED_ACTION, SPEED_REACTION, abilities_for,
+                               spec_for)
+from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
+                             C_FINAL, C_FROM_HAND, C_SRC, C_UID,
                              MAIN, MAX_CHAIN, MAX_TARGETS, N_BF, N_SEATS,
-                             GameState)
+                             P_CARD, P_CTRL, GameState)
 
 
 def speed_ok(state: GameState, cfg: Config, seat: int, speed: int) -> bool:
@@ -171,8 +172,12 @@ def hidden_playable(state: GameState, table: CardTable, cfg: Config,
 
 
 def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
-         bound_bf: int = -1) -> int:
-    """Append a Pending Chain Item. Returns its index."""
+         bound_bf: int = -1, abil: int = -1, src: int = -1,
+         ctx: int = -1) -> int:
+    """Append a Pending Chain Item. Returns its index.
+
+    `abil >= 0` makes it a Triggered Ability rather than a card (383.3).
+    """
     i = state.n_chain
     assert i < MAX_CHAIN, "chain overflow"
     row = state.chain[i]
@@ -182,10 +187,69 @@ def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
     row[C_FROM_HAND] = int(from_hand)
     row[C_BOUND_BF] = bound_bf
     row[C_UID] = state.chain_uid
+    row[C_ABIL] = abil
+    row[C_SRC] = src
+    row[C_CTX] = ctx
     state.chain_uid += 1
     state.chain_targets[i, :] = -1
     state.n_chain = i + 1
     return i
+
+
+def item_spec(state: GameState, table: CardTable, item: int):
+    """The CardSpec or Ability a chain item will resolve with.
+
+    One lookup for both, because everything downstream -- targeting,
+    finalization, resolution -- treats them identically. That is 383.3 doing
+    the work: a triggered ability behaves like an activated ability on the
+    Chain, so the only thing that differs is where the spec came from.
+    """
+    card = int(state.chain[item, C_CARD])
+    abil = int(state.chain[item, C_ABIL])
+    if abil < 0:
+        return spec_for(table, card)
+    abilities = abilities_for(table, card)
+    assert abil < len(abilities), f"ability {abil} missing on {table.names[card]!r}"
+    return abilities[abil]
+
+
+def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,
+         src: int, ctx: int = -1) -> int:
+    """Put every matching Triggered Ability of `src` on the Chain (383.3).
+
+    Returns how many were added. Nothing fires while `units_only` is set, which
+    is what keeps v0 bit-identical: v0's whole claim is that a unit resolving
+    immediately (337.2) never opens a priority window, and an ETB trigger
+    opens one.
+
+    383.3.d orders simultaneous triggers by their controller's choice. Not
+    exposed: no card in the pool has two abilities on the same trigger, so the
+    choice would be between one option. It becomes a real decision the moment
+    one does, and this is where it goes.
+    """
+    if cfg.units_only:
+        return 0
+    card = int(state.perms[src, P_CARD])
+    ctrl = int(state.perms[src, P_CTRL])
+    n = 0
+    for k, ab in enumerate(abilities_for(table, card)):
+        if ab.trigger != trigger:
+            continue
+        # 355.8 -- "In order to put a spell or ability on the chain, valid
+        # choices must be made for all targets." An ability that cannot fill
+        # its slots never reaches the chain at all.
+        #
+        # This matters far more for abilities than for cards. A card is only
+        # offered when it is castable, so the check never fires; an ability
+        # triggers whether or not the board can satisfy it. First Mate ("ready
+        # another unit") played onto an empty board is the case -- without
+        # this, the trigger sat Pending with an empty option list and the game
+        # deadlocked with a player to act and nothing to do.
+        if ab.n_targets and not rsv.can_be_cast(state, table, ab, ctrl, -1, src):
+            continue
+        push(state, card, ctrl, from_hand=False, abil=k, src=src, ctx=ctx)
+        n += 1
+    return n
 
 
 def index_of_uid(state: GameState, uid: int) -> int:
@@ -265,13 +329,22 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
     """340.1 -- the newest Finalized item resolves, alone."""
     item = newest_finalized(state)
     assert item >= 0, "resolve_top with no finalized item"
+    spec = item_spec(state, table, item)
+    abil = int(state.chain[item, C_ABIL])
+    src = int(state.chain[item, C_SRC])
+    ctx = int(state.chain[item, C_CTX])
     card, ctrl, from_hand, bound, targets = _pop(state, item)
 
-    spec = spec_for(table, card)
     assert spec is not None, f"no spec for {table.names[card]!r} on the chain"
     log = rsv.resolve(state, table, cfg, spec, ctrl, targets[:spec.n_targets],
-                      bound, from_hand)
+                      bound, from_hand, source=src, ctx=ctx)
     log["card"] = table.names[card]
+
+    if abil >= 0:
+        # A Triggered Ability is not a card and has no zone to go to -- its
+        # source is still on the board. Only the spell path trashes anything.
+        log["ability"] = abil
+        return log
 
     # The spell leaves play. (Units never reach here -- 337.2 resolves them
     # immediately at finalization, so nothing on this chain is a permanent.)

@@ -38,9 +38,11 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                OP_RETURN_TO_HAND,
                                OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
-                               OP_SWAP_LOC, REL_DIFFERENT_LOC, REL_NONE,
+                               OP_READY, OP_SWAP_LOC,
+                               REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
                                TK_LOCATION, TK_SPELL, W_FRIENDLY,
+                               T_CTX, T_HERE, T_SELF,
                                CardSpec, Op,
                                TargetSpec)
 from rl.engine import chain
@@ -50,13 +52,16 @@ from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, N_BF, P_ALIVE,
 
 
 def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
-             seat: int, chosen: list[int], bound_bf: int) -> bool:
+             seat: int, chosen: list[int], bound_bf: int,
+             source: int = -1) -> bool:
     """Does `perm` satisfy one slot's restrictions?"""
     row = state.perms[perm]
     if row[P_ALIVE] != 1:
         return False
     if spec.kind == TK_UNIT and not table.is_type(int(row[P_CARD]), "Unit"):
         return False
+    if spec.not_self and perm == source:
+        return False          # "another unit" -- never the ability's own source
 
     ctrl, loc = int(row[P_CTRL]), int(row[P_LOC])
     if spec.who == W_FRIENDLY and ctrl != seat:
@@ -128,7 +133,8 @@ def _location_targets(state: GameState, spec: TargetSpec, seat: int,
 
 
 def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
-                  seat: int, chosen: list[int], bound_bf: int) -> list[int]:
+                  seat: int, chosen: list[int], bound_bf: int,
+                  source: int = -1) -> list[int]:
     """Values that may fill `slot`. Their meaning depends on the slot's kind:
     a permanent row, a chain uid (TK_SPELL), or a location (TK_LOCATION)."""
     t = spec.targets[slot]
@@ -138,11 +144,12 @@ def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
         return _spell_targets(state, table, t, chosen)
     return [i for i in range(state.n_perms)
             if i not in chosen
-            and _matches(state, table, t, i, seat, chosen, bound_bf)]
+            and _matches(state, table, t, i, seat, chosen, bound_bf, source)]
 
 
 def _can_complete(state: GameState, table: CardTable, spec: CardSpec, slot: int,
-                  seat: int, chosen: list[int], bound_bf: int) -> bool:
+                  seat: int, chosen: list[int], bound_bf: int,
+                  source: int = -1) -> bool:
     """Can slots `slot`..end still all be filled, given `chosen` so far?
 
     Backtracking, not greedy. Greedy is wrong here: Facebreaker's slots are
@@ -154,13 +161,15 @@ def _can_complete(state: GameState, table: CardTable, spec: CardSpec, slot: int,
     if slot >= spec.n_targets:
         return True
     return any(
-        _can_complete(state, table, spec, slot + 1, seat, chosen + [p], bound_bf)
-        for p in legal_targets(state, table, spec, slot, seat, chosen, bound_bf))
+        _can_complete(state, table, spec, slot + 1, seat, chosen + [p], bound_bf,
+                      source)
+        for p in legal_targets(state, table, spec, slot, seat, chosen, bound_bf,
+                               source))
 
 
 def choosable_targets(state: GameState, table: CardTable, spec: CardSpec,
                       slot: int, seat: int, chosen: list[int],
-                      bound_bf: int) -> list[int]:
+                      bound_bf: int, source: int = -1) -> list[int]:
     """Targets for `slot` that do not dead-end the slots after it.
 
     359.3.e.14.a says a card whose targets cannot all be chosen legally cannot
@@ -169,15 +178,15 @@ def choosable_targets(state: GameState, table: CardTable, spec: CardSpec,
     would leave a card that can never be finalized.
     """
     return [p for p in legal_targets(state, table, spec, slot, seat, chosen,
-                                     bound_bf)
+                                     bound_bf, source)
             if _can_complete(state, table, spec, slot + 1, seat, chosen + [p],
-                             bound_bf)]
+                             bound_bf, source)]
 
 
 def can_be_cast(state: GameState, table: CardTable, spec: CardSpec, seat: int,
-                bound_bf: int) -> bool:
+                bound_bf: int, source: int = -1) -> bool:
     """Is there any legal way to fill every slot? (359.3.e.14.a)"""
-    return _can_complete(state, table, spec, 0, seat, [], bound_bf)
+    return _can_complete(state, table, spec, 0, seat, [], bound_bf, source)
 
 
 # ---------------------------------------------------------------------------
@@ -202,15 +211,43 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
     raise ValueError(f"unknown condition {op.cond}")
 
 
+def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
+          ctx: int) -> int:
+    """Decode an op's target index, including the pseudo-slots.
+
+    A spell's ops address chosen targets by slot. A unit ability also has to
+    say "me", "here" and "there" -- none of which are choices, so none of which
+    can be slots. Decoding them in one place means every op that takes a target
+    understands them without knowing they exist.
+    """
+    if idx == T_SELF:
+        return source
+    if idx == T_HERE:
+        return int(state.perms[source, P_LOC]) if source >= 0 else -1
+    if idx == T_CTX:
+        return ctx
+    return still_legal[idx] if 0 <= idx < len(still_legal) else -1
+
+
 def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             seat: int, targets: list[int], bound_bf: int,
-            from_hand: bool) -> dict:
-    """Apply a finalized card's ops. Returns a log dict.
+            from_hand: bool, source: int = -1, ctx: int = -1) -> dict:
+    """Apply a finalized card's or ability's ops. Returns a log dict.
 
     Targets are re-checked here, not trusted from finalization: the window
     between the two is exactly where a response lands (359.3.e).
+
+    `source` and `ctx` are the two things a triggered ability knows and a spell
+    does not: the permanent it is printed on, and the location captured when it
+    triggered (359.3.f.3). Both are -1 for a card.
     """
     log: dict = {"resolved": [], "fizzled": []}
+
+    # 383.2.c.2 -- an ability whose source left the board cannot reference it.
+    # Sprite Mother's "here" has no meaning once she is dead, and dereferencing
+    # a dead row would silently place the token at her last location.
+    if source >= 0 and state.perms[source, P_ALIVE] != 1:
+        source = -1
 
     still_legal: list[int] = []
     chosen_so_far: list[int] = []
@@ -223,7 +260,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             ok = t >= 0 and chain.index_of_uid(state, t) >= 0
         else:
             ok = (t >= 0 and _matches(state, table, spec.targets[slot], t, seat,
-                                      chosen_so_far, bound_bf))
+                                      chosen_so_far, bound_bf, source))
         still_legal.append(t if ok else -1)
         chosen_so_far.append(t if ok else -1)
 
@@ -242,8 +279,8 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["resolved"].append(op.op)
             continue
 
-        a = still_legal[op.target] if 0 <= op.target < len(still_legal) else -1
-        if op.target >= 0 and a < 0:
+        a = _slot(state, still_legal, op.target, source, ctx)
+        if op.target != -1 and a < 0:
             log["fizzled"].append(op.op)      # this target specifically is gone
             continue
 
@@ -274,7 +311,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             owner = int(state.perms[a, P_CTRL])
             log["drew_opponent"] = phases.draw_for(state, owner, op.n)
         elif op.op == OP_MOVE_TO:
-            dst = still_legal[op.target_b] if 0 <= op.target_b < len(still_legal) else -1
+            dst = _slot(state, still_legal, op.target_b, source, ctx)
             if dst < 0:
                 log["fizzled"].append(op.op)
                 continue
@@ -328,8 +365,11 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["stunned"] = log.get("stunned", [])
             if state.stun(a):
                 log["stunned"].append(a)
+        elif op.op == OP_READY:
+            state.perms[a, P_READY] = 1
+            log.setdefault("readied", []).append(a)
         elif op.op == OP_SWAP_LOC:
-            b = still_legal[op.target_b] if 0 <= op.target_b < len(still_legal) else -1
+            b = _slot(state, still_legal, op.target_b, source, ctx)
             if b < 0:
                 log["fizzled"].append(op.op)
                 continue

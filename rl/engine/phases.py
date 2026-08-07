@@ -261,6 +261,10 @@ def start_turn(state: GameState, table: CardTable, cfg: Config) -> dict:
 def end_turn(state: GameState, cfg: Config) -> None:
     ending(state)
     control_cleanup(state)
+    # Reclaim dead permanent rows. Only safe here: the turn ends in a Neutral
+    # Open State, so nothing outside `perms` is holding a row index. See
+    # `GameState.compact_permanents`.
+    state.compact_permanents()
     state.ply += 1
     if state.active == 1:
         state.turn += 1

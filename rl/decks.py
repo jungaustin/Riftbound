@@ -44,7 +44,7 @@ from engine.cards import find  # noqa: E402
 
 from rl.config import DOMAINS  # noqa: E402
 from rl.engine.cardtable import CardTable, read_decklist  # noqa: E402
-from rl.engine.effects import SPECS  # noqa: E402
+from rl.engine.effects import ABILITIES, SPECS  # noqa: E402
 
 _DOMAIN_ID = {d.lower(): i for i, d in enumerate(DOMAINS)}
 
@@ -116,7 +116,13 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
         return False
     if table.is_type(cid, "Spell"):
         return True                       # a spec transcribes the whole text
-    return not table.residual_text(cid) and not table.unread_keywords(cid)
+    if table.unread_keywords(cid):
+        return False
+    # Presence in ABILITIES means the same thing presence in SPECS does: the
+    # card's whole text is transcribed. Cards with one implemented ability and
+    # one unimplemented one (Scuttle Crab: an ETB draw and a Deathknell) are
+    # deliberately absent, so this stays an allowlist rather than a guess.
+    return not table.residual_text(cid) or table.names[cid] in ABILITIES
 
 
 def _pool(table: CardTable) -> tuple[list[int], list[int]]:

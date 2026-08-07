@@ -39,19 +39,21 @@ from rl.engine import resolve as rsv
 from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, card_domains,
                             pay, plan_payment)
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import spec_for
-from rl.engine.state import (C_BOUND_BF, C_CARD, C_CTRL, MAIN, N_BF,
+from rl.engine.effects import TR_PLAY_ME, spec_for
+from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
+                             MAX_CHAIN, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
                              P_LOC, P_READY, GameState, base_loc, bf_loc,
                              is_battlefield)
 
 # Action kinds. Wire format -- append only, never reorder.
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
- A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN) = range(13)
+ A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN,
+ A_ACCEPT, A_DECLINE) = range(15)
 
 KIND_NAMES = ("pass", "end_turn", "play", "play_at", "declare", "add",
               "commit", "cancel", "retreat", "target", "hide", "hide_at",
-              "play_hidden")
+              "play_hidden", "accept", "decline")
 
 
 class Action(NamedTuple):
@@ -138,6 +140,18 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         if item < 0 or int(state.chain[item, C_CTRL]) != seat:
             return []
         return [Action(A_TARGET, p) for p in _slot_options(state, table, item)]
+
+    # 383.3.a -- a Triggered Ability whose effect BEGINS with "you may" is
+    # accepted or declined at FINALIZATION, before targets are chosen. That
+    # timing is the whole point: declining removes it from the chain and it
+    # counts as never having triggered (383.3.a.2), so it cannot be responded
+    # to and it never sees the board it would have changed. A "you may" later
+    # in the text is a different thing, decided on resolution (383.3.a.3).
+    if state.pend_may >= 0:
+        item = int(state.pend_may)
+        if int(state.chain[item, C_CTRL]) != seat:
+            return []
+        return [Action(A_ACCEPT), Action(A_DECLINE)]
 
     if state.pend_hide >= 0:
         if seat != state.active:
@@ -229,6 +243,11 @@ def apply(state: GameState, table: CardTable, cfg: Config,
         if state.n_chain > 0:
             log = chain.resolve_top(state, table, cfg)   # 340.1, one item
             chain.after_resolution(state)                # 340.2-340.4
+            # 340.3 -- pending items go back to Finalize. A trigger that fired
+            # during that resolution is sitting Pending right now and nothing
+            # else would ever finalize it, because no player action is what put
+            # it there.
+            log.update(_advance_pending(state, table, cfg))
             if state.n_chain == 0:
                 # 340.2 -- the Chain is empty, so play returns to an Open State
                 # and a Cleanup can finally happen. It could not happen during
@@ -279,6 +298,12 @@ def apply(state: GameState, table: CardTable, cfg: Config,
     if k == A_TARGET:
         return _choose_target(state, table, cfg, action.arg)
 
+    if k == A_ACCEPT:
+        return _accept_may(state, table, cfg)
+
+    if k == A_DECLINE:
+        return _decline_may(state, table, cfg)
+
     if k == A_HIDE:
         state.pend_hide = action.arg
         return {}
@@ -322,8 +347,7 @@ def apply(state: GameState, table: CardTable, cfg: Config,
 
 def _slot_options(state: GameState, table: CardTable, item: int) -> list[int]:
     """Legal permanents for the slot currently being filled."""
-    card = int(state.chain[item, C_CARD])
-    spec = spec_for(table, card)
+    spec = chain.item_spec(state, table, item)
     assert spec is not None
     seat = int(state.chain[item, C_CTRL])
     slot = int(state.pend_slot)
@@ -331,7 +355,36 @@ def _slot_options(state: GameState, table: CardTable, item: int) -> list[int]:
     # `choosable_targets`, not `legal_targets`: a choice that leaves a later
     # slot unfillable is itself illegal (359.3.e.14.a) and would deadlock.
     return rsv.choosable_targets(state, table, spec, slot, seat, chosen,
-                                 int(state.chain[item, C_BOUND_BF]))
+                                 int(state.chain[item, C_BOUND_BF]),
+                                 int(state.chain[item, C_SRC]))
+
+
+def _advance_pending(state: GameState, table: CardTable, cfg: Config) -> dict:
+    """Finalize Pending items until one needs a decision (337.1.b, 359.3.b).
+
+    A player action drives a spell straight through announce -> targets ->
+    finalize, so this loop had no reason to exist. A **trigger** does not: it
+    appears on the Chain without anyone having acted, and something has to
+    finalize it. 359.3.b says the controller of pending items completes their
+    steps before play continues, and 337.1.b says oldest first.
+
+    Returns when the chain has no pending item, or when the oldest one is
+    waiting on its controller for a "you may" (383.3.a) or a target.
+    """
+    log: dict = {}
+    for _ in range(MAX_CHAIN + 1):
+        item = chain.oldest_pending(state)
+        if item < 0:
+            return log
+        spec = chain.item_spec(state, table, item)
+        if getattr(spec, "optional", False):
+            state.pend_may = item
+            return log
+        if spec.n_targets:
+            state.pend_slot = 0
+            return log
+        log.update(_finalize_pending(state, table, cfg, item))
+    raise AssertionError("pending chain items are not draining")
 
 
 def _play_spell(state: GameState, table: CardTable, cfg: Config, seat: int,
@@ -363,12 +416,15 @@ def _choose_target(state: GameState, table: CardTable, cfg: Config,
     assert item >= 0 and state.pend_slot >= 0, "no slot open"
     chain.set_target(state, item, int(state.pend_slot), perm)
 
-    spec = spec_for(table, int(state.chain[item, C_CARD]))
+    spec = chain.item_spec(state, table, item)
     assert spec is not None
     if state.pend_slot + 1 < spec.n_targets:
         state.pend_slot = int(state.pend_slot) + 1
         return {}
-    return _finalize_pending(state, table, cfg, item)
+    log = _finalize_pending(state, table, cfg, item)
+    # Another trigger may still be pending behind this one (359.3.b).
+    log.update(_advance_pending(state, table, cfg))
+    return log
 
 
 def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
@@ -382,6 +438,14 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
     """
     card = int(state.chain[item, C_CARD])
     seat = int(state.chain[item, C_CTRL])
+    state.pend_may = -1
+    # A Triggered Ability has no card cost. 383.3.b's "cost within
+    # instructions" -- Ekko's "Recycle me to ready your runes" -- would be paid
+    # here, and no ability in the pool has one yet.
+    if int(state.chain[item, C_ABIL]) >= 0:
+        chain.finalize(state, item)
+        state.priority = seat
+        return {"finalized_ability": table.names[card]}
     if int(state.chain[item, C_BOUND_BF]) < 0:
         # 811.1.b -- a card played from Hidden ignores its cost entirely. The
         # rune was already paid when it was hidden.
@@ -394,6 +458,32 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
     return {"finalized": table.names[card],
             "targets": [int(x) for x in
                         state.chain_targets[item, :spec_for(table, card).n_targets]]}
+
+
+def _accept_may(state: GameState, table: CardTable, cfg: Config) -> dict:
+    """383.3.a -- perform the optional Triggered Ability: carry on finalizing."""
+    item = int(state.pend_may)
+    state.pend_may = -1
+    spec = chain.item_spec(state, table, item)
+    if spec.n_targets:
+        state.pend_slot = 0
+        return {}
+    log = _finalize_pending(state, table, cfg, item)
+    log.update(_advance_pending(state, table, cfg))
+    return log
+
+
+def _decline_may(state: GameState, table: CardTable, cfg: Config) -> dict:
+    """383.3.a.2 -- it is removed from the chain and considered not to have
+    triggered. Not countered, not resolved: it never happened, so nothing that
+    watches for the ability sees anything."""
+    item = int(state.pend_may)
+    state.pend_may = -1
+    card = int(state.chain[item, C_CARD])
+    chain._pop(state, item)
+    log = {"declined": table.names[card]}
+    log.update(_advance_pending(state, table, cfg))
+    return log
 
 
 def _hide_at(state: GameState, table: CardTable, cfg: Config, seat: int,
@@ -470,7 +560,20 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     # v0 never pays [Accelerate]'s additional cost, so everything enters
     # exhausted. When Accelerate lands it becomes a choice at payment time, not
     # a property of the card.
-    state.add_permanent(card, seat, loc, ready=False)
+    src = state.add_permanent(card, seat, loc, ready=False)
+
+    # 359.2.b -- rules text executes as the permanent enters, so "When you play
+    # me" triggers here, after it is on the board. 337.2 already resolved the
+    # unit itself without a window; the trigger is a separate Chain Item and
+    # *is* respondable.
+    if chain.fire(state, table, cfg, TR_PLAY_ME, src):
+        # 321 -- a Cleanup cannot happen while Chain Items are pending, so the
+        # Combat this unit's arrival may have staged waits. The pass loop runs
+        # `cleanup` the moment the Chain empties, which is the same path a
+        # spell that moves a unit already takes.
+        log = {"played": table.names[card], "at": loc}
+        log.update(_advance_pending(state, table, cfg))
+        return log
     return combat.cleanup(state, table, cfg, mover=seat, dst=loc)
 
 
@@ -500,6 +603,8 @@ def acting_seat(state: GameState) -> int:
         item = chain.oldest_pending(state)
         if item >= 0:
             return int(state.chain[item, C_CTRL])
+    if state.pend_may >= 0:
+        return int(state.chain[int(state.pend_may), C_CTRL])
     if state.n_chain > 0 or state.showdown_bf >= 0:
         return int(state.priority)
     return int(state.active)

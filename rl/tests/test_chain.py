@@ -228,6 +228,10 @@ ok("countering removes the targeted item and restricts its controller")
 # The restriction is turn-scoped and blocks that seat from playing spells.
 assert not chain.playable_hand_indices(s, T, CFG_V1, 0), \
     "a restricted seat must not be offered spells"
+# This fixture built the chain by hand and left items on it. A real turn never
+# ends that way -- `legal_actions` only offers A_END_TURN in a Neutral Open
+# State -- and `compact_permanents` asserts as much, so clear it first.
+s.n_chain = 0
 phases.end_turn(s, CFG_V1)
 if s.no_spells[0]:
     die("counter", "the restriction must clear at end of turn")

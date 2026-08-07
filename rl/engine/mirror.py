@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from rl.engine.state import (C_CTRL, N_SEATS, P_CTRL, P_LOC, GameState,
-                             base_loc, is_battlefield)
+from rl.engine.state import (C_CTRL, C_CTX, N_SEATS, P_CTRL, P_LOC,
+                             GameState, base_loc, is_battlefield)
 
 # Rows are per-seat: swap axis 0.
 SEAT_AXIS = (
@@ -49,6 +49,8 @@ UNCHANGED = (
     # `fd_ply` and `ply` are turn counters, and `pend_hide` is a hand index
     # in the acting seat's own hand -- none of them names a seat.
     "fd_ply", "ply", "pend_hide", "chain_uid",
+    # A chain INDEX, not a seat: which pending item is waiting on a "you may".
+    "pend_may",
 )
 
 # Handled by hand below: they carry seat ids *inside* a matrix.
@@ -106,6 +108,9 @@ def mirror(state: GameState) -> GameState:
         c = s.chain[:s.n_chain]
         c[:, C_CTRL] = np.where(c[:, C_CTRL] >= 0,
                                 N_SEATS - 1 - c[:, C_CTRL], c[:, C_CTRL])
+        # C_SRC is a permanent row and rows keep their order under mirroring.
+        # C_CTX is a captured LOCATION, so it moves with the bases (359.3.f.3).
+        c[:, C_CTX] = [mirror_loc(int(x)) for x in c[:, C_CTX]]
 
     # A declaration only ever targets a Battlefield, so it needs no mirroring.
     # Assert rather than assume: if lateral or base-targeted movement ever

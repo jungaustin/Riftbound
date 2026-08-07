@@ -91,8 +91,21 @@ RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 # that does NOT pass priority. `C_BOUND_BF` is the battlefield a [Hidden] card
 # was played from, which binds its bound target slots (811.1.d.2.a); -1 means it
 # was played from hand and nothing is bound.
-C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF, C_UID = range(6)
-N_CHAIN_COLS = 6
+# `C_ABIL`, `C_SRC` and `C_CTX` are what make a Chain Item able to be a
+# TRIGGERED ABILITY rather than a card. 383.3: "a Triggered Ability behaves like
+# an Activated Ability and is placed on the Chain" -- same Finalize, same
+# targeting, same priority windows -- so it shares this row rather than getting
+# a parallel mechanism.
+#
+#   C_ABIL  index into the source card's ability tuple, or -1 for "a card"
+#   C_SRC   the permanent row the ability came from: what "me" and "here" mean
+#   C_CTX   one captured int, usually a location. 359.3.f.3 -- information a
+#           trigger references is captured WHEN IT TRIGGERS, not when it
+#           resolves, so Lillia's "play a Sprite there" remembers where she
+#           moved from even if she has moved again by the time it resolves.
+C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF, C_UID, C_ABIL, C_SRC, \
+    C_CTX = range(9)
+N_CHAIN_COLS = 9
 
 # `C_UID` is a stable per-item id. Chain *indices* shift whenever an item is
 # removed, so a counterspell that stored an index could hit the wrong item
@@ -117,6 +130,7 @@ class GameState:
         "bf_card", "bf_ctrl", "bf_contested", "fd_owner", "fd_card", "fd_ply",
         "bf_scored",
         "chain", "n_chain", "chain_targets", "pend_slot", "chain_uid",
+        "pend_may",
         "points", "burned_out", "no_spells",
         "legend", "champion",
         "turn", "ply", "active", "phase", "priority", "focus",
@@ -179,6 +193,9 @@ class GameState:
         self.chain_targets = np.full((MAX_CHAIN, MAX_TARGETS), -1, np.int16)
         # Slot currently being filled for the item being finalized, or -1.
         self.pend_slot = -1
+        # Chain index of an optional Triggered Ability awaiting its controller's
+        # yes/no at finalization (383.3.a). -1 when nothing is waiting.
+        self.pend_may = -1
         self.chain_uid = 0        # monotone; next id for a chain item
 
         self.points = np.zeros(N_SEATS, np.int16)
@@ -263,9 +280,43 @@ class GameState:
 
     # ---- permanents ------------------------------------------------------
 
+    def compact_permanents(self) -> None:
+        """Drop dead rows and renumber the live ones.
+
+        `add_permanent` only appends, so without this `n_perms` counts every
+        permanent the game has **ever had**, not the ones on the board. That is
+        an unbounded growth tied to game length rather than to board size:
+        measured over 250 real-deck games at victory 8, rows reached 47 against
+        a peak of 19 live, and long games hit `MAX_PERMS overflow` while the
+        board was nearly empty. Raising the cap only moves the failure further
+        out, and every card that makes tokens moves it back in.
+
+        **Row indices are stored outside `perms`** -- chain targets, an
+        ability's `C_SRC`, and `decl_mask` are all row numbers -- so renumbering
+        is only safe with no Chain, no open declaration and no Showdown. The
+        end of a turn is the one moment all three hold, and the preconditions
+        are asserted rather than trusted.
+        """
+        assert self.n_chain == 0, \
+            "compacting with a live Chain would silently repoint its targets"
+        assert not self.declaring and self.decl_mask == 0, \
+            "compacting mid-declaration would repoint decl_mask"
+        assert self.showdown_bf < 0, "compacting during a Showdown"
+        k = 0
+        for i in range(self.n_perms):
+            if self.perms[i, P_ALIVE] == 1:
+                if k != i:
+                    self.perms[k] = self.perms[i]
+                k += 1
+        self.perms[k:self.n_perms] = 0
+        self.n_perms = k
+
     def add_permanent(self, card: int, ctrl: int, loc: int,
                       ready: bool = True) -> int:
-        assert self.n_perms < MAX_PERMS, "MAX_PERMS overflow"
+        assert self.n_perms < MAX_PERMS, (
+            f"MAX_PERMS overflow ({MAX_PERMS} rows). Rows are compacted at "
+            f"end of turn, so this is more permanents in ONE turn than the "
+            f"cap, not an accumulation across the game.")
         i = self.n_perms
         row = self.perms[i]
         row[P_CARD] = card

@@ -31,9 +31,11 @@ import numpy as np
 
 from rl.config import DOMAINS, Config
 from rl.engine import actions as A
-from rl.engine import combat
+from rl.engine import chain, combat
 from rl.engine.cardtable import CardTable
-from rl.engine.state import (F_NO_COMBAT_DAMAGE, F_STUNNED, MAX_PERMS, N_BF,
+from rl.engine.effects import TK_LOCATION, TK_SPELL, TK_UNIT
+from rl.engine.state import (C_CARD, C_SRC, F_NO_COMBAT_DAMAGE,
+                             F_STUNNED, MAX_PERMS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_ARRIVED, P_CARD,
                              P_CTRL, P_DMG, P_FLAGS, P_LOC, P_READY,
                              PHASE_NAMES, GameState, base_loc, bf_index,
@@ -276,6 +278,17 @@ class Encoder:
 
     # -- actions ---------------------------------------------------------
 
+    def _open_slot_kind(self, state: GameState) -> int:
+        """The TK_* kind of the target slot currently being filled."""
+        item = chain.oldest_pending(state)
+        if item < 0 or state.pend_slot < 0:
+            return TK_UNIT
+        spec = chain.item_spec(state, self.table, item)
+        slot = int(state.pend_slot)
+        if spec is None or slot >= spec.n_targets:
+            return TK_UNIT
+        return spec.targets[slot].kind
+
     def _action_row(self, act: A.Action, state: GameState,
                     seat: int) -> np.ndarray:
         r = np.zeros(self.act_dim, np.float32)
@@ -310,9 +323,34 @@ class Encoder:
             card = int(state.fd_card[act.arg])
             loc = bf_loc(act.arg)
         elif k == A.A_TARGET:
-            card = int(state.perms[act.arg, P_CARD])
-            loc = int(state.perms[act.arg, P_LOC])
-            might = combat.might(state, self.table, act.arg)
+            # **`arg` means whatever the open slot's KIND says it means**: a
+            # permanent row, a location, or a Chain Item uid. This read
+            # `state.perms[act.arg]` unconditionally, so a location target
+            # (Sprite Call, Ride The Wind) described permanent row 0-3 and a
+            # counterspell target (Defy, Lilting Lullaby) described a row
+            # chosen by a monotonic counter. Valid indices, meaningless
+            # features -- on exactly the decisions that need them most.
+            kind = self._open_slot_kind(state)
+            if kind == TK_LOCATION:
+                loc = int(act.arg)
+            elif kind == TK_SPELL:
+                i = chain.index_of_uid(state, int(act.arg))
+                if i >= 0:
+                    card = int(state.chain[i, C_CARD])
+            else:
+                card = int(state.perms[act.arg, P_CARD])
+                loc = int(state.perms[act.arg, P_LOC])
+                might = combat.might(state, self.table, act.arg)
+        elif k in (A.A_ACCEPT, A.A_DECLINE):
+            # 383.3.a -- the choice is about one triggered ability, so the
+            # candidates differ only by yes/no. What distinguishes the decision
+            # is whose ability it is.
+            item = int(state.pend_may)
+            if item >= 0:
+                card = int(state.chain[item, C_CARD])
+                src = int(state.chain[item, C_SRC])
+                if src >= 0:
+                    loc = int(state.perms[src, P_LOC])
 
         if card >= 0:
             r[nk] = 1.0

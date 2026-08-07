@@ -58,10 +58,19 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
 # --- ops ------------------------------------------------------------------
 (OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT, OP_COUNTER,
  OP_NO_SPELLS, OP_CREATE_TOKEN, OP_MOVE_TO, OP_RETURN_TO_HAND,
- OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER) = range(12)
+ OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER, OP_READY) = range(13)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
-            "damage", "kill", "draw_controller")
+            "damage", "kill", "draw_controller", "ready")
+
+# --- pseudo target slots --------------------------------------------------
+# A spell's ops address targets by slot index. A unit's ability also has to say
+# "me" and "here", which are not choices and so are not slots. These negative
+# indices mean exactly those, and `resolve._slot` is the one place that decodes
+# them -- so every op that takes a target works with them for free.
+T_SELF = -2      # the permanent the ability is printed on
+T_HERE = -3      # that permanent's current location
+T_CTX = -4       # the location captured when the trigger fired (359.3.f.3)
 
 # --- conditions, checked at resolution ------------------------------------
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
@@ -81,6 +90,9 @@ class TargetSpec(NamedTuple):
     # and no more than {any rune}" -- energy <= 4 AND power <= 1.
     max_energy: int = -1
     max_power: int = -1
+    # "another unit" on a unit's own ability: exclude the ability's source.
+    # Distinct from `rel`, which relates a slot to an earlier SLOT.
+    not_self: bool = False
 
 
 class Op(NamedTuple):
@@ -106,6 +118,38 @@ class CardSpec(NamedTuple):
     speed: int
     targets: tuple[TargetSpec, ...] = ()
     ops: tuple[Op, ...] = ()
+
+    @property
+    def n_targets(self) -> int:
+        return len(self.targets)
+
+
+# --- triggered abilities (382-383) ----------------------------------------
+# Trigger conditions. Wire format: append only.
+(TR_PLAY_ME,) = range(1)
+TRIGGER_NAMES = ("play_me",)
+
+
+class Ability(NamedTuple):
+    """One triggered ability. Deliberately shaped like a `CardSpec`.
+
+    383.3 -- "a Triggered Ability behaves like an Activated Ability and is
+    placed on the Chain". So it finalizes, targets, and resolves through
+    exactly the machinery a spell already uses; `targets`/`ops`/`n_targets`
+    match `CardSpec` so `resolve.py` needs no idea which it is holding. What a
+    spell has and this does not is a *speed*: an ability is never played, so
+    there is no timing permission to check.
+
+    `optional` is 383.3.a's "you may" **as the first part of the effect**,
+    which is decided at FINALIZATION, not on resolution -- declining removes
+    the ability from the chain and it counts as never having triggered
+    (383.3.a.2). A "you may" appearing later in the text is a different thing
+    and is decided on resolution (383.3.a.3); that is a condition, not this.
+    """
+    trigger: int
+    targets: tuple[TargetSpec, ...] = ()
+    ops: tuple[Op, ...] = ()
+    optional: bool = False
 
     @property
     def n_targets(self) -> int:
@@ -279,9 +323,63 @@ SPECS: dict[str, CardSpec] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Unit abilities. Same shape as SPECS, keyed the same way; a card may have
+# several, which is why the value is a tuple.
+# ---------------------------------------------------------------------------
+RECRUIT_TOKEN = "Recruit (271) // Buff"   # 1 Might domainless unit token
+
+ABILITIES: dict[str, tuple[Ability, ...]] = {
+
+    # [Tank] When you play me, draw 1.
+    # [Tank] is a keyword flag the damage-assignment tiers already read, so the
+    # DSL only owns the second sentence.
+    "Lecturing Yordle": (
+        Ability(TR_PLAY_ME, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # When you play me, play a ready 3 Might Sprite unit token with [Temporary]
+    # here.  "here" is my location -- not a choice, so not a target slot.
+    "Sprite Mother": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_CREATE_TOKEN, target=T_HERE, n=1,
+                        token=SPRITE_TOKEN, ready=True),)),
+    ),
+
+    # When you play me, play a 1 Might Recruit unit token here.
+    "Faithful Manufactor": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_CREATE_TOKEN, target=T_HERE, n=1,
+                        token=RECRUIT_TOKEN),)),
+    ),
+
+    # When you play me, deal 6 to an enemy unit at a battlefield.
+    "Riptide Rex": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ENEMY, at_battlefield=True),),
+                ops=(Op(OP_DAMAGE, target=0, n=6),)),
+    ),
+
+    # When you play me, ready another unit.
+    # "another" excludes me, which `REL_DIFFERENT` cannot express -- the
+    # relation is to the SOURCE, not to an earlier slot -- so the slot carries
+    # `not_self` and `_matches` checks it against the ability's source.
+    "First Mate": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY, not_self=True),),
+                ops=(Op(OP_READY, target=0),)),
+    ),
+}
+
+
 def spec_for(table, card: int) -> CardSpec | None:
     """The spec for a card id, or None if it is not implemented yet."""
     return SPECS.get(table.names[card])
+
+
+def abilities_for(table, card: int) -> tuple[Ability, ...]:
+    """Every triggered ability printed on a card id."""
+    return ABILITIES.get(table.names[card], ())
 
 
 def implemented(table) -> list[int]:
