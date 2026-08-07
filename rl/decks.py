@@ -1,21 +1,33 @@
-"""Real decklists -> playable decks, with the substitutions made visible.
+"""Real decklists -> playable decks, with every approximation made visible.
 
-The engine implements 14 spells and vanilla units, so most real decks contain
-cards it cannot play. There are three honest options and only one of them is
-usable:
+The engine implements 17 spells and no unit text, so most real decks contain
+cards it cannot fully play. There are three honest options and only one of them
+is usable:
 
   drop them      the deck shrinks below 39 and stops being the same deck
   refuse         nothing is evaluable until the pool is complete
-  **substitute** keep the size and shape, and report exactly what was faked
+  **approximate** keep the size and shape, and report exactly what was faked
 
-This module substitutes, and every result it produces carries its own
-`coverage` number. **A deck at 50% coverage is a proxy, not that deck**, and any
-evaluation of it is a statement about the proxy. That caveat has to travel with
-the number, which is why `DeckLoad` is a dataclass carrying both rather than a
-bare list of card ids.
+A deck is faked in **two different ways**, and conflating them is what made the
+old coverage number wrong:
 
-Substitution picks the closest implemented card of the same type by cost, so the
-curve and the unit/spell balance survive even when the specific effects do not.
+  substituted    the card is gone, replaced by a different card. Spells with no
+                 DSL spec and all Gear -- the engine has nothing to resolve.
+  approximated   the card is present with the right cost, domain and body, but
+                 printed text or keywords the engine never reads. Every unit
+                 with rules text is in here.
+
+`coverage` counts only cards played **as printed**, so it now excludes the
+second category. It previously did not: `v1_legal` accepted any card whose
+keywords were in the v1 scope target and whose text ran under 90 characters,
+which counted 317 of 327 unit slots as covered while executing none of their
+text. Reported coverage fell from ~54% to the low 30s when this was fixed --
+the decks did not get worse, the number got honest.
+
+**A deck at 50% coverage is a proxy, not that deck**, and any evaluation of it
+is a statement about the proxy. That caveat has to travel with the number,
+which is why `DeckLoad` carries all three counts rather than a bare list of
+card ids.
 """
 
 from __future__ import annotations
@@ -45,30 +57,79 @@ class DeckLoad:
     battlefields: list[int]         # card ids, in printed order
     coverage: float                 # fraction played as printed
     substituted: dict = field(default_factory=dict)   # printed name -> count
+    # Kept in the deck, but with printed behaviour the engine ignores. This is
+    # the category the old coverage number hid: the card is *there*, its cost
+    # and body are right, and the text that makes it worth playing does
+    # nothing. Tracked separately from `substituted` because the two fail
+    # differently -- a substitution changes the deck, an approximation changes
+    # the card.
+    approximated: dict = field(default_factory=dict)   # printed name -> count
     missing: list[str] = field(default_factory=list)  # names not in the table
 
     def report(self) -> str:
-        top = sorted(self.substituted.items(), key=lambda t: -t[1])[:4]
+        def top(d):
+            return ", ".join(f"{n}x{c}" for n, c in
+                             sorted(d.items(), key=lambda t: -t[1])[:4])
         return (f"{self.name}: {len(self.main)} cards, coverage "
                 f"{self.coverage:.0%}"
                 + (f", substituted {sum(self.substituted.values())} "
-                   f"({', '.join(f'{n}x{c}' for n, c in top)})"
-                   if self.substituted else "")
+                   f"({top(self.substituted)})" if self.substituted else "")
+                + (f", approximated {sum(self.approximated.values())} "
+                   f"({top(self.approximated)})" if self.approximated else "")
                 + (f", MISSING {self.missing}" if self.missing else ""))
 
 
-def playable(table: CardTable, cid: int) -> bool:
-    """Can the engine actually play this card as printed?"""
+def includable(table: CardTable, cid: int) -> bool:
+    """Can this card sit in a deck without the engine choking on it?
+
+    A **unit** always can. Every unit is a body with a cost, a domain and a
+    Might, and the engine plays those correctly whether or not it executes the
+    card's text -- so keeping Lillia as a vanilla 3-Might Calm body is strictly
+    closer to the real deck than swapping her for a different 3-drop. Tokens
+    are the exception: 185.3 makes them non-cards that only effects create.
+
+    A **spell** cannot. Without a DSL spec there is nothing to resolve, so it
+    has to be substituted. Gear likewise, until Gear exists at all.
+    """
     if table.is_type(cid, "Unit"):
-        return bool(table.v1_legal(cid)) and not table.is_token(cid)
-    return table.names[cid] in SPECS
+        return not table.is_token(cid)
+    if table.is_type(cid, "Spell"):
+        return table.names[cid] in SPECS
+    return False
+
+
+def plays_as_printed(table: CardTable, cid: int) -> bool:
+    """Does the engine execute **everything** this card says?
+
+    The honest coverage question, and it is stricter than `includable` by a
+    long way. This used to be `table.v1_legal(cid)` -- keywords in the v1 scope
+    target plus text under 90 characters -- which counted 317 of 327 unit slots
+    as covered while ignoring their rules text entirely. "When you play me,
+    draw 1." is 25 characters. So is most of what makes a unit worth playing.
+
+    Two exact checks replace the length heuristic:
+
+      residual_text    anything printed beyond keywords needs a DSL spec
+      unread_keywords  a keyword nothing consults is not being played
+    """
+    if not includable(table, cid):
+        return False
+    if table.is_type(cid, "Spell"):
+        return True                       # a spec transcribes the whole text
+    return not table.residual_text(cid) and not table.unread_keywords(cid)
 
 
 def _pool(table: CardTable) -> tuple[list[int], list[int]]:
+    """Substitution pools -- what a missing card may be replaced *with*.
+
+    Deliberately `plays_as_printed`, not `includable`: a substitute is already
+    an approximation, and picking one whose own text is ignored would stack a
+    second silent approximation on top of the first.
+    """
     units = [c for c in range(table.n)
-             if table.is_type(c, "Unit") and playable(table, c)]
+             if table.is_type(c, "Unit") and plays_as_printed(table, c)]
     spells = [c for c in range(table.n)
-              if table.is_type(c, "Spell") and playable(table, c)]
+              if table.is_type(c, "Spell") and plays_as_printed(table, c)]
     return units, spells
 
 
@@ -95,6 +156,7 @@ def load_deck(path: Path, table: CardTable) -> DeckLoad:
 
     main: list[int] = []
     subs: dict[str, int] = {}
+    approx: dict[str, int] = {}
     missing: list[str] = []
     as_printed = 0
 
@@ -106,9 +168,14 @@ def load_deck(path: Path, table: CardTable) -> DeckLoad:
             main.extend([_closest(table, units, units[0])] * count)
             subs[name] = subs.get(name, 0) + count
             continue
-        if playable(table, cid):
+        if includable(table, cid):
+            # The card itself goes in either way; the only question is whether
+            # it counts as covered.
             main.extend([cid] * count)
-            as_printed += count
+            if plays_as_printed(table, cid):
+                as_printed += count
+            else:
+                approx[name] = approx.get(name, 0) + count
             continue
         pool = spells if table.is_type(cid, "Spell") else units
         # Gear has no implementation at all yet, so it becomes a unit -- the
@@ -135,7 +202,7 @@ def load_deck(path: Path, table: CardTable) -> DeckLoad:
     return DeckLoad(name=Path(path).parent.name + "/" + Path(path).stem,
                     main=main, runes=runes, battlefields=bfs,
                     coverage=as_printed / total, substituted=subs,
-                    missing=missing)
+                    approximated=approx, missing=missing)
 
 
 def load_all(table: CardTable, root: Path | None = None) -> list[DeckLoad]:

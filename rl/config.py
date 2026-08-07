@@ -26,10 +26,12 @@ ALL_KEYWORDS = (
     "Vision", "Mighty", "Buff", "Hunt", "Predict", "Backline", "Unique",
 )
 
-# The v1 implementation surface. A card is v1-legal iff every keyword it uses is
-# in here AND its text is expressible in the effect DSL.
+# The v1 SCOPE TARGET -- keywords v1 intends to reach. This is an aspiration
+# and a filter for the v0 vanilla pool. It is **not** a claim that the engine
+# implements them, and reading it as one is what let 169 deck slots be counted
+# as fully covered while carrying a keyword nothing ever executes.
 #
-# `Hidden` and `Deathknell` are promoted deliberately against the "keep v1
+# `Hidden` and `Deathknell` are in scope deliberately against the "keep v1
 # simple" instinct -- see PLAN.md §3. Hidden appears in all ten of the repo's
 # decks and is the Facedown Zone mechanic the whole belief experiment rests on
 # (PLAN.md Phase 6); cutting it would cut the point of the project.
@@ -37,6 +39,25 @@ TIER1_KEYWORDS = (
     "Action", "Reaction", "Tank", "Backline", "Shield", "Assault", "Legion",
     "Mighty", "Deflect", "Temporary", "Hidden", "Deathknell",
 )
+
+# The keywords the engine ACTUALLY reads, each with the line that reads it.
+# Anything here must be greppable; anything not here is ignored at runtime, so
+# a card carrying it is not being played as printed no matter how short its
+# text is. Keep this list honest -- it is the input to the coverage metric, and
+# a coverage number that flatters itself is worse than no number.
+ENGINE_KEYWORDS = {
+    "Temporary": "phases.py -- expires in the Beginning Phase",
+    "Tank":      "combat._tiers -- assigned combat damage first",
+    "Backline":  "combat._tiers -- assigned combat damage last",
+    "Ganking":   "combat.can_move -- may move battlefield to battlefield",
+    "Hidden":    "chain.hideable -- may be hidden in the Facedown Zone",
+    "Action":    "effects.SPEED_ACTION, via a card's DSL spec",
+    "Reaction":  "effects.SPEED_REACTION, via a card's DSL spec",
+}
+# In scope, but nothing executes them yet. Named rather than merely absent so
+# the gap is legible: Deathknell alone is 94 deck slots and is a trigger, so it
+# lands with the triggered-ability machinery rather than on its own.
+UNIMPLEMENTED_TIER1 = tuple(k for k in TIER1_KEYWORDS if k not in ENGINE_KEYWORDS)
 
 # Keywords that are pure combat-damage assignment ordering (PLAN.md §1.3.b).
 # "I must be assigned combat damage first" / "...last".

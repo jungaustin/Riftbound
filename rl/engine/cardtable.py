@@ -26,7 +26,8 @@ sys.path.insert(0, str(ROOT / "sim"))
 from engine.cards import Card, card_index, find  # noqa: E402  (path set above)
 
 sys.path.insert(0, str(ROOT))
-from rl.config import ALL_KEYWORDS, CARD_TYPES, DOMAINS, TIER1_KEYWORDS  # noqa: E402
+from rl.config import (ALL_KEYWORDS, CARD_TYPES, DOMAINS,  # noqa: E402
+                       ENGINE_KEYWORDS, TIER1_KEYWORDS)
 
 def _token_names() -> set[str]:
     """Names of Token cards, read from the raw JSON.
@@ -92,6 +93,10 @@ class CardTable:
     """Parallel arrays, indexed by card id. Immutable after construction."""
 
     names: tuple[str, ...]
+    # Printed rules text, kept for the coverage metric only. Strings never
+    # enter the hot loop -- this is read at deck-load and analysis time, the
+    # same as `names`.
+    raw_text: tuple[str, ...]
     energy: np.ndarray        # int16
     power: np.ndarray         # int16
     might: np.ndarray         # int16, -1 for non-units
@@ -119,10 +124,34 @@ class CardTable:
         moving to a hand, deck or trash."""
         return bool(self.token[cid])
 
-    def v1_legal(self, cid: int) -> bool:
-        """True iff every keyword is Tier-1 and the text is short enough."""
+    def in_v1_scope(self, cid: int) -> bool:
+        """Every keyword is in the v1 scope target and the text is short.
+
+        **This is a scope filter, not a completeness claim.** It was called
+        `v1_legal`, which read as "the engine plays this card correctly", and
+        `decks.py` believed it: 317 of 327 unit slots counted as covered turned
+        out to have rules text nothing executes, because 90 characters is
+        plenty of room for "When you play me, draw 1." Use `residual_text` and
+        `plays_as_printed` for the honest question. This one only selects
+        cheap vanilla bodies for the v0 pool.
+        """
         extra = int(self.kw_mask[cid]) & ~TIER1_MASK
         return extra == 0 and int(self.text_len[cid]) <= COMPLEX_TEXT_CHARS
+
+    def residual_text(self, cid: int) -> str:
+        """What the card says once reminder text and keywords are removed.
+
+        Non-empty means there is printed behaviour beyond the keyword flags,
+        and therefore something the DSL has to express. Exact, where a text
+        length threshold is a guess.
+        """
+        return _BRACKET.sub("", body_text(self.raw_text[cid])).strip(" .—-\n\t")
+
+    def unread_keywords(self, cid: int) -> list[str]:
+        """Keywords on this card that the engine never consults."""
+        return [k for k in ALL_KEYWORDS
+                if (int(self.kw_mask[cid]) >> _KW_BIT[k] & 1)
+                and k not in ENGINE_KEYWORDS]
 
     def features(self) -> np.ndarray:
         """[n, D] float32 attribute matrix for the network's card embeddings.
@@ -163,6 +192,7 @@ def _rows(cards: list[Card]) -> CardTable:
     n = len(cards)
     tbl = CardTable(
         names=tuple(c.name for c in cards),
+        raw_text=tuple(c.text or "" for c in cards),
         energy=np.array([c.energy for c in cards], np.int16),
         power=np.array([c.power for c in cards], np.int16),
         might=np.array([c.might if c.might is not None else -1 for c in cards], np.int16),

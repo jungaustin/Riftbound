@@ -103,20 +103,37 @@ def head_to_head(net, enc, table, cfg, a: DeckLoad, b: DeckLoad,
     return {"winrate": p, "ci95": ci95(p, games), "games": games}
 
 
+def _swapped(d: DeckLoad) -> float:
+    """Fraction of the deck replaced by a *different* card."""
+    return sum(d.substituted.values()) / max(1, len(d.main))
+
+
 def evaluate(net, enc, table, cfg, a: DeckLoad, b: DeckLoad, n: int) -> dict:
     h = head_to_head(net, enc, table, cfg, a, b, n)
     return {"a": a.name, "b": b.name,
             "coverage_a": a.coverage, "coverage_b": b.coverage,
+            "swapped_a": _swapped(a), "swapped_b": _swapped(b),
             "v0": opening_value(net, enc, table, cfg, a, b),
             **h}
 
 
 def _fmt(r: dict) -> str:
-    warn = "  <-- PROXY" if min(r["coverage_a"], r["coverage_b"]) < 0.8 else ""
+    """Two fidelity numbers, because they degrade the result differently.
+
+    `cov` is how much of the deck is played as printed. `swap` is how much was
+    replaced by a *different card* -- that one changes the deck's curve and
+    domains, so it is the flag worth raising. A 80%-coverage threshold was
+    used here once; no real deck reaches it, so the warning fired on every row
+    and stopped carrying information.
+    """
+    warn = "  <-- SHAPE CHANGED" if max(r["swapped_a"], r["swapped_b"]) > 0.25 \
+        else ("  <-- proxy" if min(r["coverage_a"], r["coverage_b"]) < 0.5
+              else "")
     return (f"  {r['a']:<34} vs {r['b']:<30} "
             f"{r['winrate']:>6.1%} +/-{r['ci95']:.1%}  "
             f"V(s0) {r['v0']:+.3f}   "
-            f"cov {r['coverage_a']:.0%}/{r['coverage_b']:.0%}{warn}")
+            f"cov {r['coverage_a']:.0%}/{r['coverage_b']:.0%} "
+            f"swap {r['swapped_a']:.0%}/{r['swapped_b']:.0%}{warn}")
 
 
 def main(argv=None) -> int:

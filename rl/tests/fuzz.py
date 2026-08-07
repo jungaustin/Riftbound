@@ -1,6 +1,6 @@
 """Random-game fuzz -- PLAN.md Phase 1.7, the M1 gate.
 
-Usage: python3 rl/tests/fuzz.py [n_games] [victory_score] [--spells]
+Usage: python3 rl/tests/fuzz.py [n_games] [victory_score] [--spells|--decks]
 
 Asserts: no exceptions, every game terminates, invariants hold at every step,
 and the same seed reproduces a bit-identical result. Reports the truncation
@@ -51,7 +51,7 @@ GOLDEN: dict[tuple[int, int], tuple] = {
 def v0_pool(table):
     """Cheap vanilla units -- no keywords outside Tier 1, no long text."""
     return [c for c in range(table.n)
-            if table.is_type(c, "Unit") and table.v1_legal(c)
+            if table.is_type(c, "Unit") and table.in_v1_scope(c)
             and table.energy[c] <= 3 and table.power[c] <= 1
             and not table.has(c, "Temporary")]
 
@@ -72,7 +72,27 @@ def make_v1_game(table, cfg, seed):
     return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
 
 
-def main(n_games=2000, victory=3, check=True, spells=False):
+_DECK_DEAL = None
+
+
+def make_deck_game(table, cfg, seed):
+    """A matchup between two REAL decklists -- the training distribution.
+
+    Worth its own gate because it is the only mode that puts the whole card
+    pool on the board: units with unread keywords, 12-energy dragons, tokens,
+    [Hidden] units, and rune decks that are actually two domains rather than
+    six. `v1_deal`'s random pool never produces any of that.
+    """
+    global _DECK_DEAL
+    if _DECK_DEAL is None:
+        from rl.ppo import deck_pool_deal
+        _DECK_DEAL = deck_pool_deal(table)
+    decks, runes, bfs = _DECK_DEAL(seed)
+    return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
+
+
+def main(n_games=2000, victory=3, check=True, spells=False,
+         decks=False):
     """Random-game gate. `spells=True` fuzzes the v1 game instead of v0.
 
     v1 had no standing fuzz for most of the build -- it was checked with
@@ -84,10 +104,12 @@ def main(n_games=2000, victory=3, check=True, spells=False):
     """
     table = full_table()
     cfg = Config().at_victory_score(victory)
-    if spells:
+    if spells or decks:
         cfg = replace(cfg, units_only=False)
-    build = make_v1_game if spells else make_game
-    print(f"fuzzing {n_games} {'v1 spell' if spells else 'v0'} games at "
+    build = (make_deck_game if decks else
+             make_v1_game if spells else make_game)
+    mode = "real-deck" if decks else "v1 spell" if spells else "v0"
+    print(f"fuzzing {n_games} {mode} games at "
           f"victory_score={victory}, invariants={'on' if check else 'off'}",
           flush=True)
 
@@ -135,7 +157,7 @@ def main(n_games=2000, victory=3, check=True, spells=False):
     # alters the units-only game is a deliberate act rather than a surprise.
     # Neither resumable combat nor the Chain moved it: units resolve
     # immediately (337.2) and a priority window nobody can act in is skipped.
-    if not spells and (12345, victory) in GOLDEN:
+    if not (spells or decks) and (12345, victory) in GOLDEN:
         got = (a["winner"], a["turns"], a["steps"], a["points"])
         want = GOLDEN[(12345, victory)]
         if got != want:
@@ -151,7 +173,8 @@ def main(n_games=2000, victory=3, check=True, spells=False):
 
 
 if __name__ == "__main__":
-    argv = [a for a in sys.argv[1:] if a != "--spells"]
+    argv = [a for a in sys.argv[1:] if not a.startswith("--")]
     n = int(argv[0]) if len(argv) > 0 else 2000
     v = int(argv[1]) if len(argv) > 1 else 3
-    main(n, v, spells="--spells" in sys.argv)
+    main(n, v, spells="--spells" in sys.argv,
+         decks="--decks" in sys.argv)

@@ -123,6 +123,15 @@ def hideable(state: GameState, table: CardTable, cfg: Config,
         card = int(state.hand[seat, i])
         if card in seen or not table.has(card, "Hidden"):
             continue
+        # Only hide what can be played back. `hidden_playable` needs a DSL
+        # spec, so hiding a [Hidden] card without one buries it: the card is
+        # gone from hand, the battlefield's one facedown slot is occupied, and
+        # nothing can ever retrieve either. Real decks run [Hidden] units
+        # (Tideturner, Keeper of Masks) whose text is not in the DSL yet, and
+        # they became reachable the moment units stopped being filtered out of
+        # decks by `v1_legal`.
+        if spec_for(table, card) is None:
+            continue
         seen.add(card)
         cards.append(i)
     return cards, spots
