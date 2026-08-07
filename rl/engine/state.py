@@ -56,8 +56,16 @@ def bf_index(loc: int) -> int:
 
 
 # Permanent columns. One int16 matrix so a clone is a single copy.
-P_CARD, P_CTRL, P_LOC, P_READY, P_DMG, P_ALIVE, P_ARRIVED, P_FLAGS = range(8)
-N_PERM_COLS = 8
+(P_CARD, P_CTRL, P_LOC, P_READY, P_DMG, P_ALIVE, P_ARRIVED, P_FLAGS,
+ P_MIGHT_MOD) = range(9)
+N_PERM_COLS = 9
+
+# `P_MIGHT_MOD` is a signed 'this turn' modifier, cleared in the end-of-turn
+# cleanup alongside TURN_SCOPED_FLAGS. It is NOT damage: rule 142.4.b makes
+# lethal damage a *non-zero* amount >= Might, so reducing a unit to 0 Might
+# never kills it on its own. It can still kill indirectly by dropping Might to
+# meet damage already marked (143.2.a, 'if a Unit EVER has...'), which is why
+# `combat.set_might_mod` re-checks lethality after every change.
 
 # Bits in P_FLAGS. Statuses live in one column rather than one column each, so
 # adding the next one costs nothing.
@@ -260,6 +268,7 @@ class GameState:
         row[P_ALIVE] = 1
         row[P_ARRIVED] = self.turn
         row[P_FLAGS] = 0
+        row[P_MIGHT_MOD] = 0
         self.n_perms = i + 1
         return i
 

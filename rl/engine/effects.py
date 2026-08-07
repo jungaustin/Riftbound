@@ -51,8 +51,8 @@ LOC_FREE, LOC_BOUND = range(2)
 REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
 
 # --- ops ------------------------------------------------------------------
-OP_STUN, OP_DRAW, OP_SWAP_LOC = range(3)
-OP_NAMES = ("stun", "draw", "swap_loc")
+OP_STUN, OP_DRAW, OP_SWAP_LOC, OP_MODIFY_MIGHT = range(4)
+OP_NAMES = ("stun", "draw", "swap_loc", "modify_might")
 
 # --- conditions, checked at resolution ------------------------------------
 COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY = range(3)
@@ -73,8 +73,12 @@ class Op(NamedTuple):
     op: int
     target: int = -1          # index into the card's target slots, or -1
     target_b: int = -1        # second slot, for two-place ops like swap
-    n: int = 0                # numeric parameter (cards drawn, damage dealt)
+    n: int = 0                # numeric parameter (cards drawn, Might delta)
     cond: int = COND_NONE
+    # A card-printed Might floor, e.g. Stupefy's "to a minimum of 1 Might".
+    # Stricter than the general floor of 0 in 143.2.b, and part of the effect
+    # rather than a rule, which is why it lives on the Op.
+    floor: int | None = None
 
 
 class CardSpec(NamedTuple):
@@ -94,6 +98,30 @@ class CardSpec(NamedTuple):
 # comment so a future reader can check the transcription without the card.
 
 SPECS: dict[str, CardSpec] = {
+
+    # [Reaction] Give a unit -1 Might this turn, to a minimum of 1 Might. Draw 1.
+    # The most-played spell in the corpus: 57 slots across 19 of 29 decks.
+    "Stupefy": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=-1, floor=1),
+             Op(OP_DRAW, n=1)),
+    ),
+
+    # [Reaction] Give a unit +2 Might this turn. Draw 1.
+    "Discipline": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=2),
+             Op(OP_DRAW, n=1)),
+    ),
+
+    # [Reaction] Give a unit -4 Might this turn, to a minimum of 1 Might.
+    "Smoke Screen": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=-4, floor=1),),
+    ),
 
     # [Hidden] [Action] [Stun] a unit.
     # If you played this from your hand, draw 1.

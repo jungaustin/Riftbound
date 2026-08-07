@@ -23,6 +23,7 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]
 from rl.config import Config
 from rl.engine import resolve
 from rl.engine.cardtable import full_table
+from rl.engine import phases
 from rl.engine.effects import (LOC_BOUND, LOC_FREE, OP_DRAW, OP_STUN,
                                OP_SWAP_LOC, SPECS, spec_for)
 from rl.engine.state import (P_ALIVE, P_LOC, GameState, base_loc, bf_loc)
@@ -52,7 +53,7 @@ def unit(might, kw=None, exclude=("Tank", "Backline")):
     raise LookupError(f"no unit might={might} kw={kw}")
 
 
-PLAIN = {m: unit(m) for m in (2, 3)}
+PLAIN = {m: unit(m) for m in (2, 3, 5)}
 TEMP = unit(2, "Temporary", exclude=())
 
 
@@ -203,5 +204,74 @@ if log.get("swapped") != (temp, other):
 if int(s.perms[temp, P_LOC]) != base_loc(0) or int(s.perms[other, P_LOC]) != bf_loc(0):
     die("conditions", "units did not actually change places")
 ok("with a [Temporary] unit: the two units trade locations")
+
+
+# ---------------------------------------------------------------------------
+print("\n[6] Might modification is not damage (142.4.b, 143.2.a/b)")
+from rl.engine import combat
+from rl.engine.state import P_DMG, P_MIGHT_MOD
+from rl.engine.effects import SPECS as _S
+
+STUPEFY, DISCIPLINE, SMOKE_SCREEN = _S["Stupefy"], _S["Discipline"], _S["Smoke Screen"]
+
+# A unit reduced to 0 Might does NOT die. The project owner's point, and
+# 142.4.b: lethal damage is a NON-ZERO amount >= Might.
+s = fresh()
+u = s.add_permanent(PLAIN[3], 1, bf_loc(0))
+combat.set_might_mod(s, T, u, -3)          # no floor: straight to 0
+if combat.might(s, T, u) != 0:
+    die("might", f"expected 0 Might, got {combat.might(s,T,u)}")
+if s.perms[u, P_ALIVE] != 1:
+    die("might", "a unit at 0 Might must NOT die -- lethal damage is non-zero")
+ok("a unit reduced to 0 Might survives (142.4.b)")
+
+# 143.2.b -- Might below 0 is treated as 0, never negative, in the damage pool.
+combat.set_might_mod(s, T, u, -5)
+if combat.might(s, T, u) != 0 or combat.might_for_pool(s, T, u) != 0:
+    die("might", "Might below 0 must be treated as 0 (143.2.b)")
+ok("Might below zero floors at 0 for references and for the damage pool")
+
+# The rulebook's own Frigid Touch example: 5 Might, 3 damage marked, drop to
+# 3 Might -> lethal. Reduction kills, but only via damage already present.
+s = fresh()
+v = s.add_permanent(PLAIN[5], 1, bf_loc(0))
+s.perms[v, P_DMG] = 3
+killed = combat.set_might_mod(s, T, v, -2)
+if not killed or s.perms[v, P_ALIVE] == 1:
+    die("might", "5 Might with 3 damage, reduced to 3 Might, must die (143.2.a)")
+ok("reduction to meet damage already marked DOES kill (the Frigid Touch case)")
+
+# ...but the same reduction with no damage marked does not.
+s = fresh()
+v = s.add_permanent(PLAIN[5], 1, bf_loc(0))
+if combat.set_might_mod(s, T, v, -2) or s.perms[v, P_ALIVE] != 1:
+    die("might", "reduction with no damage marked must never kill")
+ok("the same reduction with no damage marked leaves it alive")
+
+# Stupefy's printed floor of 1 is stricter than the general floor of 0.
+s = fresh()
+w = s.add_permanent(PLAIN[2], 1, bf_loc(0))
+resolve.resolve(s, T, CFG, STUPEFY, 0, [w], -1, from_hand=True)
+if combat.might(s, T, w) != 1:
+    die("might", f"Stupefy on a 2 should give 1, got {combat.might(s,T,w)}")
+resolve.resolve(s, T, CFG, SMOKE_SCREEN, 0, [w], -1, from_hand=True)
+if combat.might(s, T, w) != 1:
+    die("might", "'to a minimum of 1 Might' must clamp, not stack past 1")
+ok("card-printed floors clamp: Stupefy then Smoke Screen leaves 1 Might, not -3")
+
+# Buffs go the other way and stack.
+s = fresh()
+b = s.add_permanent(PLAIN[3], 0, bf_loc(0))
+log = resolve.resolve(s, T, CFG, DISCIPLINE, 0, [b], -1, from_hand=True)
+if combat.might(s, T, b) != 5:
+    die("might", f"Discipline +2 on a 3 should give 5, got {combat.might(s,T,b)}")
+assert OP_DRAW in log["resolved"], "Discipline draws"
+ok("Discipline gives +2 and draws")
+
+# "this turn" -- the modifier is gone after the end-of-turn cleanup.
+phases.end_turn(s, CFG)
+if int(s.perms[b, P_MIGHT_MOD]) != 0 or combat.might(s, T, b) != 3:
+    die("might", "a 'this turn' modifier must clear at end of turn")
+ok("modifiers expire at end of turn, like other turn-scoped effects")
 
 print("\n\033[32mall effect tests passed\033[0m")

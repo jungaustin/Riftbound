@@ -29,8 +29,10 @@ from __future__ import annotations
 from rl.config import Config
 from rl.engine import phases
 from rl.engine.cardtable import CardTable
+from rl.engine import combat
 from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
-                               COND_NONE, LOC_BOUND, OP_DRAW, OP_STUN,
+                               COND_NONE, LOC_BOUND, OP_DRAW,
+                               OP_MODIFY_MIGHT, OP_STUN,
                                OP_SWAP_LOC, REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
                                W_FRIENDLY, CardSpec, Op, TargetSpec)
@@ -180,7 +182,12 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["fizzled"].append(op.op)      # this target specifically is gone
             continue
 
-        if op.op == OP_STUN:
+        if op.op == OP_MODIFY_MIGHT:
+            # May kill, but only by meeting damage already marked (143.2.a).
+            # Never by reduction alone -- lethal damage must be non-zero.
+            if combat.set_might_mod(state, table, a, op.n, op.floor):
+                log.setdefault("killed_by_might", []).append(a)
+        elif op.op == OP_STUN:
             # `stun` returns False on a redundant stun (423.1.a.1), which
             # "when you stun an enemy unit" triggers must not fire on.
             log["stunned"] = log.get("stunned", [])

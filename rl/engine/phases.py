@@ -40,7 +40,8 @@ from rl.config import Config
 from rl.engine.cardtable import CardTable
 from rl.engine.state import (AWAKEN, BEGINNING, CHANNEL, DRAW, ENDING, MAIN,
                              N_BF, N_SEATS, P_ALIVE, P_CARD, P_CTRL, P_DMG,
-                             P_FLAGS, P_LOC, P_READY, TURN_SCOPED_FLAGS,
+                             P_FLAGS, P_LOC, P_MIGHT_MOD, P_READY,
+                             TURN_SCOPED_FLAGS,
                              GameState, bf_loc)
 
 POINTS_PER_HOLD = 1     # some battlefields alter this; per-battlefield later
@@ -200,6 +201,7 @@ def ending(state: GameState) -> None:
     heal_board(state)
     if state.n_perms:
         state.perms[:state.n_perms, P_FLAGS] &= ~TURN_SCOPED_FLAGS
+        state.perms[:state.n_perms, P_MIGHT_MOD] = 0   # 'this turn' buffs
     state.clear_pools()
     state.phase = ENDING
     state.priority = -1

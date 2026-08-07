@@ -47,7 +47,7 @@ import numpy as np
 
 from rl.config import Config
 from rl.engine.cardtable import CardTable
-from rl.engine.state import (F_NO_COMBAT_DAMAGE, N_BF, N_SEATS, P_ALIVE,
+from rl.engine.state import (P_MIGHT_MOD, F_NO_COMBAT_DAMAGE, N_BF, N_SEATS, P_ALIVE,
                              P_ARRIVED, P_CARD, P_CTRL, P_DMG, P_FLAGS, P_LOC,
                              P_READY, SD_CLEANUP, SD_DAMAGE, SD_NONE,
                              SD_PRIORITY, GameState, base_loc, bf_loc, bf_index,
@@ -61,13 +61,49 @@ POINTS_PER_CONQUER = 1
 # ---------------------------------------------------------------------------
 
 def might(state: GameState, table: CardTable, perm: int) -> int:
-    """Current Might of a permanent.
+    """Current Might: printed value plus any "this turn" modifier, floored at 0.
 
-    Printed value for now. Buffs, `[Shield]` and `[Stun]` route through here
-    later -- never read `table.might` directly at a call site, or effects will
-    silently fail to apply (PLAN.md §1.3.d).
+    143.2.b -- "If a unit's Might is ever less than 0, it is treated as 0 when
+    referenced by spells and abilities, and when summing Might to be assigned as
+    damage." So a -4 on a 2-Might unit contributes 0, never -2.
+
+    Never read `table.might` directly at a call site, or modifiers will silently
+    fail to apply (PLAN.md §1.3.d).
     """
-    return int(table.might[int(state.perms[perm, P_CARD])])
+    row = state.perms[perm]
+    return max(0, int(table.might[int(row[P_CARD])]) + int(row[P_MIGHT_MOD]))
+
+
+def set_might_mod(state: GameState, table: CardTable, perm: int, delta: int,
+                  floor: int | None = None) -> bool:
+    """Apply a "this turn" Might change. Returns True if it killed the unit.
+
+    Two rules make this more than an addition:
+
+    **143.2.b** floors the *effective* Might at 0, but a card may print a
+    stricter floor of its own -- Stupefy says "to a minimum of 1 Might", so the
+    modifier is clamped so the result never drops below `floor`. That is part of
+    the effect, not a general rule, which is why it is a parameter.
+
+    **143.2.a** is a *continuous* check: "if a Unit EVER has nonzero damage
+    marked on it equalling or exceeding its Might, it is Killed." So reducing
+    Might can kill -- not by itself (lethal damage must be non-zero, 142.4.b),
+    but by dropping Might to meet damage already on the board. The rulebook
+    gives this as its own example: a 5-Might unit with 3 damage marked drops to
+    3 Might and dies. Checking only at damage-assignment time would miss it.
+    """
+    row = state.perms[perm]
+    base = int(table.might[int(row[P_CARD])])
+    new = int(row[P_MIGHT_MOD]) + delta
+    if floor is not None:
+        new = max(new, floor - base)      # never take effective Might below floor
+    row[P_MIGHT_MOD] = new
+
+    dmg = int(row[P_DMG])
+    if dmg > 0 and dmg >= might(state, table, perm):
+        _destroy(state, perm)
+        return True
+    return False
 
 
 def might_for_pool(state: GameState, table: CardTable, perm: int) -> int:
