@@ -350,9 +350,15 @@ mine = s.add_permanent(PLAIN[5], 0, bf_loc(0))
 s.bf_ctrl[0] = 0
 foe = s.add_permanent(PLAIN[2], 1, base_loc(1))
 resolve.resolve(s, T, CFG, CHARM, 0, [foe, bf_loc(0)], -1, from_hand=True)
+# The combat is STAGED, not initiated: 321 forbids a Cleanup while Chain Items
+# are resolving, so `resolve` deliberately does not run one. The action layer
+# runs the Cleanup once the Chain empties.
+if int(s.perms[foe, P_LOC]) != bf_loc(0) or s.perms[foe, P_ALIVE] != 1:
+    die("move", "Charm should move the enemy without resolving combat inline")
+combat.cleanup(s, T, CFG, mover=0, dst=bf_loc(0))
 if s.perms[foe, P_ALIVE] == 1:
     die("move", "a 2-Might unit charmed into a 5-Might garrison should die")
-ok("Charm drags an enemy into your garrison and combat resolves (461)")
+ok("Charm stages combat by presence (461); the Cleanup then resolves it")
 
 # Gust's "3 Might or less" is a restriction, and bounce returns to hand.
 s = fresh()
