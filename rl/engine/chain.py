@@ -387,11 +387,25 @@ def counter(state: GameState, table: CardTable, uid: int) -> str | None:
     A countered spell still goes to the trash -- it was played, it just never
     resolved. Returns None if it is already gone, which is normal: two players
     can counter the same item, and the second one fizzles (359.3.e).
+
+    **Unless it was played for its [Flow] cost.** 829.1.b.1 hangs the banish on
+    *leaving the Chain after becoming a Finalized Chain Item*, not on resolving,
+    and adds only one exemption -- "leaving the chain wasn't instructed by its
+    own execution", which is about a spell that moves itself somewhere. A
+    counter is neither. Trashing it here would return the card to the very zone
+    Flow plays it from, so countering a Flow spell would REFUND it and the same
+    copy could be replayed every turn forever -- the loop the banish exists to
+    close, reopened by the one line that looks like it has nothing to do with
+    Flow.
     """
     i = index_of_uid(state, uid)
     if i < 0:
         return None
+    flow = bool(state.chain[i, C_FLOW])
     card, ctrl, *_ = _pop(state, i)
+    if flow:
+        state.banish_card(ctrl, card)
+        return table.names[card]
     n = int(state.n_trash[ctrl])
     assert n < state.trash.shape[1], "trash overflow"
     state.trash[ctrl, n] = card

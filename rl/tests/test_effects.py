@@ -612,4 +612,188 @@ if [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY_FLOW]:
     die("flow", "the banished card is still being offered from the trash")
 ok("and cannot be played again")
 
+# ---------------------------------------------------------------------------
+print("\n[10] [Flow] zone bookkeeping: which zone, and how many copies")
+
+# The project owner's question, and it is the right one to ask: a card with
+# [Flow] has TWO destinations depending on where it was played from, and the
+# engine picks between them from a single flag on the chain row. If that flag
+# were set from the card rather than from the play, every Flow spell would
+# banish itself out of the deck the first time it was cast from hand.
+#
+# Zone counts are kept as card IDS in a flat array, not as unique per-copy
+# objects, so "do two copies count as two" is a real question about the
+# bookkeeping rather than one answered by construction.
+
+
+def flow_state(hand=(), trash=()):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN[2]
+    for i, c in enumerate(hand):
+        s.hand[0, i] = c
+    s.n_hand[0] = len(hand)
+    for i, c in enumerate(trash):
+        s.trash[0, i] = c
+    s.n_trash[0] = len(trash)
+    s.runes_ready[:, :] = 4
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    return s
+
+
+def settle(s, limit=12):
+    """Pass until the chain empties."""
+    for _ in range(limit):
+        if s.n_chain == 0:
+            return
+        seat = A.acting_seat(s)
+        if seat < 0:
+            return
+        acts = A.legal_actions(s, T, V1, seat)
+        A.apply(s, T, V1, next(x for x in acts if x.kind == A.A_PASS))
+    raise AssertionError("chain never emptied")
+
+
+# (a) played from HAND, a Flow card goes to the TRASH like any other spell.
+s = flow_state(hand=[DREDGE])
+play = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY]
+if not play:
+    die("flow", "a [Flow] card in hand must still be playable for its printed cost")
+A.apply(s, T, V1, play[0])
+settle(s)
+if int(s.n_trash[0]) != 1 or int(s.trash[0, 0]) != DREDGE:
+    die("flow", f"played from HAND it must go to the trash; trash holds "
+                f"{int(s.n_trash[0])}")
+if int(s.n_banished[0]) != 0:
+    die("flow", "played from hand it was BANISHED -- 829.1.b.1 replaces the "
+                "destination only for a card played from the trash, so this "
+                "would eat the card on its first ordinary cast")
+ok("from hand -> trash (the Flow banish does not apply to a normal cast)")
+
+# It is now in the trash, so the Flow line has become available -- the round
+# trip hand -> trash -> chain -> banishment, in one game.
+if not [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY_FLOW]:
+    die("flow", "after being cast from hand it should be Flow-playable")
+ok("...and is then Flow-playable out of that trash")
+
+# (b) a copy ALREADY in the trash does not stop the hand copy being played, and
+# the trash ends up holding BOTH.
+s = flow_state(hand=[DREDGE], trash=[DREDGE])
+acts = A.legal_actions(s, T, V1, 0)
+if not [a for a in acts if a.kind == A.A_PLAY_FLOW]:
+    die("flow", "the trash copy should be Flow-playable")
+play = [a for a in acts if a.kind == A.A_PLAY]
+if not play:
+    die("flow", "the hand copy should be playable for its printed cost")
+A.apply(s, T, V1, play[0])
+if int(s.n_trash[0]) != 1:
+    die("flow", "announcing from hand disturbed the trash")
+settle(s)
+if int(s.n_trash[0]) != 2 or list(s.trash[0, :2]) != [DREDGE, DREDGE]:
+    die("flow", f"two copies must be two entries; trash = "
+                f"{list(s.trash[0, :3])} n={int(s.n_trash[0])}")
+if int(s.n_banished[0]) != 0:
+    die("flow", "the hand copy banished itself because a copy sat in the trash")
+ok("a trash copy + a hand cast = TWO in the trash, nothing banished")
+
+# (c) two identical copies in the trash: Flow consumes exactly one.
+s = flow_state(trash=[DREDGE, DREDGE])
+offers = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY_FLOW]
+if len(offers) != 1:
+    die("flow", f"two identical copies should collapse to ONE offer, got "
+                f"{len(offers)} -- the choices are indistinguishable and "
+                f"duplicates only inflate the branching factor")
+A.apply(s, T, V1, offers[0])
+settle(s)
+if int(s.n_trash[0]) != 1 or int(s.trash[0, 0]) != DREDGE:
+    die("flow", f"Flow must consume exactly one copy; trash = "
+                f"{list(s.trash[0, :3])} n={int(s.n_trash[0])}")
+if int(s.n_banished[0]) != 1:
+    die("flow", "the played copy was not banished")
+if not [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY_FLOW]:
+    die("flow", "the SECOND copy should still be Flow-playable")
+ok("of two copies in the trash, Flow banishes one and leaves the other playable")
+
+# (d) a COUNTERED Flow spell is banished too (829.1.b.1).
+#
+# The rule hangs the banish on *leaving the Chain after being finalized*, not on
+# resolving. Trashing a countered Flow spell would refund it to the exact zone
+# Flow plays from, so countering one would be a favour: the same copy returns
+# every turn. This is the loop the keyword's own banish exists to close, and it
+# reopens through a function that never mentions Flow.
+from rl.engine import chain as chain_mod
+from rl.engine.state import C_UID
+
+s = flow_state(trash=[DREDGE])
+offers = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY_FLOW]
+A.apply(s, T, V1, offers[0])
+if s.n_chain != 1:
+    die("flow", "the Flow spell should be a finalized chain item awaiting priority")
+uid = int(s.chain[0, C_UID])
+name = chain_mod.counter(s, T, uid)
+if name != "Dredge Up":
+    die("flow", f"counter did not remove the Flow spell: {name}")
+if int(s.n_trash[0]) != 0 or int(s.n_banished[0]) != 1:
+    die("flow", f"829.1.b.1 -- a countered Flow spell leaves the chain after "
+                f"finalization, so it is BANISHED. trash={int(s.n_trash[0])} "
+                f"banished={int(s.n_banished[0])}; trashing it refunds the "
+                f"card and countering becomes a favour")
+ok("a countered Flow spell is banished, not refunded to the trash")
+
+# ...but an ordinary countered spell still goes to the trash. The Flow branch
+# must be reading the chain row, not the card.
+s = flow_state(hand=[DREDGE])
+i = chain_mod.push(s, DREDGE, 0)
+chain_mod.finalize(s, i)
+chain_mod.counter(s, T, int(s.chain[i, C_UID]))
+if int(s.n_trash[0]) != 1 or int(s.n_banished[0]) != 0:
+    die("flow", "a countered NON-Flow play of the same card must go to the trash")
+ok("the same card countered on a normal cast still goes to the trash")
+
+# ---------------------------------------------------------------------------
+print("\n[11] recycle is a third destination, not a synonym (416)")
+
+# Trash, Banishment and the bottom of the deck are three different places, and
+# the only one of them that gives the card back is Recycle. Pinned here as a
+# primitive because the trash-recursion and deck-manipulation clusters both
+# spend it, and both would otherwise each invent their own answer.
+s = GameState()
+s.n_deck[0] = 3
+s.deck[0, :3] = [PLAIN[2], PLAIN[3], PLAIN[5]]
+s.deck_ptr[0] = 1                                  # one card already drawn
+s.recycle_card(0, DREDGE)
+if int(s.n_deck[0]) != 4 or int(s.deck[0, 3]) != DREDGE:
+    die("recycle", f"416.1.a -- recycle goes to the BOTTOM of the main deck; "
+                   f"deck = {list(s.deck[0, :5])}")
+if int(s.n_trash[0]) or int(s.n_banished[0]):
+    die("recycle", "recycle is not the trash and not the Banishment")
+ok("416.1.a -- a recycled card lands on the bottom of its owner's main deck")
+
+# It is drawable again: that is the whole difference from banishing.
+s.deck_ptr[0] = 3
+s.active = 0
+if phases.draw(s, 1) != [DREDGE]:
+    die("recycle", "a recycled card must come back around -- it is not removal")
+ok("...and comes back on the draw, which banishing never does")
+
+# Bottom means bottom for the OWNER (416.1.c), so seat 1's deck is untouched.
+if int(s.n_deck[1]) != 0:
+    die("recycle", "416.1.c -- each player recycles to their own deck")
+ok("416.1.c -- it is the owner's deck, whoever was told to do the recycling")
+
+# The array is not infinite, but the drawn prefix is dead space. Filling the
+# deck and recycling once must reclaim it rather than overflow.
+s = GameState()
+cap = s.deck.shape[1]
+s.n_deck[0] = cap
+s.deck[0, :cap] = PLAIN[2]
+s.deck_ptr[0] = 10
+s.recycle_card(0, DREDGE)
+if int(s.n_deck[0]) != cap - 10 + 1 or int(s.deck_ptr[0]) != 0:
+    die("recycle", f"a full deck array should reclaim the drawn prefix; "
+                   f"n_deck={int(s.n_deck[0])} ptr={int(s.deck_ptr[0])}")
+if int(s.deck[0, cap - 10]) != DREDGE:
+    die("recycle", "the recycled card is not on the bottom after compaction")
+ok("a full deck array reclaims the drawn prefix instead of overflowing")
+
 print("\n\033[32mall effect tests passed\033[0m")

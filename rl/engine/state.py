@@ -89,8 +89,16 @@ TURN_SCOPED_FLAGS = F_STUNNED | F_NO_COMBAT_DAMAGE   # NOT F_NON_UNIT
 # Capacities. Generous enough that overflow means a real bug, small enough that
 # cloning stays cheap.
 MAX_PERMS = 48
-MAX_HAND = 20
 MAX_DECK = 60
+# **Derived, not chosen.** This was 20, and 20 is not a rules number: Riftbound
+# has no maximum hand size, so there is nothing to derive it from except "every
+# card that could be in a hand came out of a deck". It held right up until a
+# real-deck fuzz at victory 8 reached a hand of 23 on seed 1756 -- ordinary
+# play, a draw-heavy list and a random agent with no reason to spend cards --
+# and asserted `hand overflow` 1,756 games in. The engine must never assert on
+# a state the rules permit; only card objects bound it, and those all come from
+# the Main Deck.
+MAX_HAND = MAX_DECK
 MAX_TRASH = 80
 MAX_BANISHED = 60   # 108.6 -- one Banishment per player, unordered, public
 # Triggers waiting to be put on the Chain. A trigger fires from wherever the
@@ -327,11 +335,55 @@ class GameState:
     # ---- permanents ------------------------------------------------------
 
     def banish_card(self, seat: int, card: int) -> None:
-        """Put a card into `seat`'s Banishment (108.6)."""
+        """Put a card into `seat`'s Banishment (108.6). Out of the game."""
         n = int(self.n_banished[seat])
         assert n < self.banished.shape[1], "banishment overflow"
         self.banished[seat, n] = card
         self.n_banished[seat] = n + 1
+
+    def recycle_card(self, seat: int, card: int) -> None:
+        """Put a card on the BOTTOM of `seat`'s Main Deck (416.1.a).
+
+        **Three destinations, three different meanings** -- worth stating
+        together because the words are easy to swap and only one of them is
+        recoverable:
+
+            trash      the discard pile. Still a zone cards come back FROM
+                       ([Flow], "play a unit from your trash").
+            recycle    bottom of the owner's own deck (416.1.a). Not removal at
+                       all -- the card is live again the moment it is drawn.
+            banish     the Banishment (108.6). Gone for the rest of the game;
+                       what [Flow] does to a card it just played.
+
+        Runes recycle to the RUNE Deck, not this one (416.1.b, 161.2.b) -- that
+        is `recycle_rune`, deliberately a separate method, because they are
+        separate zones and a rune in the Main Deck would be undrawable.
+
+        416.1.c: each player recycles to their OWN Main Deck regardless of who
+        was instructed to perform the Recycle, so `seat` is the card's owner and
+        never the effect's controller.
+
+        Tokens must not reach here: a token in any zone other than the board
+        ceases to exist (186), so recycling one is plain removal. The check
+        belongs at the call site, which is where the `CardTable` is.
+        """
+        n = int(self.n_deck[seat])
+        if n >= self.deck.shape[1]:
+            # The drawn prefix is dead space -- `deck_ptr` only ever moves
+            # forward -- so reclaim it before calling the deck full. Without
+            # this, a deck that recycles more than MAX_DECK minus its opening
+            # size over a long game overflows while most of the array holds
+            # cards that were drawn ten turns ago.
+            ptr = int(self.deck_ptr[seat])
+            assert ptr > 0, "main deck overflow with nothing drawn to reclaim"
+            live = n - ptr
+            self.deck[seat, :live] = self.deck[seat, ptr:n]
+            self.deck[seat, live:] = -1
+            self.n_deck[seat] = live
+            self.deck_ptr[seat] = 0
+            n = live
+        self.deck[seat, n] = card
+        self.n_deck[seat] = n + 1
 
     def compact_permanents(self) -> None:
         """Drop dead rows and renumber the live ones.
