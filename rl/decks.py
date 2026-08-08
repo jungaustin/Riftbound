@@ -135,8 +135,29 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
     # ability and one unimplemented one (Scuttle Crab: an ETB draw and a
     # Deathknell) are deliberately absent, so this stays an allowlist rather
     # than a guess.
-    return (not table.residual_text(cid)
-            or name in ABILITIES or name in STATICS)
+    if table.residual_text(cid) and not (name in ABILITIES or name in STATICS):
+        return False
+    # A card that creates a token it cannot play correctly is approximating,
+    # exactly as a card whose own text is ignored would be. The Bird token
+    # carries [Deflect] and the Gold token an activated ability with a "Kill
+    # this" cost, neither of which the engine reads -- so Carrion Dredger
+    # "playing a Bird" really plays a vanilla 1-Might body.
+    return all(_token_ok(table, op.token)
+               for spec in list(ABILITIES.get(name, ())) + ([SPECS[name]]
+                                                            if name in SPECS else [])
+               for op in spec.ops if op.token)
+
+
+def _token_ok(table: CardTable, token_name: str) -> bool:
+    """Is the token this op creates itself played as printed?"""
+    try:
+        tid = table.id_of(token_name)
+    except KeyError:
+        return False
+    if table.unread_keywords(tid):
+        return False
+    return (not table.residual_text(tid)
+            or token_name in ABILITIES or token_name in STATICS)
 
 
 def _pool(table: CardTable) -> tuple[list[int], list[int]]:

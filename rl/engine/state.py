@@ -76,6 +76,12 @@ F_NO_COMBAT_DAMAGE = 1 << 1  # 423.1.b, and any effect worded "deals no damage"
 # method is called from `seats_at`, which decides Control and whether a Combat
 # happens, and it must never count a gear as a garrison.
 F_NON_UNIT = 1 << 2
+# 702 -- a Buff counter. Worth +1 Might (703), at most ONE per unit (702.3),
+# and removed when the unit leaves play (705). A flag rather than a count
+# because one is the rule; "I can have any number of buffs" (Lee Sin) is a
+# printed exception and stays unimplemented rather than being half-supported.
+# NOT turn-scoped: a Buff is a counter, not a "this turn" effect.
+F_BUFFED = 1 << 3
 
 # Statuses that expire during the end-of-turn cleanup (423.1.a.2, 317.2).
 TURN_SCOPED_FLAGS = F_STUNNED | F_NO_COMBAT_DAMAGE   # NOT F_NON_UNIT

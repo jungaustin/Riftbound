@@ -29,30 +29,36 @@ sys.path.insert(0, str(ROOT))
 from rl.config import (ALL_KEYWORDS, CARD_TYPES, DOMAINS,  # noqa: E402
                        ENGINE_KEYWORDS, TIER1_KEYWORDS)
 
+def _raw_cards() -> list[dict]:
+    """Every raw card dict: `cards.json` plus the rulebook token supplement.
+
+    `data/tokens.json` holds the tokens rule 187 defines that the card export
+    omits -- it ships only the Recruit and Sprite printings, while cards in the
+    corpus create Gold, Bird, Mech, Sand Soldier and Reflection tokens. They
+    are a separate file so `cards.json` can be regenerated upstream without
+    losing them, and because they are transcribed from the rules rather than
+    exported from anywhere.
+    """
+    import json
+    out = list(json.loads((ROOT / "data" / "cards.json").read_text())["cards"])
+    extra = ROOT / "data" / "tokens.json"
+    if extra.exists():
+        have = {c["name"] for c in out}
+        for raw in json.loads(extra.read_text())["cards"]:
+            if raw["name"] not in have:
+                out.append(raw)
+    return out
+
+
 def _token_names() -> set[str]:
-    """Names of Token cards, read from the raw JSON.
+    """Names of Token cards.
 
     `sim/engine/cards.Card` does not carry `supertype`, and tokens matter to the
     engine: 185.3 says a token leaving the board ceases to exist rather than
     going to a hand or trash, so a bounce spell must not put one in hand.
     """
-    import json
-    out: set[str] = set()
-
-    def walk(o):
-        if isinstance(o, dict):
-            if "name" in o and "type" in o:
-                if (o.get("supertype") or "").lower() == "token":
-                    out.add(o["name"])
-            else:
-                for v in o.values():
-                    walk(v)
-        elif isinstance(o, list):
-            for v in o:
-                walk(v)
-
-    walk(json.loads((ROOT / "data" / "cards.json").read_text()))
-    return out
+    return {c["name"] for c in _raw_cards()
+            if (c.get("supertype") or "").lower() == "token"}
 
 
 _TOKEN_NAMES = None
@@ -287,8 +293,13 @@ def _rows(cards: list[Card]) -> CardTable:
 
 
 def full_table() -> CardTable:
-    """Every card in `data/cards.json`, compiled."""
-    return _rows(sorted(card_index().values(), key=lambda c: c.name))
+    """Every card in `data/cards.json` plus the rulebook tokens, compiled."""
+    from engine.cards import _to_card
+    cards = dict(card_index())
+    for raw in _raw_cards():
+        if raw["name"] not in {c.name for c in cards.values()}:
+            cards[raw["name"]] = _to_card(raw)
+    return _rows(sorted(cards.values(), key=lambda c: c.name))
 
 
 def pool_table(names: list[str]) -> tuple[CardTable, list[str]]:

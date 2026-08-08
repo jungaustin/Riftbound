@@ -49,7 +49,8 @@ from rl.config import Config
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import (SC_SELF, ST_MIGHT, TR_DEATH, TR_MOVE,
                                abilities_for, statics_for)
-from rl.engine.state import (P_MIGHT_MOD, F_NO_COMBAT_DAMAGE, N_BF, N_SEATS, P_ALIVE,
+from rl.engine.state import (P_MIGHT_MOD, F_BUFFED, F_NO_COMBAT_DAMAGE,
+                             N_BF, N_SEATS, P_ALIVE,
                              P_ARRIVED, P_CARD, P_CTRL, P_DMG, P_FLAGS, P_LOC,
                              P_READY, SD_CLEANUP, SD_DAMAGE, SD_NONE,
                              SD_PRIORITY, GameState, base_loc, bf_loc, bf_index,
@@ -156,8 +157,12 @@ def might(state: GameState, table: CardTable, perm: int) -> int:
     fail to apply (PLAN.md §1.3.d).
     """
     row = state.perms[perm]
+    # 703 -- each Buff counter contributes +1 Might. It is a counter, not a
+    # "this turn" modifier, so it survives the end-of-turn cleanup and only
+    # goes away when the unit leaves play (705).
+    buff = 1 if int(row[P_FLAGS]) & F_BUFFED else 0
     return max(0, int(table.might[int(row[P_CARD])]) + int(row[P_MIGHT_MOD])
-               + static_might(state, table, perm)
+               + buff + static_might(state, table, perm)
                + combat_role_bonus(state, table, perm))
 
 

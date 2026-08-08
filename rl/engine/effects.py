@@ -61,12 +61,12 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER, OP_READY,
  OP_MODIFY_MIGHT_ALL, OP_DAMAGE_ALL,
  OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT,
- OP_ADD_ENERGY, OP_ADD_POWER) = range(21)
+ OP_ADD_ENERGY, OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT) = range(23)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
             "damage_all", "discard", "kill_all", "exhaust_all", "heal_at",
-            "add_energy", "add_power")
+            "add_energy", "add_power", "buff", "buff_all_at")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -550,6 +550,7 @@ def statics_for(table, card: int) -> tuple[Static, ...]:
 # several, which is why the value is a tuple.
 # ---------------------------------------------------------------------------
 RECRUIT_TOKEN = "Recruit (271) // Buff"   # 1 Might domainless unit token
+MECH_TOKEN = "Mech"                       # 3 Might, rule 187.4
 
 ABILITIES: dict[str, tuple[Ability, ...]] = {
 
@@ -664,6 +665,33 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # When I move, draw 1.
     "Stellacorn Herder": (
         Ability(TR_MOVE, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # [Deathknell] - Play two 3 Might Mech unit tokens to your base.
+    # Unblocked by the rule-187 token supplement; target -1 defaults to the
+    # controller's base, which is what the card says.
+    "Ferrous Forerunner": (
+        Ability(TR_DEATH,
+                ops=(Op(OP_CREATE_TOKEN, n=2, token=MECH_TOKEN),)),
+    ),
+
+    # When you play me, buff another friendly unit.
+    "Pit Rookie": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_FRIENDLY, not_self=True),),
+                ops=(Op(OP_BUFF, target=0),)),
+    ),
+
+    # [Legion] - When you play me, buff me.  [Legion] is unread, so this is
+    # listed but will not count as printed until the keyword lands.
+    "Trifarian Gloryseeker": (
+        Ability(TR_PLAY_ME, ops=(Op(OP_BUFF, target=T_SELF),)),
+    ),
+
+    # [Backline] When I hold, [Buff] all units here.
+    # "all units here" is untargeted and hits both sides.
+    "Enthusiastic Promoter": (
+        Ability(TR_HOLD, ops=(Op(OP_BUFF_ALL_AT, target=T_HERE),)),
     ),
 
     # [Deathknell] - Draw 1.

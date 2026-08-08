@@ -39,7 +39,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
                                COND_CONTROL_N_GEAR, OP_ADD_ENERGY,
-                               OP_ADD_POWER, OP_DAMAGE_ALL,
+                               OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT,
+                               OP_DAMAGE_ALL,
                                OP_DISCARD, OP_EXHAUST_ALL, OP_HEAL_AT,
                                OP_KILL_ALL, OP_MODIFY_MIGHT_ALL,
                                OP_READY, OP_SWAP_LOC,
@@ -50,7 +51,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                CardSpec, Op,
                                TargetSpec)
 from rl.engine import chain
-from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, N_BF, P_ALIVE,
+from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, F_BUFFED,
+                             N_BF, P_ALIVE, P_FLAGS,
                              P_CARD, P_CTRL, P_DMG, P_LOC, P_READY, GameState,
                              base_loc, bf_loc, is_battlefield)
 
@@ -395,6 +397,19 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["stunned"] = log.get("stunned", [])
             if state.stun(a):
                 log["stunned"].append(a)
+        elif op.op == OP_BUFF:
+            # 426.1.b.1 -- a unit that already has a Buff does not get another,
+            # and 426.1.c is explicit that it can still be CHOSEN for the
+            # effect. So this is not a targeting restriction; it simply does
+            # nothing on an already-buffed unit.
+            if not (state.perms[a, P_FLAGS] & F_BUFFED):
+                state.perms[a, P_FLAGS] |= F_BUFFED
+                log.setdefault("buffed", []).append(a)
+        elif op.op == OP_BUFF_ALL_AT:
+            for i in state.units_at(a):
+                if not (state.perms[i, P_FLAGS] & F_BUFFED):
+                    state.perms[i, P_FLAGS] |= F_BUFFED
+                    log.setdefault("buffed", []).append(int(i))
         elif op.op == OP_ADD_ENERGY:
             state.pool_energy[seat] += op.n
         elif op.op == OP_ADD_POWER:

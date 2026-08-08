@@ -42,13 +42,19 @@ from rl.engine.cardtable import full_table
 # longer -- mean steps 20.4 -> 56.9 at victory 3 -- because dropping a unit onto
 # an empty Battlefield was a Conquer that never had to survive a Combat, and it
 # was the fastest line in the game. Measured, not predicted.
-# Re-pinned again when `keyword_mask` stopped crediting a card with every
-# keyword its text merely MENTIONED. `v0_pool` filters on that mask, so the
-# vanilla pool itself changed composition -- this move is a different deal, not
-# different play.
+# Re-pinned twice more, both times because the DEAL changed rather than the
+# play:
+#   - `keyword_mask` stopped crediting keywords a card merely MENTIONED, which
+#     changed which units `v0_pool` accepts;
+#   - `data/tokens.json` added the eight rulebook tokens `cards.json` omits,
+#     and the table is sorted by name, so every card id after "Baron Pit"
+#     shifted and `rng.choice(pool)` picks different cards.
+# Neither touched a rule. The golden pins an OUTCOME under a fixed seed, so it
+# is sensitive to the deal by design -- that is what makes it catch a genuine
+# behaviour change, and it means a pool change has to be re-pinned by hand.
 GOLDEN: dict[tuple[int, int], tuple] = {
-    (12345, 3): (1, 4, 63, [1, 3]),
-    (12345, 8): (1, 8, 100, [4, 8]),
+    (12345, 3): (0, 6, 68, [3, 1]),
+    (12345, 8): (1, 12, 176, [7, 8]),
 }
 
 
