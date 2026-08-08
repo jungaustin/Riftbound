@@ -38,11 +38,13 @@ from rl.engine import resolve as rsv
 # importing the action layer. Re-exported: callers still say A.plan_payment.
 from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
                             card_domains, pay, pay_ability_cost,
-                            plan_ability_cost, plan_payment, plan_surcharge)
+                            plan_ability_cost, plan_flow, plan_payment,
+                            plan_surcharge)
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import (TR_ACTIVATED, TR_PLAY_ME, TR_PLAY_SPELL,
                                abilities_for, spec_for)
-from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
+from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_FLOW,
+                             C_SRC, MAIN,
                              MAX_CHAIN, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
                              P_LOC, P_READY, GameState, base_loc, bf_loc,
@@ -51,12 +53,13 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
 # Action kinds. Wire format -- append only, never reorder.
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
  A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN,
- A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST, A_ORDER, A_ACTIVATE) = range(18)
+ A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST, A_ORDER, A_ACTIVATE,
+ A_PLAY_FLOW) = range(19)
 
 KIND_NAMES = ("pass", "end_turn", "play", "play_at", "declare", "add",
               "commit", "cancel", "retreat", "target", "hide", "hide_at",
               "play_hidden", "accept", "decline", "play_at_fast",
-              "order", "activate")
+              "order", "activate", "play_flow")
 
 
 class Action(NamedTuple):
@@ -251,7 +254,9 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
                 # 811.6 -- a facedown card has [Reaction], so it may be played
                 # into any window, including on the opponent's turn.
                 + [Action(A_PLAY_HIDDEN, i) for i in
-                   chain.hidden_playable(state, table, cfg, seat)])
+                   chain.hidden_playable(state, table, cfg, seat)]
+                + [Action(A_PLAY_FLOW, i) for i in
+                   chain.flow_playable(state, table, cfg, seat)])
 
     # --- Main Phase, Neutral Open ----------------------------------------
     # 316.5.b: only the Turn Player may act in a Neutral Open State.
@@ -275,6 +280,8 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         out.append(Action(A_HIDE, i))
     for i in chain.hidden_playable(state, table, cfg, seat):
         out.append(Action(A_PLAY_HIDDEN, i))
+    for i in chain.flow_playable(state, table, cfg, seat):
+        out.append(Action(A_PLAY_FLOW, i))
 
     out += [Action(A_ACTIVATE, p) for p in activatable(state, table, cfg, seat)]
 
@@ -428,6 +435,9 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
 
     if k == A_HIDE_AT:
         return _hide_at(state, table, cfg, seat, action.arg)
+
+    if k == A_PLAY_FLOW:
+        return _play_flow(state, table, cfg, int(state.priority), action.arg)
 
     if k == A_PLAY_HIDDEN:
         return _play_from_hidden(state, table, cfg, int(state.priority),
@@ -594,7 +604,13 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
     if extra_p:
         surcharge = plan_surcharge(state, table, seat, card, extra_p)
         assert surcharge is not None, "unaffordable Deflect cost at finalization"
-    if int(state.chain[item, C_BOUND_BF]) < 0:
+    if bool(state.chain[item, C_FLOW]):
+        # 829.1.c.1 -- the Flow cost REPLACES the base cost.
+        recycle = plan_flow(state, table, seat, card)
+        assert recycle is not None, "unaffordable Flow cost reached finalization"
+        pay_ability_cost(state, table, seat, int(table.flow_energy[card]),
+                         recycle)
+    elif int(state.chain[item, C_BOUND_BF]) < 0:
         # 811.1.b -- a card played from Hidden ignores its cost entirely. The
         # rune was already paid when it was hidden.
         recycle = plan_payment(state, table, seat, card)
@@ -707,6 +723,30 @@ def _hide_at(state: GameState, table: CardTable, cfg: Config, seat: int,
     state.fd_card[bf] = card
     state.fd_ply[bf] = int(state.ply)
     return {"hid_at": bf}
+
+
+def _play_flow(state: GameState, table: CardTable, cfg: Config, seat: int,
+               trash_idx: int) -> dict:
+    """829.1.b -- play a spell from the trash for its Flow cost.
+
+    The card leaves the trash now, exactly as a hand card leaves the hand on
+    announcement. Where it goes AFTER resolving is the interesting part, and
+    that is `resolve_top`'s job: banished, not trashed.
+    """
+    card = int(state.trash[seat, trash_idx])
+    n = int(state.n_trash[seat])
+    state.trash[seat, trash_idx:n - 1] = state.trash[seat, trash_idx + 1:n]
+    state.trash[seat, n - 1] = -1
+    state.n_trash[seat] = n - 1
+
+    item = chain.push(state, card, seat, from_hand=False, bound_bf=-1,
+                      flow=True)
+    spec = spec_for(table, card)
+    assert spec is not None
+    if spec.n_targets:
+        state.pend_slot = 0
+        return {"announced_from_trash": table.names[card]}
+    return _finalize_pending(state, table, cfg, item)
 
 
 def _play_from_hidden(state: GameState, table: CardTable, cfg: Config,

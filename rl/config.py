@@ -55,6 +55,8 @@ ENGINE_KEYWORDS = {
                   "cost.accelerate_cost for the additional cost (805)",
     "Shield":    "combat.combat_role_bonus -- +X Might while a defender (814)",
     "Buff":      "combat.might -- a Buff counter is +1 Might (702/703)",
+    "Flow":      "chain.flow_playable -- play from the trash for the Flow "
+                 "cost, then banish it (829)",
     "Deflect":   "resolve.deflect_cost -- opponents pay +X Power to choose it "
                  "(809), and an unaffordable surcharge makes it not a target",
     "Assault":   "combat.combat_role_bonus -- +X Might while an attacker (807)",

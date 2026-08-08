@@ -164,6 +164,20 @@ def plan_payment(state: GameState, table: CardTable, seat: int, card: int,
     return picks
 
 
+def plan_flow(state: GameState, table: CardTable, seat: int,
+              card: int) -> list[int] | None:
+    """Payment plan for a card's [Flow] cost, or None if unaffordable.
+
+    829.1.c.1 -- the Flow cost REPLACES the base cost, so this cannot go
+    through `plan_payment`, which reads the printed corner. Power is still
+    domain-bound to the card as usual; only the amount changes.
+    """
+    fe, fp = int(table.flow_energy[card]), int(table.flow_power[card])
+    if fe < 0:
+        return None
+    return plan_ability_cost(state, table, seat, card, fe, fp)
+
+
 def plan_surcharge(state: GameState, table: CardTable, seat: int, card: int,
                    power: int) -> list[int] | None:
     """Domains to recycle for a Deflect surcharge on top of `card`'s own cost.

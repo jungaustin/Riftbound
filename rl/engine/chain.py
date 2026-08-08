@@ -37,11 +37,11 @@ from __future__ import annotations
 from rl.config import Config
 from rl.engine import resolve as rsv
 from rl.engine.cardtable import CardTable
-from rl.engine.cost import plan_payment
+from rl.engine.cost import plan_flow, plan_payment
 from rl.engine.effects import (SPEED_ACTION, SPEED_REACTION, abilities_for,
                                spec_for)
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
-                             C_FINAL, C_FROM_HAND, C_SRC, C_UID,
+                             C_FINAL, C_FLOW, C_FROM_HAND, C_SRC, C_UID,
                              MAIN, MAX_CHAIN, MAX_TARGETS, MAX_TRIGGERS,
                              N_BF, N_SEATS,
                              P_CARD, P_CTRL, GameState)
@@ -172,9 +172,38 @@ def hidden_playable(state: GameState, table: CardTable, cfg: Config,
     return out
 
 
+def flow_playable(state: GameState, table: CardTable, cfg: Config,
+                  seat: int) -> list[int]:
+    """Trash indices `seat` may play for a [Flow] cost (829.1.b).
+
+    "You may play this from your trash for its flow cost." 829.1.b.2 is
+    explicit that Flow changes only the ZONE it can be played from -- not its
+    timing and not any other permission -- so the usual speed check still
+    applies unchanged.
+    """
+    if cfg.units_only or state.no_spells[seat]:
+        return []
+    seen: set[int] = set()
+    out: list[int] = []
+    for i in range(int(state.n_trash[seat])):
+        card = int(state.trash[seat, i])
+        if card in seen or int(table.flow_energy[card]) < 0:
+            continue
+        seen.add(card)
+        spec = spec_for(table, card)
+        if spec is None or not speed_ok(state, cfg, seat, spec.speed):
+            continue
+        if plan_flow(state, table, seat, card) is None:
+            continue
+        if not rsv.can_be_cast(state, table, spec, seat, -1, card=card):
+            continue
+        out.append(i)
+    return out
+
+
 def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
          bound_bf: int = -1, abil: int = -1, src: int = -1,
-         ctx: int = -1) -> int:
+         ctx: int = -1, flow: bool = False) -> int:
     """Append a Pending Chain Item. Returns its index.
 
     `abil >= 0` makes it a Triggered Ability rather than a card (383.3).
@@ -191,6 +220,7 @@ def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
     row[C_ABIL] = abil
     row[C_SRC] = src
     row[C_CTX] = ctx
+    row[C_FLOW] = int(flow)
     state.chain_uid += 1
     state.chain_targets[i, :] = -1
     state.n_chain = i + 1
@@ -424,6 +454,7 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
     abil = int(state.chain[item, C_ABIL])
     src = int(state.chain[item, C_SRC])
     ctx = int(state.chain[item, C_CTX])
+    flow = bool(state.chain[item, C_FLOW])
     card, ctrl, from_hand, bound, targets = _pop(state, item)
 
     assert spec is not None, f"no spec for {table.names[card]!r} on the chain"
@@ -435,6 +466,15 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
         # A Triggered Ability is not a card and has no zone to go to -- its
         # source is still on the board. Only the spell path trashes anything.
         log["ability"] = abil
+        return log
+
+    if flow:
+        # 829.1.b -- "Then banish it." A delayed replacement effect
+        # (829.1.b.1): the spell would leave the Chain for the trash, and this
+        # replaces where it lands. Without it the card would go back to the
+        # trash it was just played from and be replayable every turn forever.
+        state.banish_card(ctrl, card)
+        log["banished"] = table.names[card]
         return log
 
     # The spell leaves play. (Units never reach here -- 337.2 resolves them

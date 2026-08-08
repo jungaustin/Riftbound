@@ -573,4 +573,43 @@ if int(s.n_trash[0]) != 1:
                   f"the unit (427.2.a) -- only Temporal Breach itself goes")
 ok("427.2.a -- banish is not a kill: no trash, and no [Deathknell]")
 
+# ---------------------------------------------------------------------------
+print("\n[9] [Flow] plays from the trash, then BANISHES (829.1.b)")
+
+DREDGE = T.id_of("Dredge Up")             # Draw 1.  [Flow] {2 energy}
+if int(T.flow_energy[DREDGE]) != 2:
+    die("flow", "the Flow cost is an alternate cost and must parse (829.1.c)")
+
+s = GameState()
+s.n_deck[:] = 20
+s.deck[:, :20] = PLAIN[2]
+s.trash[0, 0] = DREDGE
+s.n_trash[0] = 1
+s.runes_ready[:, :] = 4
+s.phase, s.active, s.priority = MAIN, 0, 0
+
+offers = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY_FLOW]
+if not offers:
+    die("flow", "a [Flow] spell in the trash was never offered")
+ok("a [Flow] spell is playable from the trash")
+
+A.apply(s, T, V1, offers[0])
+for _ in range(8):
+    if s.n_chain == 0:
+        break
+    seat = A.acting_seat(s)
+    A.apply(s, T, V1, next(x for x in A.legal_actions(s, T, V1, seat)
+                           if x.kind == A.A_PASS))
+if int(s.n_hand[0]) != 1:
+    die("flow", "the spell did not resolve")
+if int(s.n_trash[0]) != 0 or int(s.n_banished[0]) != 1:
+    die("flow", f"829.1.b -- 'then banish it'. trash={int(s.n_trash[0])} "
+                f"banished={int(s.n_banished[0])}; landing back in the trash "
+                f"would make it replayable every turn forever")
+ok("it is BANISHED, not trashed -- the loop is closed (829.1.b.1)")
+
+if [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY_FLOW]:
+    die("flow", "the banished card is still being offered from the trash")
+ok("and cannot be played again")
+
 print("\n\033[32mall effect tests passed\033[0m")

@@ -439,6 +439,11 @@ SPECS: dict[str, CardSpec] = {
         ops=(Op(OP_DISCARD, n=1), Op(OP_DRAW, n=2)),
     ),
 
+    # Draw 1.  [Flow] {2 energy}
+    # The Flow cost and the "then banish it" rider are keyword behaviour
+    # (829), not DSL -- the spec is just the printed effect.
+    "Dredge Up": CardSpec(speed=SPEED_MAIN, ops=(Op(OP_DRAW, n=1),)),
+
     # [Action] Give a unit +5 Might this turn.
     "Punch First": CardSpec(
         speed=SPEED_ACTION,

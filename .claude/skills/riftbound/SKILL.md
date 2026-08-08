@@ -648,6 +648,37 @@ a rune-count tax. Open question worth flagging in any deck relying on it:
 Deflect charges things you *play*, so whether it taxes a **triggered**
 play-effect (e.g. "when you play me, deal 6") is unclear — judge check.
 
+## NEVER enumerate candidate cards from raw `data/cards.json`
+
+Every list of "cards worth considering" must come from the **legality-filtered
+pool**, not from a direct read of the card file:
+
+```bash
+python3 cli.py pool "<Legend name>"          # the filtered pool
+```
+```python
+from pathlib import Path
+from riftbound.db import CardDB
+pool = CardDB.load(Path("data")).legal_pool(legend)   # pool.main_deck, pool.battlefields
+```
+
+`legal_pool` (`riftbound/db.py`) already applies domain identity **and 103.2.d.2**.
+An ad-hoc `json.load(open('data/cards.json'))` applies neither.
+
+**Signature cards are the specific trap**, because a domain filter passes them
+and the tag rule does not. 103.2.d.2: *all* Signature cards in a deck must carry
+the Champion tag matching the deck's Legend — so an off-tag Signature card is
+not merely unplayable, the decklist is **illegal**. In a Calm+Mind pool, five
+Signature cards look legal by domain and are not: Fox-Fire (Ahri), Siphoning
+Strike (Nasus), Forgefire Cape / Rabadon's Deathcrown / Shurelya's Requiem
+(Ornn). Most Legends have exactly **one** legal Signature card.
+
+The failure mode this prevents is recommending a card in prose. `cli.py check`
+catches an illegal card only once it is in a decklist file — a card named in
+chat is never validated. So: **if you are going to name a card to the user, it
+must have come out of the pool, or be run through `check` in a scratch list
+first.**
+
 ## Known `critique` false positives — do not "fix" these
 
 The auditor is a text matcher. It cannot see:

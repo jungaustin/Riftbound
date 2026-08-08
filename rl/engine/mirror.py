@@ -29,6 +29,7 @@ from rl.engine.state import (C_CTRL, C_CTX, N_SEATS, P_CTRL, P_LOC,
 SEAT_AXIS = (
     "hand", "n_hand", "deck", "deck_ptr", "n_deck", "trash", "n_trash",
     "runes_ready", "runes_spent", "rune_deck", "rune_head", "rune_left",
+    "banished", "n_banished",
     "pool_energy", "pool_power", "bf_scored", "points", "burned_out",
     "legend", "champion", "no_spells",
 )

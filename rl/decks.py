@@ -190,9 +190,41 @@ def _closest(table: CardTable, pool: list[int], want: int) -> int:
         int(table.energy[c]), c))
 
 
+# A main deck is 40 cards (39 + the Champion in every list in the corpus).
+# Anything far outside that is a parse failure rather than a deck -- a flat
+# export with no section headers puts battlefields and runes in the main list
+# too, which produced a "131-card deck" that crashed a fuzz 1,500 games in
+# rather than failing at load.
+LEGAL_MAIN = (30, 45)
+
+
+def _split_flat(parsed: dict, table: CardTable) -> dict:
+    """Route a headerless export into sections by CARD TYPE.
+
+    Some exports are a bare list -- "3 Petal Pixie [UNL] 76" -- with no
+    `MainDeck:` header, so everything lands in one bucket including the
+    battlefields and the rune pool. The card table already knows what each one
+    is, so classify rather than guess.
+    """
+    if any(k in parsed for k in ("Battlefields", "Runes")):
+        return parsed
+    main, bfs, runes = [], [], []
+    for count, name in parsed.get("MainDeck", []):
+        if name.lower().endswith("rune"):
+            runes.append((count, name))
+            continue
+        card = find(name)
+        cid = table._index.get(card.name) if card else None
+        if cid is not None and table.is_type(cid, "Battlefield"):
+            bfs.append((count, name))
+        else:
+            main.append((count, name))
+    return {**parsed, "MainDeck": main, "Battlefields": bfs, "Runes": runes}
+
+
 def load_deck(path: Path, table: CardTable) -> DeckLoad:
     """Read a decklist and make it playable, recording every substitution."""
-    parsed = read_decklist(Path(path))
+    parsed = _split_flat(read_decklist(Path(path)), table)
     units, spells = _pool(table)
 
     main: list[int] = []
@@ -246,13 +278,28 @@ def load_deck(path: Path, table: CardTable) -> DeckLoad:
                     approximated=approx, missing=missing)
 
 
-def load_all(table: CardTable, root: Path | None = None) -> list[DeckLoad]:
+def load_all(table: CardTable, root: Path | None = None,
+             warn: bool = True) -> list[DeckLoad]:
+    """Every decklist under `root` that parses to a plausible deck.
+
+    A file that parses to a main deck far off 40 cards is rejected here, and
+    loudly. It used to be admitted on `len(main) >= 10` and would then blow up
+    deep inside a training run on `MAX_DECK` -- a parse failure surfacing as an
+    engine crash thousands of games later, with nothing pointing at the file.
+    """
     root = root or (ROOT / "decks")
-    out = []
+    out, bad = [], []
     for f in sorted(Path(root).rglob("*.txt")):
         d = load_deck(f, table)
-        if len(d.main) >= 10:
+        if LEGAL_MAIN[0] <= len(d.main) <= LEGAL_MAIN[1]:
             out.append(d)
+        elif len(d.main) >= 10:
+            bad.append((d.name, len(d.main)))
+    if bad and warn:
+        import sys as _sys
+        print(f"  skipped {len(bad)} unparseable decklist(s): "
+              + ", ".join(f"{n} ({k} cards)" for n, k in bad),
+              file=_sys.stderr)
     return out
 
 

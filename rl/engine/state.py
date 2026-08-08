@@ -92,6 +92,7 @@ MAX_PERMS = 48
 MAX_HAND = 20
 MAX_DECK = 60
 MAX_TRASH = 80
+MAX_BANISHED = 60   # 108.6 -- one Banishment per player, unordered, public
 # Triggers waiting to be put on the Chain. A trigger fires from wherever the
 # game action happens -- deep inside combat damage, inside a Cleanup -- and at
 # those moments the Chain must stay empty, because `is_open` is `n_chain == 0`
@@ -132,9 +133,11 @@ RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 #           trigger references is captured WHEN IT TRIGGERS, not when it
 #           resolves, so Lillia's "play a Sprite there" remembers where she
 #           moved from even if she has moved again by the time it resolves.
+#   C_FLOW  played from the trash for its [Flow] cost (829), which changes
+#           where it goes afterwards: banished, not trashed
 C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF, C_UID, C_ABIL, C_SRC, \
-    C_CTX = range(9)
-N_CHAIN_COLS = 9
+    C_CTX, C_FLOW = range(10)
+N_CHAIN_COLS = 10
 
 # `C_UID` is a stable per-item id. Chain *indices* shift whenever an item is
 # removed, so a counterspell that stored an index could hit the wrong item
@@ -158,6 +161,7 @@ class GameState:
         "pool_energy", "pool_power",
         "bf_card", "bf_ctrl", "bf_contested", "fd_owner", "fd_card", "fd_ply",
         "bf_scored",
+        "banished", "n_banished",
         "chain", "n_chain", "chain_targets", "pend_slot", "chain_uid",
         "pend_may", "trig", "n_trig", "pend_order",
         "points", "burned_out", "no_spells",
@@ -180,6 +184,13 @@ class GameState:
         self.n_deck = np.zeros(N_SEATS, np.int16)     # cards originally dealt
         self.trash = np.full((N_SEATS, MAX_TRASH), -1, np.int16)
         self.n_trash = np.zeros(N_SEATS, np.int16)
+        # 108.6 -- Banishment. A separate zone from the trash and NOT a
+        # recoverable one, which is the whole point: [Flow] plays a spell from
+        # the trash and then banishes it (829.1.b), and without somewhere else
+        # for it to go it would land back in the trash and be replayable every
+        # turn forever. Public information (108.6.e), unordered (108.6.d).
+        self.banished = np.full((N_SEATS, MAX_BANISHED), -1, np.int16)
+        self.n_banished = np.zeros(N_SEATS, np.int16)
 
         # Runes are fungible within a domain -- counts, not objects.
         self.runes_ready = np.zeros((N_SEATS, N_DOMAINS), np.int16)
@@ -314,6 +325,13 @@ class GameState:
         return self.showdown_bf < 0
 
     # ---- permanents ------------------------------------------------------
+
+    def banish_card(self, seat: int, card: int) -> None:
+        """Put a card into `seat`'s Banishment (108.6)."""
+        n = int(self.n_banished[seat])
+        assert n < self.banished.shape[1], "banishment overflow"
+        self.banished[seat, n] = card
+        self.n_banished[seat] = n + 1
 
     def compact_permanents(self) -> None:
         """Drop dead rows and renumber the live ones.

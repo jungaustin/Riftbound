@@ -107,11 +107,14 @@ def keyword_mask(text: str) -> int:
 
       1. It is in the **leading run** of bracketed tokens, before any prose.
          This is how nearly every card prints its keywords.
-      2. It is **immediately followed by its reminder text** -- `[Ganking] (I
-         can move from battlefield to battlefield.)` on Atakhan, whose
-         keywords come after a sentence of additional cost. Immediately
-         matters: "give it [Temporary]. (Kill it at...)" has a sentence break
-         first and is a grant, not a possession.
+      2. It is **followed by its reminder text**, with nothing between but
+         whitespace and its own cost -- `[Ganking] (I can move...)` on
+         Atakhan, or `[Flow] {4 energy}{Fury rune} (You may play this from
+         your trash...)`. Allowing the cost through matters: requiring the
+         parenthesis to follow *immediately* missed all 17 [Flow] cards,
+         because Flow always prints its cost in between. What must NOT be
+         skipped is prose -- "give it [Temporary]. (Kill it at...)" has a
+         sentence break first and is a grant, not a possession.
 
     Conservative by construction. A keyword this misses is treated as not
     implemented, which understates coverage; a keyword it wrongly grants
@@ -136,9 +139,16 @@ def keyword_mask(text: str) -> int:
             mask |= 1 << bit
         i = m.end()
 
-    # (2) anywhere, if its own reminder text follows immediately.
+    # (2) anywhere, if its own reminder text follows -- past its cost, but not
+    # past any prose.
     for m in _KW_TOKEN.finditer(raw):
-        if raw[m.end():m.end() + 2].lstrip().startswith("("):
+        j = m.end()
+        while j < len(raw):
+            f = re.match(r"\s+|\{[^}]*\}|\[>+\]", raw[j:])
+            if not f:
+                break
+            j += f.end()
+        if raw[j:j + 1] == "(":
             bit = _KW_BIT.get(m.group(1))
             if bit is not None:
                 mask |= 1 << bit
@@ -157,6 +167,32 @@ def keyword_value(text: str, keyword: str) -> int:
         return 0
     m = re.search(rf"\[{keyword}\s*(\d*)\]", text or "")
     return int(m.group(1)) if (m and m.group(1)) else 1
+
+
+_FLOW = re.compile(r"\[Flow\]\s*((?:\{[^}]*\})+)")
+
+
+def flow_cost(text: str) -> tuple[int, int]:
+    """The (energy, power) of a card's [Flow] cost, or (-1, -1) if it has none.
+
+    829.1.c.1 -- the Flow cost is an ALTERNATE cost that replaces the base cost
+    during finalization, so it is parsed separately rather than derived from
+    the printed one. Reading it off the text is the only option: the card
+    export carries no structured cost fields beyond the printed corner.
+    """
+    if not text or not (keyword_mask(text) >> _KW_BIT["Flow"] & 1):
+        return -1, -1
+    m = _FLOW.search(text)
+    if not m:
+        return -1, -1
+    energy, power = 0, 0
+    for tok in re.findall(r"\{([^}]*)\}", m.group(1)):
+        t = tok.strip()
+        if t.endswith("energy"):
+            energy += int(t.split()[0]) if t.split()[0].isdigit() else 1
+        else:
+            power += 1
+    return energy, power
 
 
 def body_text(text: str) -> str:
@@ -186,6 +222,10 @@ class CardTable:
     shield: np.ndarray        # int16, 0 = no [Shield]
     assault: np.ndarray       # int16, 0 = no [Assault]
     deflect: np.ndarray       # int16, 0 = no [Deflect] (809)
+    # [Flow] alternate cost (829.1.c): "[Flow] {2 energy}" or
+    # "[Flow] {4 energy}{Fury rune}". -1 in `flow_energy` means no Flow.
+    flow_energy: np.ndarray   # int16
+    flow_power: np.ndarray    # int16
     text_len: np.ndarray      # int16, reminder text stripped
     token: np.ndarray         # bool, supertype == Token (185.3)
 
@@ -287,6 +327,8 @@ def _rows(cards: list[Card]) -> CardTable:
         shield=np.array([keyword_value(c.text, "Shield") for c in cards], np.int16),
         assault=np.array([keyword_value(c.text, "Assault") for c in cards], np.int16),
         deflect=np.array([keyword_value(c.text, "Deflect") for c in cards], np.int16),
+        flow_energy=np.array([flow_cost(c.text)[0] for c in cards], np.int16),
+        flow_power=np.array([flow_cost(c.text)[1] for c in cards], np.int16),
         text_len=np.array([len(body_text(c.text)) for c in cards], np.int16),
         token=np.array([c.name in _tokens for c in cards], bool),
     )
@@ -327,6 +369,13 @@ def pool_table(names: list[str]) -> tuple[CardTable, list[str]]:
 # ---------------------------------------------------------------------------
 _DECK_LINE = re.compile(r"^\s*(\d+)\s*x?\s+(.+?)\s*$")
 _SECTION = re.compile(r"^\s*([A-Za-z ]+):\s*(.*)$")
+# Some exports append the printing: "Petal Pixie [UNL] 76". The set code and
+# collector number are not part of the name and stop `find()` resolving it.
+_PRINTING = re.compile(r"\s*\[[A-Za-z0-9]+\]\s*\d*\s*$")
+# "Rune Pool" and "Runes" are the same section under two different exports.
+_SECTION_ALIAS = {"RunePool": "Runes", "RuneDeck": "Runes",
+                  "Battlefield": "Battlefields", "Main": "MainDeck",
+                  "Deck": "MainDeck"}
 
 
 def read_decklist(path: Path) -> dict[str, list[tuple[int, str]]]:
@@ -343,11 +392,13 @@ def read_decklist(path: Path) -> dict[str, list[tuple[int, str]]]:
         m = _SECTION.match(line)
         if m and not _DECK_LINE.match(line):
             section = m.group(1).strip().replace(" ", "")
+            section = _SECTION_ALIAS.get(section, section)
             out.setdefault(section, [])
             if m.group(2).strip():
-                out[section].append((1, m.group(2).strip()))
+                out[section].append((1, _PRINTING.sub("", m.group(2).strip())))
             continue
         d = _DECK_LINE.match(line)
         if d:
-            out.setdefault(section, []).append((int(d.group(1)), d.group(2).strip()))
+            name = _PRINTING.sub("", d.group(2).strip())
+            out.setdefault(section, []).append((int(d.group(1)), name))
     return out

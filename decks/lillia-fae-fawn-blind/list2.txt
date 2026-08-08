@@ -1,0 +1,54 @@
+1 Lillia - Bashful Bloom [UNL] 189
+2 Lillia - Fae Fawn [UNL] 82
+3 Petal Pixie [UNL] 76
+3 Scuttle Crab [UNL] 53
+3 Sprite Call [OGN] 94
+3 Seal of Focus [OGN] 81
+3 Seal of Insight [OGN] 120
+3 Stupefy [OGN] 95
+3 Defy [OGN] 45
+3 Discipline [OPP] 58
+3 En Garde [OGN] 46
+3 Lilting Lullaby [UNL] 190
+2 Crumbling Sands [VEN] 39
+3 Retreat [OGN] 104
+3 Smoke and Mirrors [UNL] 83
+3 Emperor's Divide [SFD] 43
+3 Zhonya's Hourglass [OGN] 77
+3 Block [OGN] 57
+3 Blastcone Fae [OGN] 97
+3 Temporal Breach [VEN] 66
+3 Wages of Pain [SFD] 70
+3 Back Off [UNL] 42
+3 Consult the Past [OPP] 83
+3 Heart of Dark Ice [SFD] 52
+3 Singularity [OGN] 105
+2 Thousand-Tailed Watcher [OGN] 116
+3 Unchecked Power [OGN] 123
+3 Disarming Rake [SFD] 32
+3 Akali, Silent [VEN] 38
+3 Janna - Savior [SFD] 53
+3 Riptide Rex [OPP] 92
+3 Turn to Dust [UNL] 70
+3 Trevor Snoozebottom [UNL] 48
+3 Charm [OGN] 43
+3 Not So Fast [SFD] 45
+3 Lonely Poro [SFD] 36
+3 Plundering Poro [SFD] 69
+3 LeBlanc - Everywhere At Once [UNL] 90
+3 Swain, Visionary [VEN] 65
+3 Zilean - Time Mage [UNL] 86
+3 Lillia - Protector of Dreams [UNL] 58
+1 Dusk Rose Lab [UNL] 209
+1 Hall of Legends [SFD] 210
+1 Ravenbloom Conservatory [SFD] 215
+1 Black Flame Altar [UNL] 208
+1 Targon's Peak [OGN] 289
+1 Emperor's Dais [SFD] 207
+1 Grove of the God-Willow [OGN] 280
+1 Startipped Peak [OGN] 288
+1 Threshold of the Gray [VEN] 166
+1 Seat of Power [SFD] 217
+1 Forbidding Waste [UNL] 210
+1 Rockfall Path [SFD] 216
+1 Bandle Tree [PR] 278

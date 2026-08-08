@@ -320,6 +320,10 @@ class Encoder:
             card = int(state.hand[seat, act.arg])
         elif k == A.A_HIDE_AT:
             loc = bf_loc(act.arg)
+        elif k == A.A_PLAY_FLOW:
+            # The trash is public information (108.5), so naming the card here
+            # leaks nothing.
+            card = int(state.trash[seat, act.arg])
         elif k == A.A_PLAY_HIDDEN:
             # The card's identity is legitimate here: only its owner is ever
             # offered this action, and they know what they hid.

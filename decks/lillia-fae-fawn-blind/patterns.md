@@ -110,6 +110,96 @@ Consequences to play around:
   knock on either card — it is what makes their battlefields hold — but never
   plan a conquest around them.
 
+## The rune engine — Seals, and why attrition is not what the tool prints
+
+**A Seal is free on the turn you play it, if you needed a Power pip that turn
+anyway.** Seal of Focus (Calm) / Seal of Insight (Mind) are {0}{P1} gear reading
+`Exhaust: [Reaction] — Add 1 Power of that domain`.
+
+- **359.2.d: a non-unit gear enters the board READY at your base.** So it works
+  the turn it lands.
+- Pay the Seal's {P1} by recycling a rune, then immediately Exhaust the Seal for
+  that same Power and spend it on the real card. Net rune cost is identical to
+  having recycled that rune directly — and you keep the Seal.
+- **315.1.b readies every Game Object you control** at Awaken, so it recurs.
+- The Add is **[Reaction]**, so a Seal produces Power on the OPPONENT's turn —
+  it funds Defy without shrinking your rune board.
+
+So `cli.py stats` overstates this deck's attrition: it counts each Seal's own
+pip but cannot see the pip coming back. Read the printed number as one-time,
+minus 1 per Seal per turn thereafter.
+
+**Power pips are domain-specific.** Seal of Focus only pays Calm pips, Seal of
+Insight only Mind. v6's split is 8 hard Calm / 12 hard Mind (+4 hybrid from
+Lilting Lullaby, payable by either).
+
+**The hidden cost of a {P2} card:** you channel 2 runes per turn, so a card that
+recycles 2 costs a FULL TURN of channelling on top of its cast. Riptide Rex
+{6}{P2} on turn 4 (8 runes) leaves you with 8 again on turn 5 instead of 10.
+Thousand-Tailed Watcher is {7}{P1} — one rune, half the bleed — and its -3 Might
+to all enemy units opens BOTH battlefields, which is why it is the better top
+end under a double-conquer plan.
+
+## Retreat — cut in v6, ruling kept for reference
+
+`{1}` P0 Mind, [Reaction]: return a friendly unit to hand, its owner channels 1
+rune exhausted.
+
+- Rune-neutral: 1 rune exhausted to cast, 1 rune channelled back. The channelled
+  rune enters **exhausted**, readies at your next Awaken (315.1.b), so it is
+  live on your following turn and can help pay Fae Fawn's Accelerate.
+- **It does NOT save a hold.** If the retreated unit was your only one there you
+  lose the battlefield exactly as you would have by dying (190.4.c). It saves
+  the card, not the field.
+- Returning to hand is **not a move**, so it does not trigger Fae Fawn's
+  "when I move from a location" Sprite spawn.
+- Best against targeted removal, where the alternative is losing the card for
+  nothing.
+
+## Hidden — the rune-asymmetry fix, and the constraint on it
+
+**Why the deck wants Hidden cards at all.** A Standard Move costs **zero runes**
+(144.4) and **only the Turn Player readies** (315.1.b), so whoever attacks does
+so with a full rune pool while the defender holds only what they declined to
+spend last turn. This deck is on the wrong side of that in both seats: it must
+spend 2-4 runes *manufacturing* an attacker before it can move, and it defends on
+leftovers. A Hidden card is bought on your turn and flips for **{0}** on theirs —
+it moves your surplus window into their window. Hiding costs 1 **Power**, which a
+Seal produces free at Reaction speed, so the whole loop costs nothing.
+
+**The constraint, and it is severe:**
+
+- **811.1.b** — you may only hide "at a battlefield **you control** that doesn't
+  already have a facedown card hidden there, **for as long as you control that
+  battlefield**." One facedown per battlefield, two battlefields in 1v1.
+- **107.3.d** — "If a player loses Control of a Battlefield, any cards in the
+  Facedown Zone associated with that Battlefield are **removed** during the next
+  Cleanup."
+- Your Sprites die at your Beginning Phase, so you lose the battlefield
+  (190.4.c) and the hidden card goes with it.
+
+So in a pure-Sprite deck a hidden card lives for **exactly one opponent turn**.
+That is still enough — 811.6 grants Reaction while facedown, so you can always
+cash it during their turn (even at their end step, purely for value) before it
+expires. But it means **Trevor's battlefield is the only place a facedown card
+persists across turns.** That is the second reason Trevor stays at 2.
+
+- **811.1.b: it does not gain Reaction until the NEXT turn.** You cannot hide and
+  flip on the same turn.
+- **811.1.d.2:** a hidden spell's targets must be chosen from the battlefield it
+  was hidden at. The rules use Blastcone Fae as the worked example.
+- **811.3:** you may always just hard-cast a Hidden card normally instead.
+
+## Signature cards — the deckbuilding trap
+
+**103.2.d.2: every Signature card in a deck must carry the Champion tag matching
+the deck's Legend.** An off-tag Signature card does not merely fail to work — the
+**decklist is illegal**. **Lilting Lullaby is the only Signature card legal in
+this deck.** Five others pass a Calm+Mind *domain* filter and fail the tag rule:
+Fox-Fire (Ahri), Siphoning Strike (Nasus), and Forgefire Cape / Rabadon's
+Deathcrown / Shurelya's Requiem (Ornn). Enumerate candidates through
+`cli.py pool`, never a raw read of `data/cards.json`.
+
 ## Battlefield control and score triggers
 
 - **You lose a battlefield the moment you have nothing standing on it.**
@@ -134,10 +224,15 @@ Consequences to play around:
   **Hold** in your Beginning Phase (non-Conquer points are exempt from the final
   point restriction), then **Conquer** the other in your Main Phase — every
   battlefield has now been scored this turn, so the Conquer wins.
-  *Open question:* the double-conquer version (both fields in one Main Phase)
-  depends on whether a Conquer that only drew you a card counts as having
-  "Scored" that battlefield. 468/468.1 tie Scoring to gaining a point;
-  471.1.b.1 substitutes a draw. Unresolved — judge check before relying on it.
+- **The double-conquer 8th point WORKS** (re-read 2026-08-05; an earlier note
+  here called it unsafe, which was too pessimistic). **469.1 makes the Conquer
+  itself the Score** — "A player Scores in one of two ways: Conquer: A player
+  gains Control of a Battlefield they did not yet Score this turn." 471 is
+  downstream of that, and 471.1 says the player "Gains **up to one** Point,"
+  which is the language that lets the Score happen while the point is converted
+  to a draw. So at 7: conquer A (Score A, gain 0, draw 1) → conquer B (Score B,
+  every battlefield now Scored → Final Point → win).
+  Still worth a judge check before an event, because it is the whole gameplan.
 
 ## Stun, and why Vex - Apathetic is a hard lock here
 

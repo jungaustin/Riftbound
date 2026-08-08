@@ -2,9 +2,14 @@
 
 **Legend:** Lillia - Bashful Bloom (Calm+Mind)
 **Chosen Champion:** Lillia - Fae Fawn
-**Current version: v5** (`v5.txt`)
+**Current version: v6** (`v6.txt`)
 
-**The plan in one sentence:** make a cheap ready Sprite nearly every turn
+**The plan in one sentence (v6):** manufacture **two ready Sprites in your base**
+on the same turn and conquer **both** battlefields, using a dense layer of cheap
+interaction to win combats a 3-Might Sprite would otherwise only trade — and
+close at 8 with a double conquest rather than a hold.
+
+**The v5 plan, for contrast:** make a cheap ready Sprite nearly every turn
 (Legend activation, Sprite Fountain, Sprite Call, Fae Fawn's move), conquer
 with it, and use a dense layer of 1-rune interaction — Stupefy, Defy, En
 Garde, Charm — to win the combats a 3-Might Sprite would otherwise only trade,
@@ -32,8 +37,99 @@ see `data/archetypes.md`. Play-rate figures below are from `data/staples/`.
 - **v4** — cut the Heimerdinger + Keeper engine and LeBlanc entirely; added
   Scuttle Crab, Defy and Janna main, Heart of Dark Ice, and 2x Thousand-Tailed
   Watcher. Full reasoning retained below under "v4 changes".
-- **v5 (current)** — the staples data (`data/staples/`) showed the deck was
+- **v5** — the staples data (`data/staples/`) showed the deck was
   missing the format's most-played cards. See below.
+- **v6 (current)** — dropped the hold plan and committed to the double conquest;
+  added Seals for the rune bleed and a draw battlefield. See above.
+
+### v6 changes and why (current)
+
+Driven by the user's play experience and four corrections they were right about.
+**Two decisions define this version: the deck stops trying to hold and commits to
+the double conquest, and it stops trying to win the Might-trick war.**
+
+**The structural finding behind it.** A Standard Move costs **zero runes**
+(144.4) and **only the Turn Player readies** (315.1.b) — so an attacker declares
+combat with a full pool while the defender holds only what they chose not to
+spend last turn. This deck is on the wrong side of that in *both* directions: it
+must spend 2-4 runes manufacturing an attacker before it can even move, and it
+defends on leftovers. So Discipline/En Garde arms races are structurally
+unfavourable and were trimmed, not expanded.
+
+**The answer is pre-paid interaction.** Hidden cards are bought on your turn (when
+you have runes) and flip for **{0}** on theirs (when you don't) — and hiding costs
+**1 Power**, which a Seal produces free at Reaction speed. Seal → hide → free
+answer on their turn, every turn cycle, for no runes and no attrition.
+
+| out | in | why |
+|---|---|---|
+| 2 Riptide Rex | 2 Wages of Pain | {6}{P2} recycles 2 runes and you channel 2 a turn — Rex costs a **whole turn of channelling** on top of its cast. Wages is {3} **P0**, kills the 3-Might baseline *before* combat starts, is hideable, and its Gold token is a stored Power pip. |
+| 1 Discipline (3→2), 1 En Garde (2→1) | 1 Back Off | Pump loses the mirror-trick war. Stun doesn't: their unit deals no damage (423.1.b), so your Sprite survives. {3} P0, hideable. |
+| 1 Retreat | 1 Consult the Past | Retreat saved the card but not the field. Consult hides for 1 rune, bluffs as a threat, and cashes for Draw 2 at their end step — you never lose it, because Hidden grants Reaction (811.6). |
+| 1 Lilting Lullaby (3→2) | 1 Seal of Focus | Lullaby was 6 of the deck's 24 attrition. Kept at 2 for the spell lockout — and it is the **only Signature card legal here** (103.2.d.2). |
+| 1 Trevor Snoozebottom (3→2) | 1 Seal of Insight | Trevor gets you *to* 7 and can't get you *through* it. He stays at 2 for a second reason: see the Hidden constraint below. |
+| 1 Smoke and Mirrors (2→1) | 1 Sprite Call (2→3) | Facedown slots are the scarce resource, and ready-Sprites-in-base is the plan. |
+| Emperor's Dais | Ravenbloom Conservatory | The Dais made permanent bodies to *hold* — the plan the deck just abandoned. |
+| 1 En Garde (1→0) | 1 Seal of Focus (1→2) | A 1-of situational trick is 22% to be found by turn 5, and it is spent on the Might arms race the deck loses. 0 or 3, never 1. |
+| 1 Back Off (1→0) | 1 Seal of Insight (1→2) | The weakest of the Hidden package — stun that they can simply pump through — and the eighth card competing for two facedown slots. |
+| 1 Unchecked Power (1→0) | 1 Smoke and Mirrors (1→2) | **Reason expired.** Unchecked Power exhausts all friendly units, so you sweep and then *cannot take the empty battlefields* — it actively fights the double-conquer plan it was kept for. |
+| Runes 7 Mind / 5 Calm | **7 Calm / 5 Mind** | The split inverted. Calm now carries 9 hard pips (Defy, Charm, Dark Ice, Seal of Focus) and they are the cheap cards you want live every turn; Mind's 7 are Sprite Fountain plus the late Watcher, and by turn 6 you have all 12 runes anyway. |
+
+**Seals to 2+2, not 3+3.** Chance of having drawn at least one, 40-card deck:
+1+1 is 40% by turn 5, 2+2 is 66%, 3+3 is 81%. The jump from 1+1 to 2+2 costs two
+slots for 26 points; 3+3 costs *four* slots for 15 more, and the ceiling is capped
+anyway — a busy turn only spends 2-3 Power pips, so a third Seal of a domain is a
+dead draw. **Cost of the change: gear is now 9 of 40**, which is a lot of surface
+for Turn to Dust and Disarming Rake.
+
+**Smoke and Mirrors stayed at 2 on the user's call, correctly.** Swapping Fae Fawn
+is a *move*, so she leaves a Sprite at the battlefield she vacated while the base
+Sprite arrives there — two bodies at the contested field, Lillia safe at base, and
+a card drawn, for 2 runes and **zero attrition**. Nothing else in the deck does
+four things at once, and P0 is the whole theme of this version.
+
+**Charm was considered for the cut and kept.** Its sorcery speed spends runes on
+*your* turn, which is exactly when you have them — the deficit is on the
+opponent's turn, so Charm never competes for the scarce resource. And it is the
+only card that takes a battlefield with **no combat happening**, which is the
+direct answer to the mirror-trick problem.
+
+Petal Pixie went **back to 2**: the turn-1 requirement outranks the synergy
+argument for cutting her. Non-spell turn-1 plays are now **7 bodies** (2 Pixie,
+2 Scuttle Crab, 3 Sprite Fountain) plus the 2 Seals.
+
+**The Hidden constraint — this decides Trevor's floor.** 811.1.b lets you hide
+only **at a battlefield you control**, and **107.3.d removes your facedown cards
+when you lose control of it**. Your Sprites die at your Beginning Phase, so you
+lose the battlefield (190.4.c) and the hidden card goes with it. A hidden card in
+a pure-Sprite deck therefore gets **exactly one opponent turn** — which is enough,
+since Reaction speed lets you always cash it before it expires, but it means
+**Trevor's battlefield is the only place a facedown card persists.** Do not cut
+him below 2 without replacing that.
+
+**The double-conquer line, cheaper than it looks:**
+
+```
+1. Sprite Fountain  {2}{P1}  = 2 runes  -> ready Sprite #1 in BASE
+2. Legend activation now {3}  = 3 runes  -> ready Sprite #2 in BASE
+                                            (Fountain's Sprite supplies the discount)
+3. Sprite #1 -> battlefield A -> conquer
+4. Sprite #2 -> battlefield B -> conquer
+                              5 runes, 1 recycled - live from turn 3
+```
+
+**Stats:** average **2.30** runes (v5 was 2.58), curve 1:12 / 2:13 / 3:12 / 4:1 /
+7:2, **attrition 24 → 20** before the Seals refund up to 2 per turn. Top end is
+now just the two Watchers — this is a lean tempo deck with no reset button.
+
+**Not taken: Singularity** over Riptide Rex. It is the better card for the plan —
+two targets, no battlefield restriction — but it is *also* {6}{P2}, so it does
+nothing about the attrition complaint that removed Rex in the first place.
+It is the 1-of to add if the deck wants a top-end sweeper back.
+
+**Sideboard note:** with Rex out of the main deck, the single sideboard copy is
+now the *only* copy, not a third. It is still the Vex - Apathetic plan; consider a
+second if that matchup stays common.
 
 ### v5 changes and why
 
@@ -121,7 +217,11 @@ verified asymmetry and it is what makes the two conquer battlefields good here.
 |---|---|---|---|
 | Dusk Rose Lab | your Beginning Phase, unit here | **neutral (game 1)** | always, either seat, ahead or behind |
 | Hall of Legends | on conquer | **go-first / proactive closer** | you are ahead on board |
-| Emperor's Dais | on conquer | *(second proactive)* — the gap | you are ahead on board |
+| **Ravenbloom Conservatory** | on defend | **go-second / reactive** | you are behind, or being attacked |
+
+*(v5 ran **Emperor's Dais** in the third slot — a second conquer-trigger, so the
+set had no card that was good from behind. Replaced in v6; the analysis that
+chose the replacement is kept below.)*
 
 **Dusk Rose Lab — the neutral, blind game-1 pick.** It converts the deck's
 built-in liability into a resource: the Sprite is dying regardless, so killing
@@ -159,9 +259,18 @@ weakness. Two counts against it:
   Soldier that attaches gear on arrival, *and* rebuys one of their ETB units.
   Never present this one against Azir.
 
-### Recommended change (not applied to `v5.txt` — your call)
+### The change, applied in v6: Emperor's Dais → Ravenbloom Conservatory
 
-Swap **Emperor's Dais → Black Flame Altar** for the go-second slot.
+Ravenbloom won the slot over Black Flame Altar once the deck committed to the
+double conquest, because it answers **two** problems at once. Under that plan you
+take battlefields on your turn and your Sprites survive through *theirs* — so the
+opponent must attack to get them back, and "when you defend here" fires. With
+**21 spells in 40 (52.5%)** it is better than a coin flip for a free card every
+time they contest you, and cards — not runes — are the binding constraint once
+Seals are covering the Power pips.
+
+The Black Flame Altar case, kept because it is still the pick if the deck goes
+back to holding:
 
 "Units here with [Temporary] have [Shield]" (+1 Might while defending) is the
 most one-sided text in the battlefield pool *for this deck specifically*, because
@@ -214,7 +323,7 @@ expired when v5 went spell-dense. **→ 68.**
 defender each [Add] {1 energy}."
 The highest raw value for this deck and the only one that helps you *retake* a
 field. Added energy survives to end of turn (167), and the deck's whole answer
-layer is 1-2 energy — Stupefy {1}, En Garde {1}, Discipline {2} — so this is
+layer is 1-2 energy — Stupefy {1}, Charm {1}{P1}, Discipline {2} — so this is
 effectively a free trick in every fight, in either seat, without touching the
 live-rune budget. **It fails Riot's question 2 against the worst matchup:** it
 hands VEN Kai'Sa Burn free energy for a burn spell every combat, on top of a
@@ -227,13 +336,14 @@ this file previously called "the neutral pick if avoiding all texture." Five of
 the ten Constructed bans are battlefields — the full list is `data/banlist.json`
 and `python3 cli.py check` now enforces it.)*
 
-**Recommendation: Black Flame Altar, with Ravenbloom Conservatory as the pick if
-you find the deck losing on cards rather than on combats.** The Altar fixes the
-reason you lose battlefields; Ravenbloom fixes the reason you run out of
-answers. Play a few Bo3s and the losses will tell you which.
+**Resolved in v6: Ravenbloom Conservatory.** The Altar fixes the reason you lose
+battlefields; Ravenbloom fixes the reason you run out of answers. The double
+conquest doesn't try to keep battlefields, so the second problem is the live one.
+**Black Flame Altar is the first swap back** if the deck drifts toward holding.
 
 ### Battlefield bench (in preference order)
 
+- **Black Flame Altar** — the go-second pick if the deck ever returns to holding.
 - **Targon's Peak** — "on conquer, ready 2 runes at the end of this turn." Under
   the rune-posture doctrine this is the best economy battlefield in the pool for
   us: we conquer nearly every turn, and 2 readied runes at end of turn is
@@ -277,8 +387,8 @@ sideboard, battlefields, runes and Legend.
   an attacker home mid-combat.
 - 2 Crescent Strike — 4 damage plus 1 splash at Action speed; cheapest real
   creature removal in the identity.
-- 1 Riptide Rex (third copy) — the Vex-Apathetic dial. User's play data: Rex
-  was the card that beat the Diana/Vex deck.
+- 1 Riptide Rex — **the only copy since v6 cut it from the main deck.** The
+  Vex-Apathetic dial; user's play data says Rex was what beat the Diana/Vex deck.
 - 1 Turn to Dust — cheap extra gear hate.
 
 **Boarding plans** (no silver bullets; keep a going-first and going-second plan):
@@ -299,17 +409,29 @@ sideboard, battlefields, runes and Legend.
   v2/v4/v5. Still above the ~8 threshold, but every revision has traded
   sprite-generation for interaction. If it drops below 8, the Legend has been
   outgrown and the deck should be rebuilt around what it is actually doing.
-- **Sprite Call at 2** — critique calls it an engine piece below engine
-  density, and it was kept specifically because it *is* the sprite plan. If the
-  deck feels short on Sprites in testing, this is the first slot back to 3.
-- **The 8th point.** Rule 471.1.b.1: a Conquer for the winning point only works
-  if you scored *every* battlefield that turn; Hold has no such restriction.
-  The 8th point must come from a real body holding (Trevor, Pixie, Scuttle
-  Crab, a bomb) or a same-turn double conquest — which needs **two ready
-  Sprites in your BASE**, because a Standard Move can't go Battlefield →
-  Battlefield without Ganking (144.4). See `patterns.md`.
-- **Rune attrition is 24**, the highest of any version. Fine for a deck closing
-  turns 7-9; a reason not to let this list drift toward a longer game.
+- ~~Sprite Call at 2~~ — **resolved in v6**: back to 3. The double conquest
+  needs ready Sprites in base, and Sprite Call from hand is one of only three
+  sources (with the Legend and Sprite Fountain).
+- **The 8th point — now the deck's declared plan, and it needs a judge check.**
+  Re-read 2026-08-05: **469.1 makes the Conquer itself the Score**, and 471.1
+  says the player "Gains **up to one** Point" — so at 7 you conquer A (Score A,
+  draw a card instead of the point), then conquer B (Score B; every battlefield
+  is now Scored, so the Final Point lands and you win). An earlier note here
+  called this unsafe; that was too pessimistic. It is still the one ruling worth
+  confirming with a judge before an event, because the whole plan rests on it.
+  Requires **two ready Sprites in your BASE** — a Standard Move can't go
+  Battlefield → Battlefield without Ganking (144.4). See `patterns.md`.
+- **Consistency of two 1-of Seals.** A 1-of is seen by turn 5 about 20% of the
+  time. If the Seals feel absent, consolidate to 2x Seal of Insight — Mind
+  carries 12 of the 20 hard pips against Calm's 8.
+- **Rune attrition still prints as 24**, but the tool cannot see the Seals
+  repaying their own pip and then producing one free per turn. Real figure is
+  ~22 one-time, minus 2 per turn once both Seals are down. Fixing `analyze.py`
+  to model Add-abilities is a real to-do.
+- **Riptide Rex at 2 is on notice.** {6}{P2} recycles 2 runes and you channel 2
+  per turn, so it costs a full turn of channelling on top of its cast. The
+  Watcher does the double-conquer job better for 1 pip. Rex stays for now as the
+  Vex - Apathetic answer; cut it to 1 if the rune bleed still bites.
 - **Ahri - Alluring** ("When I hold, score 1 point") still needs a judge check
   against rule 470 before being built around.
 - **Charm's forced combat** — worth a judge check on who counts as attacker vs

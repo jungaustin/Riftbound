@@ -1,0 +1,51 @@
+Legend:
+1 Lillia - Bashful Bloom
+
+Champion:
+1 Lillia - Fae Fawn
+
+MainDeck:
+2 Lillia - Fae Fawn
+2 Petal Pixie
+2 Scuttle Crab
+3 Sprite Fountain
+2 Sprite Call
+2 Seal of Focus
+2 Seal of Insight
+3 Stupefy
+3 Defy
+3 Discipline
+2 En Garde
+2 Lilting Lullaby
+1 Crumbling Sands
+1 Retreat
+2 Smoke and Mirrors
+2 Emperor's Divide
+2 Zhonya's Hourglass
+2 Block
+2 Blastcone Fae
+2 Temporal Breach
+2 Wages of Pain
+2 Back Off
+2 Consult the Past
+2 Heart of Dark Ice
+2 Singularity
+2 Thousand-Tailed Watcher
+1 Unchecked Power
+
+Battlefields:
+1 Dusk Rose Lab
+1 Hall of Legends
+1 Ravenbloom Conservatory
+
+Rune Pool:
+6 Mind Rune
+6 Calm Rune
+
+Sideboard:
+2 Disarming Rake
+2 Akali, Silent
+2 Janna - Savior
+2 Crescent Strike
+1 Riptide Rex
+1 Turn to Dust
