@@ -164,6 +164,37 @@ def plan_payment(state: GameState, table: CardTable, seat: int, card: int,
     return picks
 
 
+def plan_surcharge(state: GameState, table: CardTable, seat: int, card: int,
+                   power: int) -> list[int] | None:
+    """Domains to recycle for a Deflect surcharge on top of `card`'s own cost.
+
+    809.1.c.1 is explicit that **this Power may be of any Domain**, unlike the
+    card's printed Power -- "a Fury spell targets an Order unit with Deflect;
+    the Power used to pay can be any Domain". So it cannot go through
+    `plan_payment`'s `extra_power`, which allocates within the CARD's domains
+    and would refuse a payment the rules allow.
+
+    Returns the surcharge's own recycles, or None if the seat cannot cover both
+    this and the card's printed cost from the same rune board.
+    """
+    base = plan_payment(state, table, seat, card)
+    if base is None:
+        return None
+    if power <= 0:
+        return []
+    left = {d: int(n) for d, n in enumerate(state.runes_in_play(seat))}
+    for d in base:                       # the card's own Power is spoken for
+        left[d] -= 1
+    picks: list[int] = []
+    for _ in range(power):
+        best = max(range(N_DOMAINS), key=lambda d: (left[d], -d))
+        if left[best] <= 0:
+            return None
+        left[best] -= 1
+        picks.append(best)
+    return picks
+
+
 def plan_ability_cost(state: GameState, table: CardTable, seat: int, card: int,
                       energy: int, power: int) -> list[int] | None:
     """Same as `plan_payment` but for a cost that is NOT a card's printed one.

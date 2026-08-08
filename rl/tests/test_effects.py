@@ -435,4 +435,84 @@ if apply_discounts(2, [(9, 0)]) != 0 or apply_discounts(0, [(3, 2)]) != 0:
     die("discounts", "a discount must never raise a cost or go below 0")
 ok("discounts never raise a cost and never go negative")
 
+# ---------------------------------------------------------------------------
+print("\n[7] [Deflect] taxes the OPPONENT's targeting (809)")
+
+from dataclasses import replace as _replace
+from rl.engine import actions as A
+from rl.engine import chain
+from rl.engine.state import MAIN
+
+V1 = _replace(Config().at_victory_score(3), units_only=False)
+BIRD = T.id_of("Bird")                     # 1 Might, [Deflect]
+RUNE_PRISON = T.id_of("Rune Prison")       # [Action] 2e1p: Stun a unit
+
+if int(T.deflect[BIRD]) != 1:
+    die("deflect", "the Bird token should carry Deflect 1 (809.1.b.3)")
+
+def _board(runes):
+    """A board with `runes` runes in the spell's own domain, and nothing else.
+
+    Rune Prison costs {2 energy}{1 power}, so its printed Power needs one rune
+    of ITS domain; the Deflect surcharge may then come from any domain
+    (809.1.c.1), which here means the same pile.
+    """
+    dom = next(d for d in range(6) if int(T.domain_mask[RUNE_PRISON]) >> d & 1)
+    s = GameState()
+    s.n_deck[:] = 10
+    s.deck[:, :10] = PLAIN[2]
+    s.hand[0, 0] = RUNE_PRISON
+    s.n_hand[0] = 1
+    s.runes_ready[0, :] = 0
+    s.runes_ready[0, dom] = runes
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    return s
+
+# Enemy Bird: the surcharge applies. Friendly Bird: it does not (809.1.c).
+s = _board(runes=3)
+mine = s.add_permanent(BIRD, 0, bf_loc(0))
+theirs = s.add_permanent(BIRD, 1, bf_loc(1))
+if resolve.deflect_cost(s, T, 0, [mine]) != 0:
+    die("deflect", "targeting your OWN Deflect unit must cost nothing")
+if resolve.deflect_cost(s, T, 0, [theirs]) != 1:
+    die("deflect", "targeting an enemy Deflect unit costs 1 Power")
+if resolve.deflect_cost(s, T, 0, [theirs, theirs]) != 2:
+    die("deflect", "809.1.c is per CHOICE -- choosing it twice pays twice")
+ok("the surcharge is the opponent's only, and is charged per choice")
+
+# With runes to spare, both are legal targets.
+opts = resolve.legal_targets(s, T, SPECS["Rune Prison"], 0, 0, [], -1,
+                             card=RUNE_PRISON)
+if sorted(opts) != sorted([mine, theirs]):
+    die("deflect", f"with 3 runes both should be targetable, got {opts}")
+ok("with Power to spare, a Deflect unit is a legal target like any other")
+
+# Exactly enough for the card and nothing for the surcharge: the enemy Bird
+# stops being a legal choice, rather than being announced and then stuck.
+#
+# Punch First is {1 energy}{2 power}: the rune requirement is max(1, 2) = 2 and
+# ALL of it is recycled for Power, so two runes leave nothing behind. Rune
+# Prison cannot show this -- it recycles only 1 of its 2 runes, so the spare
+# always covers the surcharge.
+PUNCH = T.id_of("Punch First")
+dom_p = next(d for d in range(6) if int(T.domain_mask[PUNCH]) >> d & 1)
+s2 = GameState()
+s2.n_deck[:] = 10
+s2.deck[:, :10] = PLAIN[2]
+s2.hand[0, 0] = PUNCH
+s2.n_hand[0] = 1
+s2.runes_ready[0, :] = 0
+s2.runes_ready[0, dom_p] = 2
+s2.phase, s2.active, s2.priority = MAIN, 0, 0
+mine2 = s2.add_permanent(BIRD, 0, bf_loc(0))
+theirs2 = s2.add_permanent(BIRD, 1, bf_loc(1))
+opts2 = resolve.legal_targets(s2, T, SPECS["Punch First"], 0, 0, [], -1,
+                              card=PUNCH)
+if theirs2 in opts2:
+    die("deflect", "an unaffordable Deflect surcharge must remove the target; "
+                   "otherwise the card announces and can never finalize")
+if mine2 not in opts2:
+    die("deflect", "the free (friendly) target was wrongly removed too")
+ok("an unpayable surcharge makes it not a target -- no announce-then-deadlock")
+
 print("\n\033[32mall effect tests passed\033[0m")

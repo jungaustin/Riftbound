@@ -38,7 +38,7 @@ from rl.engine import resolve as rsv
 # importing the action layer. Re-exported: callers still say A.plan_payment.
 from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
                             card_domains, pay, pay_ability_cost,
-                            plan_ability_cost, plan_payment)
+                            plan_ability_cost, plan_payment, plan_surcharge)
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import (TR_ACTIVATED, TR_PLAY_ME, TR_PLAY_SPELL,
                                abilities_for, spec_for)
@@ -132,7 +132,7 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
                 continue
             # 355.8, same as for a card: no legal targets, no activation.
             if ab.n_targets and not rsv.can_be_cast(state, table, ab, seat,
-                                                    -1, i):
+                                                    -1, i, card):
                 continue
             out.append(i)
             break
@@ -477,7 +477,8 @@ def _slot_options(state: GameState, table: CardTable, item: int) -> list[int]:
     # slot unfillable is itself illegal (359.3.e.14.a) and would deadlock.
     return rsv.choosable_targets(state, table, spec, slot, seat, chosen,
                                  int(state.chain[item, C_BOUND_BF]),
-                                 int(state.chain[item, C_SRC]))
+                                 int(state.chain[item, C_SRC]),
+                                 int(state.chain[item, C_CARD]))
 
 
 def _advance_pending(state: GameState, table: CardTable, cfg: Config) -> dict:
@@ -578,12 +579,29 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
         chain.finalize(state, item)
         state.priority = seat
         return {"finalized_ability": table.names[card]}
+    spec_c = spec_for(table, card)
+    n_t = spec_c.n_targets if spec_c else 0
+    chosen = [int(x) for x in state.chain_targets[item, :n_t]]
+    # 809.1.d -- Deflect is a MANDATORY additional cost on the chooser, in
+    # Power, of any domain (809.1.c.1). It is owed whether the card came from
+    # hand or from hiding: 811.1.b zeroes the CARD's cost, not a surcharge
+    # someone else's permanent imposes.
+    extra_p = rsv.deflect_cost(state, table, seat, chosen, spec_c)
+    # Planned BEFORE anything is paid: `plan_surcharge` reserves the card's own
+    # Power first and allocates the surcharge from what is left, so asking it
+    # after `pay` had already recycled would spend the same runes twice.
+    surcharge = []
+    if extra_p:
+        surcharge = plan_surcharge(state, table, seat, card, extra_p)
+        assert surcharge is not None, "unaffordable Deflect cost at finalization"
     if int(state.chain[item, C_BOUND_BF]) < 0:
         # 811.1.b -- a card played from Hidden ignores its cost entirely. The
         # rune was already paid when it was hidden.
         recycle = plan_payment(state, table, seat, card)
         assert recycle is not None, "unaffordable spell reached finalization"
         pay(state, table, seat, card, recycle)
+    for dom in surcharge:
+        state.recycle_rune(seat, dom)
     chain.finalize(state, item)
     # "When you play a spell" -- 349 makes a card *played* at finalization, not
     # at resolution, so Ravenbloom Student grows the moment the spell is

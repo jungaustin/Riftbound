@@ -550,6 +550,7 @@ def statics_for(table, card: int) -> tuple[Static, ...]:
 # several, which is why the value is a tuple.
 # ---------------------------------------------------------------------------
 RECRUIT_TOKEN = "Recruit (271) // Buff"   # 1 Might domainless unit token
+BIRD_TOKEN = "Bird"                       # 1 Might with [Deflect], rule 187.7
 MECH_TOKEN = "Mech"                       # 3 Might, rule 187.4
 
 ABILITIES: dict[str, tuple[Ability, ...]] = {
@@ -665,6 +666,19 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # When I move, draw 1.
     "Stellacorn Herder": (
         Ability(TR_MOVE, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # [Deathknell][>] Play a 1 Might Bird unit token with [Deflect] to your base.
+    "Carrion Dredger": (
+        Ability(TR_DEATH,
+                ops=(Op(OP_CREATE_TOKEN, n=1, token=BIRD_TOKEN),)),
+    ),
+
+    # When you play me, play a 1 Might Bird unit token with [Deflect] here.
+    "Frisky Hunter": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_CREATE_TOKEN, target=T_HERE, n=1,
+                        token=BIRD_TOKEN),)),
     ),
 
     # [Deathknell] - Play two 3 Might Mech unit tokens to your base.

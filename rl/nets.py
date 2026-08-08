@@ -63,7 +63,8 @@ def init_(module: nn.Module, gain: float = math.sqrt(2), bias: float = 0.0):
     for m in module.modules():
         if isinstance(m, nn.Linear):
             nn.init.orthogonal_(m.weight, gain)
-            nn.init.constant_(m.bias, bias)
+            if m.bias is not None:      # the policy scorer is bias-free
+                nn.init.constant_(m.bias, bias)
     return module
 
 
@@ -101,7 +102,16 @@ class RiftboundNet(nn.Module):
         self.trunk = init_(mlp([trunk_in, hidden, hidden], True))
 
         # Policy: score each candidate action against the trunk state.
+        #
+        # The last layer has **no bias**, and that is not a tuning choice: it
+        # emits one score per candidate and the scores go through a softmax,
+        # which is invariant to adding the same constant to all of them. A bias
+        # there is added identically to every candidate and cancels exactly, so
+        # its gradient is structurally zero. Leaving it in made `test_ppo`'s
+        # "every parameter moved" check pass on floating-point noise and fail at
+        # random -- a flaky test pointing at a parameter that could never move.
         self.act_head = init_(mlp([hidden + act_dim, head_hidden, head_hidden, 1]))
+        self.act_head[-1] = nn.Linear(head_hidden, 1, bias=False)
         init_(self.act_head[-1], gain=0.01)
 
         # Critic: trunk state plus the information the policy is denied.

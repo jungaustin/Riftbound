@@ -57,6 +57,57 @@ from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, F_BUFFED,
                              base_loc, bf_loc, is_battlefield)
 
 
+def deflect_cost(state: GameState, table: CardTable, seat: int,
+                 chosen: list[int], spec: CardSpec | None = None) -> int:
+    """Extra Power owed for choosing [Deflect] permanents (809.1.c).
+
+    "Spells and abilities an OPPONENT controls that target me cost an amount of
+    Power equal to the Deflect Value more to play, for each time they choose
+    me." Three details the wording carries and a naive reading drops:
+
+      - only an opponent's spell pays it, so targeting your own Deflect unit
+        is free;
+      - it is per CHOICE, so a card that targets the same unit twice pays
+        twice -- which is why this sums over `chosen` rather than over the set;
+      - 809.1.c.1 the Power may be of ANY domain, unlike a printed Power cost.
+    """
+    total = 0
+    for slot, p in enumerate(chosen):
+        # **A slot's value means whatever its KIND says.** A TK_LOCATION slot
+        # holds 0-3, which are perfectly valid permanent ROW indices, so
+        # reading every slot as a row charged a phantom surcharge for whichever
+        # unit happened to sit in row 2 -- and then failed the affordability
+        # assert at finalization. Only unit slots can carry a Deflect target.
+        if spec is not None:
+            if slot >= spec.n_targets or spec.targets[slot].kind != TK_UNIT:
+                continue
+        if p is None or p < 0 or p >= state.n_perms:
+            continue
+        if state.perms[p, P_ALIVE] != 1 or int(state.perms[p, P_CTRL]) == seat:
+            continue
+        total += int(table.deflect[int(state.perms[p, P_CARD])])
+    return total
+
+
+def _affordable_with(state: GameState, table: CardTable, card: int, seat: int,
+                     chosen: list[int], extra: int,
+                     spec: CardSpec | None = None) -> bool:
+    """Could `seat` still pay for `card` after choosing these targets?
+
+    Deflect turns affordability into part of target LEGALITY: a target the
+    caster cannot pay the surcharge for was never a legal choice, and offering
+    it would announce a card that can never be finalized -- the same deadlock
+    shape as a target dead-end.
+    """
+    if card < 0:
+        return True
+    need = deflect_cost(state, table, seat, chosen, spec) + extra
+    if need <= 0:
+        return True
+    from rl.engine.cost import plan_surcharge
+    return plan_surcharge(state, table, seat, card, need) is not None
+
+
 def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
              seat: int, chosen: list[int], bound_bf: int,
              source: int = -1) -> bool:
@@ -140,7 +191,7 @@ def _location_targets(state: GameState, spec: TargetSpec, seat: int,
 
 def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
                   seat: int, chosen: list[int], bound_bf: int,
-                  source: int = -1) -> list[int]:
+                  source: int = -1, card: int = -1) -> list[int]:
     """Values that may fill `slot`. Their meaning depends on the slot's kind:
     a permanent row, a chain uid (TK_SPELL), or a location (TK_LOCATION)."""
     t = spec.targets[slot]
@@ -150,12 +201,17 @@ def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
         return _spell_targets(state, table, t, chosen)
     return [i for i in range(state.n_perms)
             if i not in chosen
-            and _matches(state, table, t, i, seat, chosen, bound_bf, source)]
+            and _matches(state, table, t, i, seat, chosen, bound_bf, source)
+            # 809 -- an unaffordable Deflect surcharge makes it not a choice.
+            and _affordable_with(state, table, card, seat, chosen,
+                                 int(table.deflect[int(state.perms[i, P_CARD])])
+                                 if int(state.perms[i, P_CTRL]) != seat else 0,
+                                 spec)]
 
 
 def _can_complete(state: GameState, table: CardTable, spec: CardSpec, slot: int,
                   seat: int, chosen: list[int], bound_bf: int,
-                  source: int = -1) -> bool:
+                  source: int = -1, card: int = -1) -> bool:
     """Can slots `slot`..end still all be filled, given `chosen` so far?
 
     Backtracking, not greedy. Greedy is wrong here: Facebreaker's slots are
@@ -171,17 +227,18 @@ def _can_complete(state: GameState, table: CardTable, spec: CardSpec, slot: int,
         # can always be completed by skipping it. Without this the whole card
         # would be unplayable when the board is too empty to fill it.
         return _can_complete(state, table, spec, slot + 1, seat, chosen + [-1],
-                             bound_bf, source)
+                             bound_bf, source, card)
     return any(
         _can_complete(state, table, spec, slot + 1, seat, chosen + [p], bound_bf,
-                      source)
+                      source, card)
         for p in legal_targets(state, table, spec, slot, seat, chosen, bound_bf,
-                               source))
+                               source, card))
 
 
 def choosable_targets(state: GameState, table: CardTable, spec: CardSpec,
                       slot: int, seat: int, chosen: list[int],
-                      bound_bf: int, source: int = -1) -> list[int]:
+                      bound_bf: int, source: int = -1,
+                      card: int = -1) -> list[int]:
     """Targets for `slot` that do not dead-end the slots after it.
 
     359.3.e.14.a says a card whose targets cannot all be chosen legally cannot
@@ -190,15 +247,15 @@ def choosable_targets(state: GameState, table: CardTable, spec: CardSpec,
     would leave a card that can never be finalized.
     """
     return [p for p in legal_targets(state, table, spec, slot, seat, chosen,
-                                     bound_bf, source)
+                                     bound_bf, source, card)
             if _can_complete(state, table, spec, slot + 1, seat, chosen + [p],
-                             bound_bf, source)]
+                             bound_bf, source, card)]
 
 
 def can_be_cast(state: GameState, table: CardTable, spec: CardSpec, seat: int,
-                bound_bf: int, source: int = -1) -> bool:
+                bound_bf: int, source: int = -1, card: int = -1) -> bool:
     """Is there any legal way to fill every slot? (359.3.e.14.a)"""
-    return _can_complete(state, table, spec, 0, seat, [], bound_bf, source)
+    return _can_complete(state, table, spec, 0, seat, [], bound_bf, source, card)
 
 
 # ---------------------------------------------------------------------------

@@ -95,7 +95,7 @@ def playable_hand_indices(state: GameState, table: CardTable, cfg: Config,
             continue
         # 359.3.e.14.a -- a card that cannot legally choose all of its targets
         # cannot be played at all.
-        if not rsv.can_be_cast(state, table, spec, seat, -1):
+        if not rsv.can_be_cast(state, table, spec, seat, -1, card=card):
             continue
         out.append(i)
     return out
@@ -166,7 +166,7 @@ def hidden_playable(state: GameState, table: CardTable, cfg: Config,
             continue
         # Playing from Hidden costs 0 energy (811.1.b), so there is no payment
         # gate -- only the targeting one.
-        if not rsv.can_be_cast(state, table, spec, seat, i):
+        if not rsv.can_be_cast(state, table, spec, seat, i, card=card):
             continue
         out.append(i)
     return out
@@ -335,7 +335,8 @@ def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,
         # another unit") played onto an empty board is the case -- without
         # this, the trigger sat Pending with an empty option list and the game
         # deadlocked with a player to act and nothing to do.
-        if ab.n_targets and not rsv.can_be_cast(state, table, ab, ctrl, -1, src):
+        if ab.n_targets and not rsv.can_be_cast(state, table, ab, ctrl, -1, src,
+                                                card):
             continue
         push(state, card, ctrl, from_hand=False, abil=k, src=src, ctx=ctx)
         n += 1

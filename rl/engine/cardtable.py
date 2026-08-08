@@ -185,6 +185,7 @@ class CardTable:
     # them on every call.
     shield: np.ndarray        # int16, 0 = no [Shield]
     assault: np.ndarray       # int16, 0 = no [Assault]
+    deflect: np.ndarray       # int16, 0 = no [Deflect] (809)
     text_len: np.ndarray      # int16, reminder text stripped
     token: np.ndarray         # bool, supertype == Token (185.3)
 
@@ -285,6 +286,7 @@ def _rows(cards: list[Card]) -> CardTable:
         kw_mask=np.array([keyword_mask(c.text) for c in cards], np.uint32),
         shield=np.array([keyword_value(c.text, "Shield") for c in cards], np.int16),
         assault=np.array([keyword_value(c.text, "Assault") for c in cards], np.int16),
+        deflect=np.array([keyword_value(c.text, "Deflect") for c in cards], np.int16),
         text_len=np.array([len(body_text(c.text)) for c in cards], np.int16),
         token=np.array([c.name in _tokens for c in cards], bool),
     )
