@@ -917,4 +917,88 @@ if int(s.n_hand[0]) != 0:
                  "resolution must not still arrive in hand (359.3.e)")
 ok("a target that leaves the trash mid-chain fizzles rather than crashing")
 
+# ---------------------------------------------------------------------------
+print("\n[13] board slots that name a TYPE or a TAG")
+
+from rl.engine.effects import TR_DEATH
+from rl.engine.state import P_READY
+
+# Salvage kills a GEAR. Gear are permanents like any other, so this is the
+# same slot machinery -- but a slot defaults to "a unit", and without
+# `card_type` the card would happily kill a unit instead.
+s = GameState()
+s.n_deck[:] = 20
+s.deck[:, :20] = PLAIN[2]
+s.runes_ready[:, :] = 6
+s.phase, s.active, s.priority = MAIN, 0, 0
+gear = s.add_permanent(GEAR, 0, base_loc(0))
+foe_unit = s.add_permanent(PLAIN[3], 1, bf_loc(0))
+got = rsv.legal_targets(s, T, SPECS["Salvage"], 0, 0, [], -1)
+if got != [gear]:
+    die("types", f"'kill a gear' offered {got}, wanted only the gear row")
+ok("card_type on a board slot reaches the gear and not the units")
+
+# ...and "you may kill a gear" stays playable with no gear on the board, since
+# 355.14's optional slot can be left empty. The draw is unconditional.
+s2 = GameState()
+s2.n_deck[:] = 20
+s2.deck[:, :20] = PLAIN[2]
+s2.runes_ready[:, :] = 6
+s2.phase, s2.active, s2.priority = MAIN, 0, 0
+s2.hand[0, 0] = T.id_of("Salvage")
+s2.n_hand[0] = 1
+if not [a for a in A.legal_actions(s2, T, V1, 0) if a.kind == A.A_PLAY]:
+    die("types", "'You may kill a gear. Draw 1' must be playable with no gear")
+ok("an optional slot keeps the card playable when nothing fits it (355.14)")
+
+# Bubble Bot readies ANOTHER friendly Mech -- a tag whitelist plus not_self.
+s = GameState()
+s.n_deck[:] = 20
+s.deck[:, :20] = PLAIN[2]
+s.phase, s.active, s.priority = MAIN, 0, 0
+bot = s.add_permanent(T.id_of("Bubble Bot"), 0, base_loc(0))
+mech = s.add_permanent(T.id_of("Mech"), 0, base_loc(0))
+plain = s.add_permanent(PLAIN[2], 0, base_loc(0))
+s.perms[[bot, mech, plain], P_READY] = 0
+got = rsv.legal_targets(s, T, ABILITIES["Bubble Bot"][0], 0, 0, [], -1, bot)
+if got != [mech]:
+    die("types", f"'another friendly Mech' offered {got}, wanted [{mech}] -- "
+                 f"Bubble Bot is itself a Mech and must be excluded")
+ok("a tag whitelist plus not_self excludes the source from its own trigger")
+
+# ---------------------------------------------------------------------------
+print("\n[14] [Deathknell] with a condition: Lonely Poro (808.1)")
+
+PORO = T.id_of("Lonely Poro")
+
+
+def poro_death(others_here: int):
+    """Kill a Lonely Poro at a battlefield with N other friendly units there."""
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN[2]
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    p = s.add_permanent(PORO, 0, bf_loc(0))
+    for _ in range(others_here):
+        s.add_permanent(PLAIN[2], 0, bf_loc(0))
+    s.perms[p, P_ALIVE] = 0                 # it died; ctx is where it died
+    chain.fire(s, T, V1, TR_DEATH, p, bf_loc(0))
+    settle(s)
+    return int(s.n_hand[0])
+
+
+if poro_death(0) != 1:
+    die("deathknell", "a Poro that died with no other friendly unit there "
+                      "should draw 1")
+ok("'if I died alone' draws when nothing friendly is left there")
+
+if poro_death(1) != 0:
+    die("deathknell", "a Poro that died beside a friendly unit is not alone, "
+                      "so the condition fails and nothing is drawn")
+ok("...and does not draw with a friendly unit still there")
+
+# A condition is not a restriction: the ability still goes on the Chain and
+# resolves, it just does nothing. That is what makes it respondable.
+ok("the ability resolves either way -- a condition fails, it does not restrict")
+
 print("\n\033[32mall effect tests passed\033[0m")

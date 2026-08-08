@@ -32,7 +32,8 @@ from rl.config import Config
 from rl.engine import phases
 from rl.engine.cardtable import CardTable
 from rl.engine import combat
-from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
+from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
+                               COND_FROM_HAND,
                                COND_NONE, COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
                                OP_DRAW_CONTROLLER, OP_KILL,
@@ -120,7 +121,19 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
     row = state.perms[perm]
     if row[P_ALIVE] != 1:
         return False
-    if spec.kind == TK_UNIT and not table.is_type(int(row[P_CARD]), "Unit"):
+    card = int(row[P_CARD])
+    # `card_type` overrides the kind's default. A TK_UNIT slot means "a unit"
+    # unless the card says otherwise -- Salvage kills a GEAR, and gear are
+    # permanents on the board like any other, so they need the same slot rather
+    # than a parallel target kind.
+    if spec.card_type:
+        if not any(table.is_type(card, t) for t in spec.card_type):
+            return False
+    elif spec.kind == TK_UNIT and not table.is_type(card, "Unit"):
+        return False
+    # A tag whitelist -- Bubble Bot's "another friendly Mech". Tags carry no
+    # rules of their own; they exist only to be named like this.
+    if spec.tags and not any(t in table.tags[card] for t in spec.tags):
         return False
     if spec.not_self and perm == source:
         return False          # "another unit" -- never the ability's own source
@@ -315,9 +328,22 @@ def can_be_cast(state: GameState, table: CardTable, spec: CardSpec, seat: int,
 
 def _condition_holds(state: GameState, table: CardTable, op: Op,
                      targets: list[int], from_hand: bool, seat: int = -1,
-                     source: int = -1) -> bool:
+                     source: int = -1, ctx: int = -1) -> bool:
     if op.cond == COND_NONE:
         return True
+    if op.cond == COND_DIED_ALONE:
+        # Lonely Poro: "If I died alone" -- its own reminder defines alone as
+        # "there are no other friendly units here". `ctx` is the location
+        # captured when it died (359.3.f.3); the unit itself is already dead
+        # by now, so every live friendly unit there is an "other".
+        #
+        # **Open rules question, deliberately left visible.** Simultaneous
+        # deaths are ambiguous: a Cleanup that kills two friendly units at one
+        # battlefield leaves both dead before either trigger resolves, so this
+        # reading calls both of them alone. The alternative -- capturing
+        # aloneness at the moment of death -- would call neither. Nothing in
+        # 808 or 383 settles it, and the two readings differ only in that case.
+        return ctx >= 0 and state.units_at(ctx, seat).size == 0
     if op.cond == COND_FROM_HAND:
         return from_hand
     if op.cond == COND_ONLY_UNIT_THERE:
@@ -411,7 +437,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
 
     for op in spec.ops:
         if not _condition_holds(state, table, op, still_legal, from_hand,
-                                seat, source):
+                                seat, source, ctx):
             log["fizzled"].append(op.op)
             continue
 

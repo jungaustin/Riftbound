@@ -46,6 +46,16 @@ from rl.engine.effects import ABILITIES, SPECS, STATICS
 # false "ready" flags on nine deck cards.
 MISSING_TOKENS = r"(Gold|Bird|Mech|Sand Soldier|Reflection|Poro|Treasure)\b[^.]*token"
 
+# Ability keywords whose TRIGGER the DSL already has. 808.1 makes [Deathknell]
+# short for "When I die, [Effect]" and the effect is the card's own text, so the
+# keyword is not itself the blocker -- the card is ready exactly when that text
+# is expressible, which the residual check below decides.
+#
+# `config.ABILITY_KEYWORDS` also lists Vision and Hunt, and those are NOT here:
+# no TR_ for either exists yet, so a card carrying one is genuinely blocked and
+# should say so rather than being offered as transcription.
+TRIGGER_KEYWORDS = {"Deathknell"}
+
 MECHANISMS = [
     ("MissingToken", MISSING_TOKENS),
     ("Empower",     r"\[Empower"),
@@ -97,15 +107,28 @@ def deck_slots(table) -> Counter:
 def classify(table, cid: int) -> tuple[str, bool]:
     """(blocking mechanism or '-', ready-to-transcribe).
 
-    Both questions are asked of `residual_text`, never of `raw_text`. A
-    keyword's REMINDER text describes the keyword, and once the engine
-    implements that keyword the reminder is no longer a statement about work
-    left to do. [Flow] prints "(You may play this from your trash for its flow
-    cost)", so matching raw text filed eleven ordinary spells -- Brittle Steel's
-    "Kill a gear", Onslaught's "+6 Might" -- under a trash-recursion mechanism
-    none of them touch, and buried them behind the cluster's design work when
-    they were pure transcription.
+    A card is blocked by an unimplemented KEYWORD or by unimplemented TEXT, and
+    the two need different evidence:
+
+      - keywords are asked of `unread_keywords`, the engine's own record of
+        what it never consults. Asking the text instead means a keyword whose
+        reminder is stripped from `residual_text` disappears entirely --
+        [Empower] and [Predict] print nothing but their own reminder, so Noxian
+        Emissary and Eclipse both read as pure transcription when they are not.
+      - text is asked of `residual_text`, never `raw_text`. A keyword's
+        REMINDER describes the keyword, and once the engine implements it the
+        reminder is no longer a statement about work left to do. [Flow] prints
+        "(You may play this from your trash for its flow cost)", which filed
+        eleven ordinary spells -- Brittle Steel's "Kill a gear", Onslaught's
+        "+6 Might" -- under a trash-recursion mechanism none of them touch.
+
+    Both readings were wrong in opposite directions, and each one hid roughly a
+    dozen cards.
     """
+    unread = [k for k in table.unread_keywords(cid)
+              if k not in TRIGGER_KEYWORDS]
+    if unread:
+        return unread[0], False
     residual = table.residual_text(cid)
     for label, pat in MECHANISMS:
         if re.search(pat, residual):

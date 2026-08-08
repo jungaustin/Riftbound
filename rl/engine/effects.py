@@ -90,7 +90,7 @@ T_OWNER_BASE = -5  # the base of the unit in the op's FIRST slot ("to its base")
 
 # --- conditions, checked at resolution ------------------------------------
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
- COND_ONLY_UNIT_THERE, COND_CONTROL_N_GEAR) = range(5)
+ COND_ONLY_UNIT_THERE, COND_CONTROL_N_GEAR, COND_DIED_ALONE) = range(6)
 
 
 class TargetSpec(NamedTuple):
@@ -433,6 +433,32 @@ SPECS: dict[str, CardSpec] = {
         ops=(Op(OP_RETURN_TO_HAND, target=0),),
     ),
 
+    # [Hidden][Reaction] Draw 2.
+    "Consult the Past": CardSpec(
+        speed=SPEED_REACTION,
+        ops=(Op(OP_DRAW, n=2),),
+    ),
+
+    # [Action] Kill a unit at a battlefield.
+    "Blast of Power": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY, at_battlefield=True),),
+        ops=(Op(OP_KILL, target=0),),
+    ),
+
+    # [Action] You may kill a gear. Draw 1.
+    #
+    # "You may" on a spell is 355.14's optional slot, not a resolution-time
+    # choice: declining is simply choosing no target, and the draw is
+    # unconditional either way. `card_type` retargets the slot at gear --
+    # they are permanents on the board like any other, so this is the same
+    # slot machinery rather than a parallel kind.
+    "Salvage": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY, card_type=("Gear",), optional=True),),
+        ops=(Op(OP_KILL, target=0), Op(OP_DRAW, n=1)),
+    ),
+
     # --- trash recursion ---------------------------------------------------
     # Every card below names a card in a TRASH rather than on the board, which
     # is what TK_TRASH_CARD is for. Read the note beside it in this file before
@@ -661,6 +687,47 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # DSL only owns the second sentence.
     "Lecturing Yordle": (
         Ability(TR_PLAY_ME, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # When you play me, draw 1.
+    "Cloud Drake": (
+        Ability(TR_PLAY_ME, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # [Deathknell] If I died alone, draw 1.
+    # 808.1 makes [Deathknell] short for "When I die, [Effect]", so the keyword
+    # is TR_DEATH and the card's own text is the whole ability. "Alone" is a
+    # CONDITION -- checked on resolution, nothing to target -- and the card's
+    # reminder defines it: "no other friendly units here".
+    "Lonely Poro": (
+        Ability(TR_DEATH, ops=(Op(OP_DRAW, n=1, cond=COND_DIED_ALONE),)),
+    ),
+
+    # When you play me, ready ANOTHER friendly Mech. A tag restriction plus
+    # `not_self` -- Bubble Bot is itself a Mech, and would otherwise be the
+    # obvious pick for its own trigger.
+    "Bubble Bot": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_FRIENDLY, tags=("Mech",),
+                                    not_self=True),),
+                ops=(Op(OP_READY, target=0),)),
+    ),
+
+    # [Hidden] When you play me, give a unit -2 Might this turn, to a minimum
+    # of 1 Might. The floor is printed on the card, stricter than 143.2.b's
+    # general floor of 0, so it rides on the Op rather than being a rule.
+    "Blastcone Fae": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=-2, floor=1),)),
+    ),
+
+    # When you play me, you may kill a gear.
+    "Disarming Rake": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY, card_type=("Gear",),
+                                    optional=True),),
+                ops=(Op(OP_KILL, target=0),)),
     ),
 
     # --- trash recursion, on a trigger -------------------------------------

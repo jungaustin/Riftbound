@@ -84,6 +84,13 @@ _KW_TOKEN = re.compile(r"\[([A-Za-z][A-Za-z ]*?)\s*\d*\]")
 # Things that may sit between owned keywords in the leading run without ending
 # it: whitespace, an em dash, a cost like {1 energy}, an ability marker [>].
 _KW_FILLER = re.compile(r"\s+|[—-]|\{[^}]*\}|\[>+\]")
+# A keyword standing as a whole sentence: start of text or a preceding '.',
+# then only fillers, the token, optional cost, and a '.' or end. Eclipse's
+# "...this turn.[Predict]." qualifies; "give it [Temporary]." does not, because
+# "give it" sits between the sentence break and the token.
+_KW_SENTENCE = re.compile(
+    r"(?:^|(?<=\.))\s*\[([A-Za-z][A-Za-z ]*?)\s*\d*\]"
+    r"(?:\s*\{[^}]*\})*\s*(?=\.|$)")
 
 
 def keyword_mask(text: str) -> int:
@@ -103,7 +110,7 @@ def keyword_mask(text: str) -> int:
     [Ambush]'s own reminder ("You may play me as a [Reaction]...") granted
     Reaction to every Ambush card.
 
-    Two signals separate having from mentioning, and a keyword needs either:
+    Three signals separate having from mentioning, and a keyword needs any:
 
       1. It is in the **leading run** of bracketed tokens, before any prose.
          This is how nearly every card prints its keywords.
@@ -115,6 +122,14 @@ def keyword_mask(text: str) -> int:
          because Flow always prints its cost in between. What must NOT be
          skipped is prose -- "give it [Temporary]. (Kill it at...)" has a
          sentence break first and is a grant, not a possession.
+      3. It is a **sentence of its own**: preceded by a sentence break and
+         followed by one, carrying nothing else. Eclipse prints "Give a unit -4
+         Might this turn.[Predict]. (Look at the top card...)" -- a real
+         keyword, in neither the leading run nor immediately before its
+         reminder, and signal (2) must keep refusing to step over that period
+         or "give it [Temporary]. (Kill it..." comes back. What distinguishes
+         them is position within the sentence, not distance: a granted keyword
+         always has a verb in front of it, an owned one stands alone.
 
     Conservative by construction. A keyword this misses is treated as not
     implemented, which understates coverage; a keyword it wrongly grants
@@ -152,6 +167,13 @@ def keyword_mask(text: str) -> int:
             bit = _KW_BIT.get(m.group(1))
             if bit is not None:
                 mask |= 1 << bit
+
+    # (3) a keyword standing as its own sentence, on text with reminders
+    # stripped so a keyword named INSIDE someone else's reminder cannot qualify.
+    for m in _KW_SENTENCE.finditer(body_text(raw)):
+        bit = _KW_BIT.get(m.group(1))
+        if bit is not None:
+            mask |= 1 << bit
     return mask
 
 
