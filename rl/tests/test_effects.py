@@ -972,8 +972,7 @@ print("\n[14] [Deathknell] with a condition: Lonely Poro (808.1)")
 PORO = T.id_of("Lonely Poro")
 
 
-def poro_death(others_here: int):
-    """Kill a Lonely Poro at a battlefield with N other friendly units there."""
+def poro_board(others_here: int, others_elsewhere: int = 0, enemies: int = 0):
     s = GameState()
     s.n_deck[:] = 20
     s.deck[:, :20] = PLAIN[2]
@@ -981,24 +980,92 @@ def poro_death(others_here: int):
     p = s.add_permanent(PORO, 0, bf_loc(0))
     for _ in range(others_here):
         s.add_permanent(PLAIN[2], 0, bf_loc(0))
-    s.perms[p, P_ALIVE] = 0                 # it died; ctx is where it died
-    chain.fire(s, T, V1, TR_DEATH, p, bf_loc(0))
+    for _ in range(others_elsewhere):
+        s.add_permanent(PLAIN[2], 0, base_loc(0))
+    for _ in range(enemies):
+        s.add_permanent(PLAIN[2], 1, bf_loc(0))
+    return s, p
+
+
+def drain(s):
+    """Put queued triggers on the Chain and run it out, as `apply` would.
+
+    Goes through `chain.place` rather than `chain.fire`: `_destroy` has already
+    QUEUED the trigger, and firing on top of it would put the same Deathknell
+    on the Chain twice -- which is what a hand-rolled fixture does when it
+    forgets that the drain is centralised in `actions._settle`.
+    """
+    while s.n_trig:
+        seat = chain.next_placer(s)
+        chain.place(s, T, V1, chain.orderable(s, T, seat)[0])
     settle(s)
+
+
+def poro_death(*args, **kw):
+    """Kill a Lonely Poro through the REAL death path and drain its trigger."""
+    s, p = poro_board(*args, **kw)
+    combat._destroy(s, T, p)
+    drain(s)
     return int(s.n_hand[0])
 
 
 if poro_death(0) != 1:
     die("deathknell", "a Poro that died with no other friendly unit there "
                       "should draw 1")
-ok("'if I died alone' draws when nothing friendly is left there")
+ok("'if I died alone' draws when nothing friendly is there")
 
 if poro_death(1) != 0:
-    die("deathknell", "a Poro that died beside a friendly unit is not alone, "
-                      "so the condition fails and nothing is drawn")
-ok("...and does not draw with a friendly unit still there")
+    die("deathknell", "a Poro that died beside a friendly unit is not alone")
+ok("...and does not draw with a friendly unit beside it")
 
-# A condition is not a restriction: the ability still goes on the Chain and
-# resolves, it just does nothing. That is what makes it respondable.
-ok("the ability resolves either way -- a condition fails, it does not restrict")
+# "Here" is the location, not the board: friends elsewhere do not crowd it, and
+# enemies are not friendly.
+if poro_death(0, others_elsewhere=2) != 1:
+    die("deathknell", "friendly units at ANOTHER location must not count -- "
+                      "'alone' is about this location")
+if poro_death(0, enemies=2) != 1:
+    die("deathknell", "enemy units are not friendly units")
+ok("'here' means this location, and 'friendly' excludes the opponent's units")
+
+# The captured answer must survive the response window. 808.1.d.2 puts the
+# Deathknell on the Chain before the card reaches the trash, and priority
+# passes before it resolves -- so a friendly unit can walk in first. It died
+# alone regardless: past tense.
+s, p = poro_board(0)
+combat._destroy(s, T, p)
+while s.n_trig:
+    chain.place(s, T, V1, chain.orderable(s, T, chain.next_placer(s))[0])
+s.add_permanent(PLAIN[2], 0, bf_loc(0))       # arrives while the trigger waits
+settle(s)
+if int(s.n_hand[0]) != 1:
+    die("deathknell", "a unit arriving after the death changed the answer -- "
+                      "359.3.f.3 captures at trigger time, and 'I DIED alone' "
+                      "is settled in the past tense")
+ok("a unit arriving after the death cannot un-alone it (359.3.f.3)")
+
+# Simultaneous deaths: 143.2.a is a continuous check, so everything it catches
+# dies at one instant. Two friendly Poros dying together at one battlefield
+# each had the other there, so NEITHER died alone -- and crucially the answer
+# must not depend on which row the sweep reached first.
+for order in (0, 1):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN[2]
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    a = s.add_permanent(PORO, 0, bf_loc(0))
+    b = s.add_permanent(PORO, 0, bf_loc(0))
+    for perm in (a, b):
+        s.perms[perm, P_DMG] = 99             # lethal to both at one instant
+    killed = combat.enforce_lethal(s, T)
+    if sorted(killed) != sorted([a, b]):
+        die("deathknell", f"both Poros should die together, got {killed}")
+    if order:
+        s.trig[:2] = s.trig[[1, 0]]           # place them the other way round
+    drain(s)
+    if int(s.n_hand[0]) != 0:
+        die("deathknell", f"two Poros dying together each had the other there, "
+                          f"so neither died alone -- drew {int(s.n_hand[0])}. "
+                          f"Destroying inline made this depend on row order.")
+ok("two units dying together: neither died alone, in either trigger order")
 
 print("\n\033[32mall effect tests passed\033[0m")

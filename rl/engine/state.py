@@ -82,6 +82,18 @@ F_NON_UNIT = 1 << 2
 # printed exception and stays unimplemented rather than being half-supported.
 # NOT turn-scoped: a Buff is a counter, not a "this turn" effect.
 F_BUFFED = 1 << 3
+# Captured at the moment of death: were there no other friendly units at this
+# unit's location? Lonely Poro's "If I died alone", and the pattern generalises
+# to any Deathknell that asks about the board it left.
+#
+# **Recorded rather than recomputed, because it is not answerable later.**
+# 808.1.d.2 puts a Deathknell on the Chain before the card reaches the Trash,
+# and the Chain then takes priority passes -- so by the time the ability
+# resolves, a friendly unit has had a whole response window to walk in or out
+# and change an answer that "I DIED alone" already settled in the past tense.
+# 359.3.f.3 is the general rule: information a trigger references is captured
+# when it triggers.
+F_DIED_ALONE = 1 << 4
 
 # Statuses that expire during the end-of-turn cleanup (423.1.a.2, 317.2).
 TURN_SCOPED_FLAGS = F_STUNNED | F_NO_COMBAT_DAMAGE   # NOT F_NON_UNIT

@@ -58,6 +58,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                TargetSpec)
 from rl.engine import chain
 from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, F_BUFFED,
+                             F_DIED_ALONE,
                              N_BF, P_ALIVE, P_FLAGS,
                              P_CARD, P_CTRL, P_DMG, P_LOC, P_READY, GameState,
                              base_loc, bf_loc, is_battlefield)
@@ -328,22 +329,23 @@ def can_be_cast(state: GameState, table: CardTable, spec: CardSpec, seat: int,
 
 def _condition_holds(state: GameState, table: CardTable, op: Op,
                      targets: list[int], from_hand: bool, seat: int = -1,
-                     source: int = -1, ctx: int = -1) -> bool:
+                     source: int = -1, ctx: int = -1,
+                     dead_source: int = -1) -> bool:
     if op.cond == COND_NONE:
         return True
     if op.cond == COND_DIED_ALONE:
-        # Lonely Poro: "If I died alone" -- its own reminder defines alone as
-        # "there are no other friendly units here". `ctx` is the location
-        # captured when it died (359.3.f.3); the unit itself is already dead
-        # by now, so every live friendly unit there is an "other".
+        # Lonely Poro: "If I died alone", where its own reminder defines alone
+        # as "no other friendly units here". Past tense, and that decides the
+        # implementation: read the flag `combat._destroy` recorded at the
+        # moment of death rather than counting the board now. A Deathknell sits
+        # on the Chain through a full priority window (808.1.d.2), so "now" is
+        # a board a response has had every chance to change.
         #
-        # **Open rules question, deliberately left visible.** Simultaneous
-        # deaths are ambiguous: a Cleanup that kills two friendly units at one
-        # battlefield leaves both dead before either trigger resolves, so this
-        # reading calls both of them alone. The alternative -- capturing
-        # aloneness at the moment of death -- would call neither. Nothing in
-        # 808 or 383 settles it, and the two readings differ only in that case.
-        return ctx >= 0 and state.units_at(ctx, seat).size == 0
+        # Reads `dead_source`, not `source`: `resolve` blanks a source that is
+        # no longer on the board (383.2.c.2), and a Deathknell's source is
+        # always exactly that.
+        return dead_source >= 0 and bool(
+            int(state.perms[dead_source, P_FLAGS]) & F_DIED_ALONE)
     if op.cond == COND_FROM_HAND:
         return from_hand
     if op.cond == COND_ONLY_UNIT_THERE:
@@ -403,6 +405,12 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
     # 383.2.c.2 -- an ability whose source left the board cannot reference it.
     # Sprite Mother's "here" has no meaning once she is dead, and dereferencing
     # a dead row would silently place the token at her last location.
+    #
+    # `dead_source` keeps the row anyway, for the one thing a dead source is
+    # still the authority on: what was recorded ABOUT its death. A Deathknell's
+    # source is dead by definition, so blanking it outright would make
+    # "if I died alone" unanswerable on the only card that asks.
+    dead_source = source
     if source >= 0 and state.perms[source, P_ALIVE] != 1:
         source = -1
 
@@ -437,7 +445,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
 
     for op in spec.ops:
         if not _condition_holds(state, table, op, still_legal, from_hand,
-                                seat, source, ctx):
+                                seat, source, ctx, dead_source):
             log["fizzled"].append(op.op)
             continue
 

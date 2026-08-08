@@ -49,7 +49,8 @@ from rl.config import Config
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import (SC_SELF, ST_MIGHT, TR_DEATH, TR_MOVE,
                                abilities_for, statics_for)
-from rl.engine.state import (P_MIGHT_MOD, F_BUFFED, F_NO_COMBAT_DAMAGE,
+from rl.engine.state import (P_MIGHT_MOD, F_BUFFED, F_DIED_ALONE,
+                             F_NON_UNIT, F_NO_COMBAT_DAMAGE,
                              N_BF, N_SEATS, P_ALIVE,
                              P_ARRIVED, P_CARD, P_CTRL, P_DMG, P_FLAGS, P_LOC,
                              P_READY, SD_CLEANUP, SD_DAMAGE, SD_NONE,
@@ -181,18 +182,20 @@ def enforce_lethal(state: GameState, table: CardTable) -> list[int]:
     """
     killed: list[int] = []
     for _ in range(state.n_perms + 1):
-        again = False
-        for i in range(state.n_perms):
-            row = state.perms[i]
-            if row[P_ALIVE] != 1:
-                continue
-            dmg = int(row[P_DMG])
-            if dmg > 0 and dmg >= might(state, table, i):
-                _destroy(state, table, i)
-                killed.append(i)
-                again = True
-        if not again:
+        # Two phases per pass. Everything lethally damaged at this instant is
+        # collected FIRST, then destroyed -- so each death sees the others as
+        # simultaneous rather than as having predeceased it. Destroying inline
+        # made the answer depend on row order, which is exactly the kind of
+        # invisible tie-break that only shows up in a card's text later.
+        doomed = tuple(i for i in range(state.n_perms)
+                       if state.perms[i, P_ALIVE] == 1
+                       and int(state.perms[i, P_DMG]) > 0
+                       and int(state.perms[i, P_DMG]) >= might(state, table, i))
+        if not doomed:
             return killed
+        for i in doomed:
+            _destroy(state, table, i, batch=doomed)
+            killed.append(i)
     raise AssertionError("enforce_lethal did not reach a fixed point")
 
 
@@ -282,7 +285,8 @@ def lethal_cost(state: GameState, table: CardTable, perm: int) -> int:
     return max(1, might(state, table, perm) - int(state.perms[perm, P_DMG]))
 
 
-def _destroy(state: GameState, table: CardTable, perm: int) -> None:
+def _destroy(state: GameState, table: CardTable, perm: int,
+             batch: tuple[int, ...] = ()) -> None:
     """Kill a permanent and put its card in its controller's trash.
 
     808.1.d.2 -- a Deathknell is added to the Chain as a Pending Item *before*
@@ -290,11 +294,27 @@ def _destroy(state: GameState, table: CardTable, perm: int) -> None:
     Queueing here does both: the location is captured at the moment of death,
     and the actual Chain push happens at the next safe point (see
     `chain.queue`, which explains why it cannot happen inline).
+
+    `batch` is the rest of the units dying in this same lethal check. They are
+    still standing as far as this death is concerned: 143.2.a is a continuous
+    check, so everything it catches dies at one instant, and "I died alone"
+    must not depend on which row the sweep happened to reach first. Without it,
+    two friendly units dying together at one battlefield would give a different
+    answer depending on their order in `perms` -- and both orders would be
+    wrong, because neither of them died alone.
     """
     from rl.engine.chain import queue as chain_queue   # cycle: chain -> resolve -> combat
     row = state.perms[perm]
     if any(a.trigger == TR_DEATH for a in abilities_for(table, int(row[P_CARD]))):
-        chain_queue(state, TR_DEATH, perm, int(row[P_LOC]))
+        loc, ctrl = int(row[P_LOC]), int(row[P_CTRL])
+        others = [i for i in range(state.n_perms)
+                  if i != perm and int(state.perms[i, P_CTRL]) == ctrl
+                  and int(state.perms[i, P_LOC]) == loc
+                  and (state.perms[i, P_ALIVE] == 1 or i in batch)
+                  and not state.has_flag(i, F_NON_UNIT)]
+        if not others:
+            row[P_FLAGS] |= F_DIED_ALONE
+        chain_queue(state, TR_DEATH, perm, loc)
     row[P_ALIVE] = 0
     seat, card = int(row[P_CTRL]), int(row[P_CARD])
     # 185.3 -- a token that leaves the board ceases to exist; it does not go to
