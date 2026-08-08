@@ -33,6 +33,12 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+# The only import in this file, and it is one-way: `state` imports nothing from
+# the engine, so naming its zone constants here cannot cycle. A card that says
+# "recycle that spell after you play it" has to name a zone, and inventing a
+# parallel enum for the DSL would mean two lists to keep in step.
+from rl.engine.state import DEST_BANISH, DEST_RECYCLE, DEST_TRASH  # noqa: F401
+
 # --- speeds. When may this card be played? Wire format: append only. -------
 SPEED_MAIN, SPEED_ACTION, SPEED_REACTION = range(3)
 SPEED_NAMES = ("main", "action", "reaction")
@@ -70,13 +76,13 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_MODIFY_MIGHT_ALL, OP_DAMAGE_ALL,
  OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT,
  OP_ADD_ENERGY, OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT,
- OP_BLINK, OP_TRASH_TO_HAND) = range(25)
+ OP_BLINK, OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH) = range(26)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
             "damage_all", "discard", "kill_all", "exhaust_all", "heal_at",
             "add_energy", "add_power", "buff", "buff_all_at", "blink",
-            "trash_to_hand")
+            "trash_to_hand", "play_from_trash")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -124,6 +130,14 @@ class TargetSpec(NamedTuple):
     card_type: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     has_keyword: str | None = None
+    # The slot names a card that will be PLAYED, not merely moved, so it must
+    # be a card the engine can actually play: it needs a DSL spec, and its
+    # controller must be able to pay whatever this play still costs. Same
+    # reasoning as [Deflect]'s surcharge -- affordability is part of target
+    # LEGALITY, because offering a target that cannot be finalized announces a
+    # card that then deadlocks (359.3.e.14.a).
+    playable: bool = False
+    playable_free_energy: bool = False   # "ignoring its Energy cost"
 
 
 class Op(NamedTuple):
@@ -145,6 +159,10 @@ class Op(NamedTuple):
     then_ready: bool = False
     # For OP_ADD_POWER: which domain's Power is added to the Rune Pool.
     domain: int = -1
+    # For OP_PLAY_FROM_TRASH: where the replayed card goes afterwards. Fizz
+    # says "Recycle that spell after you play it"; Kai'Sa says nothing, so hers
+    # trashes normally. A DEST_* from state.py.
+    dest: int = 0
     # For OP_BLINK: send it back to its owner's base instead of where it stood.
     to_base: bool = False
 
@@ -764,6 +782,31 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
                 targets=(TargetSpec(kind=TK_TRASH_CARD,
                                     tags=("Bird", "Cat", "Dog", "Poro")),),
                 ops=(Op(OP_TRASH_TO_HAND, target=0),)),
+    ),
+
+    # When you play me, you may play a spell from your trash with Energy cost
+    # no more than {3 energy}, ignoring its Energy cost. Recycle that spell
+    # after you play it. (You must still pay its Power cost.)
+    #
+    # The most-played unencoded card in the corpus, and it needs every piece of
+    # the trash cluster at once: a trash slot, a cost restriction on it, an
+    # alternate cost, and a third destination.
+    #
+    # **"Recycle that spell" is not "banish" and not "trash".** It goes to the
+    # BOTTOM of Fizz's controller's own Main Deck (416.1.a), so the spell comes
+    # back around and can be drawn again -- unlike [Flow], which banishes what
+    # it replays. The two cards do the same thing and dispose of it differently,
+    # which is exactly why the destination rides on the Chain Item rather than
+    # being read off the card.
+    #
+    # `playable` makes the Power cost part of target LEGALITY: a spell whose
+    # Power Fizz's controller cannot pay was never a legal choice.
+    "Fizz - Trickster": (
+        Ability(TR_PLAY_ME, optional=True,
+                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Spell",),
+                                    max_energy=3, playable=True,
+                                    playable_free_energy=True),),
+                ops=(Op(OP_PLAY_FROM_TRASH, target=0, dest=DEST_RECYCLE),)),
     ),
 
     # When I hold, you may return a unit or gear from your trash to your hand.

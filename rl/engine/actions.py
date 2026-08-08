@@ -43,7 +43,9 @@ from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import (TR_ACTIVATED, TR_PLAY_ME, TR_PLAY_SPELL,
                                abilities_for, spec_for)
-from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_FLOW,
+from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
+                             C_DEST, COST_FLOW, COST_NO_ENERGY,
+                             COST_PRINTED, DEST_BANISH, DEST_RECYCLE,
                              C_SRC, MAIN,
                              MAX_CHAIN, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
@@ -604,12 +606,22 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
     if extra_p:
         surcharge = plan_surcharge(state, table, seat, card, extra_p)
         assert surcharge is not None, "unaffordable Deflect cost at finalization"
-    if bool(state.chain[item, C_FLOW]):
+    cost_mode = int(state.chain[item, C_COST])
+    if cost_mode == COST_FLOW:
         # 829.1.c.1 -- the Flow cost REPLACES the base cost.
         recycle = plan_flow(state, table, seat, card)
         assert recycle is not None, "unaffordable Flow cost reached finalization"
         pay_ability_cost(state, table, seat, int(table.flow_energy[card]),
                          recycle)
+    elif cost_mode == COST_NO_ENERGY:
+        # "ignoring its Energy cost. (You must still pay its Power cost.)" --
+        # the reminder is on the card because the two halves are separable, and
+        # the Power half is what keeps Fizz honest: a 3-Energy spell replayed
+        # free still costs a rune off the board if it has a Power symbol.
+        recycle = plan_ability_cost(state, table, seat, card, 0,
+                                    int(table.power[card]))
+        assert recycle is not None, "unaffordable Power cost reached finalization"
+        pay_ability_cost(state, table, seat, 0, recycle)
     elif int(state.chain[item, C_BOUND_BF]) < 0:
         # 811.1.b -- a card played from Hidden ignores its cost entirely. The
         # rune was already paid when it was hidden.
@@ -740,7 +752,7 @@ def _play_flow(state: GameState, table: CardTable, cfg: Config, seat: int,
     state.n_trash[seat] = n - 1
 
     item = chain.push(state, card, seat, from_hand=False, bound_bf=-1,
-                      flow=True)
+                      cost=COST_FLOW, dest=DEST_BANISH)
     spec = spec_for(table, card)
     assert spec is not None
     if spec.n_targets:

@@ -51,13 +51,15 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
                                TK_LOCATION, TK_SPELL, TK_TRASH_CARD,
-                               OP_TRASH_TO_HAND, W_FRIENDLY,
+                               OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
+                               W_FRIENDLY,
                                TR_PLAY_ME, T_CTX, T_HERE, T_OWNER_BASE,
                                T_SELF,
                                CardSpec, Op,
                                TargetSpec)
 from rl.engine import chain
-from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, F_BUFFED,
+from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, COST_NO_ENERGY,
+                             F_BUFFED,
                              F_DIED_ALONE,
                              N_BF, P_ALIVE, P_FLAGS,
                              P_CARD, P_CTRL, P_DMG, P_LOC, P_READY, GameState,
@@ -194,10 +196,64 @@ def _spell_targets(state: GameState, table: CardTable, spec: TargetSpec,
     return out
 
 
-def _trash_card_ok(table: CardTable, spec: TargetSpec, card: int) -> bool:
+def can_play_from_trash(state: GameState, table: CardTable, seat: int,
+                        card: int, free_energy: bool) -> bool:
+    """Could `seat` play this card out of their trash right now?
+
+    **Asked twice, and the second time is the one that matters.** At
+    finalization it is a target restriction: it stops the player choosing a
+    card that could never be played. At resolution it is re-asked, because a
+    full priority window sits between the two -- Fizz's ability finalizes,
+    the opponent responds, and only then does the ability resolve and try to
+    play what it named.
+
+    Two real-deck fuzz deadlocks came from having only the first check.
+    Seed 45 replayed Rebuke ("return a unit at a battlefield") onto a board
+    with no unit at a battlefield; seed 1995 replayed Gust after its only legal
+    target had been answered in that very window. Both left a spell Pending
+    with an empty option list, which is a deadlock rather than a fizzle.
+
+    359.3.e.14.a says a card that cannot legally choose all its targets cannot
+    be played, so the honest outcome is that the play simply does not happen.
+    """
+    from rl.engine.cost import plan_ability_cost, plan_payment
+    from rl.engine.effects import spec_for as _spec_for
+    card_spec = _spec_for(table, card)
+    if card_spec is None:
+        return False                       # no rules text the engine can run
+    # "ignoring its Energy cost. (You must still pay its Power cost.)"
+    plan = (plan_ability_cost(state, table, seat, card, 0,
+                              int(table.power[card])) if free_energy
+            else plan_payment(state, table, seat, card))
+    if plan is None:
+        return False
+    # Terminates because no spell in the pool replays a spell that replays a
+    # spell; two that did would recurse forever right here.
+    return not card_spec.n_targets or can_be_cast(
+        state, table, card_spec, seat, -1, card=card)
+
+
+def _trash_card_ok(table: CardTable, spec: TargetSpec, card: int,
+                   state: GameState | None = None, seat: int = -1) -> bool:
     """Does one card in the trash satisfy a TK_TRASH_CARD slot's restrictions?"""
     if spec.card_type and not any(table.is_type(card, t) for t in spec.card_type):
         return False
+    if spec.playable:
+        # A card about to be PLAYED needs more than a matching type. Everything
+        # that makes a card unplayable from hand makes it an illegal CHOICE
+        # here, because choosing it announces a spell that then cannot be
+        # finalized -- and an unfinalizable spell sits Pending with an empty
+        # option list, which is a deadlock rather than a fizzle.
+        #
+        # Found by the real-deck fuzz on seed 45: Fizz replayed Rebuke ("return
+        # a unit at a battlefield to its owner's hand") onto a board with no
+        # unit at any battlefield, 291 steps in.
+        if state is None:
+            from rl.engine.effects import spec_for as _spec_for
+            return _spec_for(table, card) is not None
+        if not can_play_from_trash(state, table, seat, card,
+                                   spec.playable_free_energy):
+            return False
     if spec.tags and not any(t in table.tags[card] for t in spec.tags):
         return False
     if spec.has_keyword and not table.has(card, spec.has_keyword):
@@ -233,7 +289,7 @@ def _trash_targets(state: GameState, table: CardTable, spec: TargetSpec,
     for card, count in have.items():
         if chosen.count(card) >= count:
             continue
-        if _trash_card_ok(table, spec, card):
+        if _trash_card_ok(table, spec, card, state, seat):
             out.append(card)
     return sorted(out)
 
@@ -533,6 +589,28 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             state.hand[seat, h] = a
             state.n_hand[seat] = h + 1
             log.setdefault("from_trash", []).append(table.names[a])
+        elif op.op == OP_PLAY_FROM_TRASH:
+            # 349 -- this PLAYS the card. It is not moved to the board and it is
+            # not resolved here: it goes on the Chain as a new Pending Item and
+            # takes its own priority windows, which is why the opponent can
+            # counter what Fizz digs up. `actions._advance_pending` picks it up
+            # after this resolution finishes (340.3).
+            n = int(state.n_trash[seat])
+            idx = next((i for i in range(n)
+                        if int(state.trash[seat, i]) == a), -1)
+            # Re-checked HERE, not just at finalization -- a priority window
+            # stood between the two and the board has moved. See
+            # `can_play_from_trash`.
+            if (a < 0 or idx < 0
+                    or not can_play_from_trash(state, table, seat, a, True)):
+                log["fizzled"].append(op.op)
+                continue
+            state.trash[seat, idx:n - 1] = state.trash[seat, idx + 1:n]
+            state.trash[seat, n - 1] = -1
+            state.n_trash[seat] = n - 1
+            chain.push(state, a, seat, from_hand=False, bound_bf=-1,
+                       cost=COST_NO_ENERGY, dest=op.dest)
+            log.setdefault("played_from_trash", []).append(table.names[a])
         elif op.op == OP_COUNTER:
             # Record the controller BEFORE removing the item -- Lilting
             # Lullaby's second op ("its controller can't play spells this

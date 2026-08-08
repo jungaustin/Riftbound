@@ -1091,4 +1091,182 @@ for first_poro in (True, False):
                           f"{first_poro}); drew {int(s.n_hand[0])}")
 ok("...and the other unit needs no Deathknell of its own to count")
 
+# ---------------------------------------------------------------------------
+print("\n[15] Fizz - Trickster: play from the trash, then RECYCLE (416.1.a)")
+
+from rl.engine.state import (COST_NO_ENERGY, C_CARD, C_COST, C_DEST,
+                             DEST_RECYCLE)
+
+FIZZ = T.id_of("Fizz - Trickster")
+
+
+def fizz_state(trash=(DREDGE,), runes=8):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN[2]
+    s.runes_ready[:, :] = runes
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.hand[0, 0] = FIZZ
+    s.n_hand[0] = 1
+    for i, c in enumerate(trash):
+        s.trash[0, i] = c
+    s.n_trash[0] = len(trash)
+    return s
+
+
+def run(s, prefer, limit=24):
+    """Drive the game forward, preferring these action kinds in order."""
+    out = []
+    for _ in range(limit):
+        seat = A.acting_seat(s)
+        if seat < 0:
+            break
+        acts = A.legal_actions(s, T, V1, seat)
+        if not acts:
+            break
+        act = next((a for k in prefer for a in acts if a.kind == k), None)
+        if act is None:
+            break
+        out.append(A.apply(s, T, V1, act))
+    return out
+
+
+PREFER = (A.A_PLAY, A.A_PLAY_AT, A.A_ACCEPT, A.A_TARGET, A.A_PASS)
+
+s = fizz_state()
+deck_before = int(s.n_deck[0])
+run(s, PREFER)
+if int(s.n_trash[0]) != 0:
+    die("fizz", "the replayed spell should have left the trash")
+if int(s.n_deck[0]) != deck_before + 1 or int(s.deck[0, deck_before]) != DREDGE:
+    die("fizz", f"'Recycle that spell' puts it on the BOTTOM of the main deck "
+                f"(416.1.a); deck went {deck_before} -> {int(s.n_deck[0])}")
+if int(s.n_banished[0]):
+    die("fizz", "recycle is not banish -- the card must come back around")
+ok("the spell is played from the trash and RECYCLED, not trashed or banished")
+
+# It really resolved: Dredge Up draws 1. Counted off `deck_ptr` rather than the
+# hand, because `run` keeps playing whatever it draws.
+if int(s.deck_ptr[0]) != 1:
+    die("fizz", f"the replayed spell did not resolve: {int(s.deck_ptr[0])} "
+                f"cards drawn")
+if not any(int(s.perms[i, P_CARD]) == FIZZ and s.perms[i, P_ALIVE] == 1
+           for i in range(s.n_perms)):
+    die("fizz", "Fizz should be on the board -- her ETB does not replace her")
+ok("...and it actually resolved, drawing a card, with Fizz on the board")
+
+# The replayed spell goes on the CHAIN (349), so it is respondable. This is the
+# difference between playing a card and just applying its text, and it is why
+# Fizz can be answered at all.
+s = fizz_state()
+run(s, (A.A_PLAY, A.A_PLAY_AT, A.A_ACCEPT, A.A_TARGET))   # stop before passing
+item = next((i for i in range(s.n_chain)
+             if int(s.chain[i, C_CARD]) == DREDGE), -1)
+if item < 0:
+    # It is pushed during the ABILITY's resolution, so drive one more pass pair.
+    A.apply(s, T, V1, next(a for a in A.legal_actions(s, T, V1, A.acting_seat(s))
+                           if a.kind == A.A_PASS))
+    A.apply(s, T, V1, next(a for a in A.legal_actions(s, T, V1, A.acting_seat(s))
+                           if a.kind == A.A_PASS))
+    item = next((i for i in range(s.n_chain)
+                 if int(s.chain[i, C_CARD]) == DREDGE), -1)
+if item < 0:
+    die("fizz", "the replayed spell never appeared on the Chain -- playing a "
+                "card means putting it on the Chain (349), not applying it")
+if int(s.chain[item, C_COST]) != COST_NO_ENERGY:
+    die("fizz", "the replayed spell must be paid for with its Energy ignored")
+if int(s.chain[item, C_DEST]) != DEST_RECYCLE:
+    die("fizz", "the recycle destination was not recorded on the chain item")
+ok("the replayed spell is a real Chain Item: respondable, and counterable")
+
+# Killing it there proves the point, and proves the destination is per-ITEM:
+# a countered Fizz spell still recycles, because 'recycle that spell after you
+# play it' attached when it was played, not when it resolved.
+deck_before = int(s.n_deck[0])
+chain_mod.counter(s, T, int(s.chain[item, C_UID]))
+if int(s.n_deck[0]) != deck_before + 1:
+    die("fizz", "a countered replayed spell should still recycle -- the "
+                "instruction attached when it was PLAYED")
+ok("countering it still recycles it: the destination is per-item, not per-card")
+
+# --- affordability is part of target legality -----------------------------
+# "You must still pay its Power cost." A spell whose Power cannot be paid was
+# never a legal choice -- offering it would announce something that can never
+# be finalized, the same deadlock shape as a target dead-end.
+def populated(trash, runes):
+    """A Fizz board with something for a replayed spell to point at."""
+    s = fizz_state(trash=trash, runes=runes)
+    s.runes_ready[0, :] = runes
+    s.add_permanent(PLAIN[2], 0, bf_loc(0))
+    s.add_permanent(PLAIN[3], 1, bf_loc(0))
+    s.add_permanent(PLAIN[2], 0, base_loc(0))
+    return s
+
+
+# Every implemented spell cheap enough for Fizz has at least one target slot,
+# so the Power case is checked on a board that satisfies the rest.
+FIZZ_ABIL = ABILITIES["Fizz - Trickster"][0]
+POWERED = next(c for c in range(T.n)
+               if T.is_type(c, "Spell") and spec_for(T, c) is not None
+               and int(T.power[c]) > 0 and int(T.energy[c]) <= 3
+               and rsv.can_be_cast(populated([], 6), T, spec_for(T, c), 0, -1,
+                                   card=c))
+s = populated([POWERED], 0)
+got = rsv.legal_targets(s, T, ABILITIES["Fizz - Trickster"][0], 0, 0, [], -1)
+if got:
+    die("fizz", f"a spell whose Power cost cannot be paid was offered: "
+                f"{[T.names[c] for c in got]}")
+s = populated([POWERED], 6)
+got = rsv.legal_targets(s, T, ABILITIES["Fizz - Trickster"][0], 0, 0, [], -1)
+if got != [POWERED]:
+    die("fizz", f"with runes available it should be reachable: {got}")
+ok("an unpayable Power cost makes a trash spell not a target (359.3.e.14.a)")
+
+# A spell whose own targets cannot all be chosen is likewise not a choice --
+# and, because a priority window sits between finalizing Fizz's ability and
+# resolving it, the same question is re-asked at resolution. Two real-deck
+# fuzz deadlocks came from checking only the first time.
+REBUKE = T.id_of("Rebuke")           # "return a unit AT A BATTLEFIELD"
+s = fizz_state(trash=[REBUKE])
+if rsv.legal_targets(s, T, ABILITIES["Fizz - Trickster"][0], 0, 0, [], -1):
+    die("fizz", "Rebuke needs a unit at a battlefield; with none on the board "
+                "it can never be played, so it is not a legal choice")
+s.add_permanent(PLAIN[2], 1, bf_loc(0))
+if rsv.legal_targets(s, T, ABILITIES["Fizz - Trickster"][0], 0, 0, [], -1) \
+        != [REBUKE]:
+    die("fizz", "with a unit at a battlefield Rebuke becomes reachable")
+ok("a spell that cannot fill its own targets is not a legal choice either")
+
+# ...and if the board changes in the response window, the play fizzles rather
+# than deadlocking a spell that can never be finalized.
+s = fizz_state(trash=[REBUKE])
+victim = s.add_permanent(PLAIN[2], 1, bf_loc(0))
+run(s, (A.A_PLAY, A.A_PLAY_AT, A.A_ACCEPT, A.A_TARGET))
+s.perms[victim, P_ALIVE] = 0           # answered before the ability resolves
+run(s, (A.A_PASS,))
+if any(int(s.chain[i, C_CARD]) == REBUKE for i in range(s.n_chain)):
+    die("fizz", "Rebuke was put on the Chain with no legal target -- it would "
+                "sit Pending with an empty option list, which deadlocks")
+if int(s.n_trash[0]) != 1 or int(s.trash[0, 0]) != REBUKE:
+    die("fizz", "a play that never happened must leave the card in the trash")
+ok("a target lost in the response window fizzles the play, not the game")
+
+# The Energy restriction is on the PRINTED cost, not on what is paid.
+EXPENSIVE = next((c for c in range(T.n)
+                  if T.is_type(c, "Spell") and spec_for(T, c) is not None
+                  and int(T.energy[c]) > 3), -1)
+if EXPENSIVE >= 0:
+    s = fizz_state(trash=[EXPENSIVE])
+    if rsv.legal_targets(s, T, ABILITIES["Fizz - Trickster"][0], 0, 0, [], -1):
+        die("fizz", f"{T.names[EXPENSIVE]!r} costs more than {{3 energy}} and "
+                    f"must be out of reach even though Fizz pays no Energy")
+    ok("'no more than {3 energy}' reads the printed cost, not the cost paid")
+
+# 355.8 -- an empty trash means no legal choice, so the ability never fires.
+s = fizz_state(trash=())
+run(s, PREFER)
+if int(s.n_chain):
+    die("fizz", "Fizz with an empty trash should leave nothing on the Chain")
+ok("with an empty trash the ability never reaches the Chain (355.8)")
+
 print("\n\033[32mall effect tests passed\033[0m")

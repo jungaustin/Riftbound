@@ -41,7 +41,9 @@ from rl.engine.cost import plan_flow, plan_payment
 from rl.engine.effects import (SPEED_ACTION, SPEED_REACTION, abilities_for,
                                spec_for)
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
-                             C_FINAL, C_FLOW, C_FROM_HAND, C_SRC, C_UID,
+                             C_FINAL, C_COST, C_DEST, C_FROM_HAND, C_SRC,
+                             C_UID, COST_PRINTED, DEST_TRASH, DEST_BANISH,
+                             DEST_RECYCLE,
                              MAIN, MAX_CHAIN, MAX_TARGETS, MAX_TRIGGERS,
                              N_BF, N_SEATS,
                              P_CARD, P_CTRL, GameState)
@@ -203,7 +205,8 @@ def flow_playable(state: GameState, table: CardTable, cfg: Config,
 
 def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
          bound_bf: int = -1, abil: int = -1, src: int = -1,
-         ctx: int = -1, flow: bool = False) -> int:
+         ctx: int = -1, cost: int = COST_PRINTED,
+         dest: int = DEST_TRASH) -> int:
     """Append a Pending Chain Item. Returns its index.
 
     `abil >= 0` makes it a Triggered Ability rather than a card (383.3).
@@ -220,7 +223,8 @@ def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
     row[C_ABIL] = abil
     row[C_SRC] = src
     row[C_CTX] = ctx
-    row[C_FLOW] = int(flow)
+    row[C_COST] = cost
+    row[C_DEST] = dest
     state.chain_uid += 1
     state.chain_targets[i, :] = -1
     state.n_chain = i + 1
@@ -427,16 +431,29 @@ def counter(state: GameState, table: CardTable, uid: int) -> str | None:
     i = index_of_uid(state, uid)
     if i < 0:
         return None
-    flow = bool(state.chain[i, C_FLOW])
+    dest = int(state.chain[i, C_DEST])
     card, ctrl, *_ = _pop(state, i)
-    if flow:
-        state.banish_card(ctrl, card)
-        return table.names[card]
-    n = int(state.n_trash[ctrl])
-    assert n < state.trash.shape[1], "trash overflow"
-    state.trash[ctrl, n] = card
-    state.n_trash[ctrl] = n + 1
+    _send(state, ctrl, card, dest)
     return table.names[card]
+
+
+def _send(state: GameState, ctrl: int, card: int, dest: int) -> None:
+    """Put a card that has left the Chain into its destination zone.
+
+    One place, because the choice is per-ITEM rather than per-card: the same
+    Dredge Up trashes when cast from hand and banishes when cast for its Flow
+    cost, and the same spell Fizz replayed recycles instead. Reading the card
+    to decide would get every one of those wrong.
+    """
+    if dest == DEST_BANISH:
+        state.banish_card(ctrl, card)
+    elif dest == DEST_RECYCLE:
+        state.recycle_card(ctrl, card)
+    else:
+        n = int(state.n_trash[ctrl])
+        assert n < state.trash.shape[1], "trash overflow"
+        state.trash[ctrl, n] = card
+        state.n_trash[ctrl] = n + 1
 
 
 def oldest_pending(state: GameState) -> int:
@@ -494,7 +511,7 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
     abil = int(state.chain[item, C_ABIL])
     src = int(state.chain[item, C_SRC])
     ctx = int(state.chain[item, C_CTX])
-    flow = bool(state.chain[item, C_FLOW])
+    dest = int(state.chain[item, C_DEST])
     card, ctrl, from_hand, bound, targets = _pop(state, item)
 
     assert spec is not None, f"no spec for {table.names[card]!r} on the chain"
@@ -508,21 +525,17 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
         log["ability"] = abil
         return log
 
-    if flow:
-        # 829.1.b -- "Then banish it." A delayed replacement effect
-        # (829.1.b.1): the spell would leave the Chain for the trash, and this
-        # replaces where it lands. Without it the card would go back to the
-        # trash it was just played from and be replayable every turn forever.
-        state.banish_card(ctrl, card)
-        log["banished"] = table.names[card]
-        return log
-
     # The spell leaves play. (Units never reach here -- 337.2 resolves them
     # immediately at finalization, so nothing on this chain is a permanent.)
-    n = int(state.n_trash[ctrl])
-    assert n < state.trash.shape[1], "trash overflow"
-    state.trash[ctrl, n] = card
-    state.n_trash[ctrl] = n + 1
+    #
+    # 829.1.b's "Then banish it" is a delayed replacement effect (829.1.b.1) on
+    # where the card lands, and Fizz's "Recycle that spell after you play it"
+    # replaces the same step with a different zone. Both were decided when the
+    # item was pushed, which is the only moment that knows how the card was
+    # played, so both arrive here as `C_DEST`.
+    _send(state, ctrl, card, dest)
+    if dest != DEST_TRASH:
+        log["dest"] = ("trash", "banished", "recycled")[dest]
     return log
 
 

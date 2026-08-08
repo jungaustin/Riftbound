@@ -153,11 +153,31 @@ RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 #           trigger references is captured WHEN IT TRIGGERS, not when it
 #           resolves, so Lillia's "play a Sprite there" remembers where she
 #           moved from even if she has moved again by the time it resolves.
-#   C_FLOW  played from the trash for its [Flow] cost (829), which changes
-#           where it goes afterwards: banished, not trashed
+#   C_COST  which cost this play pays -- see COST_* below
+#   C_DEST  where the card goes when it leaves the Chain -- see DEST_* below
+#
+# **The two are separate columns because they vary independently.** They began
+# as one flag, `C_FLOW`, which was fine while [Flow] was the only card that
+# changed either -- it changes both, paying an alternate cost (829.1.c.1) and
+# banishing afterwards (829.1.b). Then Fizz - Trickster arrived: "play a spell
+# from your trash, ignoring its Energy cost. Recycle that spell after you play
+# it" -- a third cost and a third destination, in a combination Flow never
+# produces. One flag would have had to become an enum of whole card behaviours,
+# which is the shape that stops composing at exactly four cards.
 C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF, C_UID, C_ABIL, C_SRC, \
-    C_CTX, C_FLOW = range(10)
-N_CHAIN_COLS = 10
+    C_CTX, C_COST, C_DEST = range(11)
+N_CHAIN_COLS = 11
+
+# What a Chain Item pays on finalization.
+COST_PRINTED = 0     # the corner cost, or nothing at all if played from Hidden
+COST_FLOW = 1        # 829.1.c.1 -- the Flow cost REPLACES the base cost
+COST_NO_ENERGY = 2   # "ignoring its Energy cost"; the Power cost still stands
+
+# Where the card goes when it leaves the Chain. Three real destinations, and
+# only one of them gives the card back -- see `GameState.recycle_card`.
+DEST_TRASH = 0
+DEST_BANISH = 1      # 829.1.b.1, [Flow]
+DEST_RECYCLE = 2     # 416.1.a, bottom of the owner's own Main Deck
 
 # `C_UID` is a stable per-item id. Chain *indices* shift whenever an item is
 # removed, so a counterspell that stored an index could hit the wrong item
