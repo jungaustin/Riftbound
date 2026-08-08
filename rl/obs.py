@@ -305,6 +305,9 @@ class Encoder:
                 card = int(state.hand[seat, state.pend_play])
         elif k == A.A_DECLARE:
             loc = act.arg
+        elif k == A.A_ACTIVATE:
+            card = int(state.perms[act.arg, P_CARD])
+            loc = int(state.perms[act.arg, P_LOC])
         elif k in (A.A_ADD, A.A_RETREAT):
             # The location a unit is *leaving*; the destination is fixed for the
             # whole decision, so it could not discriminate between candidates.

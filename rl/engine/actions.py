@@ -37,9 +37,11 @@ from rl.engine import resolve as rsv
 # Payment lives in `cost` so combat can ask about affordability without
 # importing the action layer. Re-exported: callers still say A.plan_payment.
 from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
-                            card_domains, pay, plan_payment)
+                            card_domains, pay, pay_ability_cost,
+                            plan_ability_cost, plan_payment)
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import TR_PLAY_ME, TR_PLAY_SPELL, spec_for
+from rl.engine.effects import (TR_ACTIVATED, TR_PLAY_ME, TR_PLAY_SPELL,
+                               abilities_for, spec_for)
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
                              MAX_CHAIN, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
@@ -49,12 +51,12 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_SRC, MAIN,
 # Action kinds. Wire format -- append only, never reorder.
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
  A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN,
- A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST, A_ORDER) = range(17)
+ A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST, A_ORDER, A_ACTIVATE) = range(18)
 
 KIND_NAMES = ("pass", "end_turn", "play", "play_at", "declare", "add",
               "commit", "cancel", "retreat", "target", "hide", "hide_at",
               "play_hidden", "accept", "decline", "play_at_fast",
-              "order")
+              "order", "activate")
 
 
 class Action(NamedTuple):
@@ -105,6 +107,36 @@ def play_destinations(state: GameState, table: CardTable, cfg: Config,
         return [base_loc(seat)]
     return ([base_loc(seat)]
             + [bf_loc(i) for i in range(N_BF) if int(state.bf_ctrl[i]) == seat])
+
+
+def activatable(state: GameState, table: CardTable, cfg: Config,
+                seat: int) -> list[int]:
+    """Permanent rows whose activated ability `seat` may use right now (151)."""
+    if cfg.units_only:
+        return []
+    out: list[int] = []
+    for i in range(state.n_perms):
+        row = state.perms[i]
+        if row[P_ALIVE] != 1 or int(row[P_CTRL]) != seat:
+            continue
+        card = int(row[P_CARD])
+        for ab in abilities_for(table, card):
+            if ab.trigger != TR_ACTIVATED:
+                continue
+            if not chain.speed_ok(state, cfg, seat, ab.speed):
+                continue
+            if ab.cost_exhaust and not row[P_READY]:
+                continue
+            if plan_ability_cost(state, table, seat, card,
+                                 ab.cost_energy, ab.cost_power) is None:
+                continue
+            # 355.8, same as for a card: no legal targets, no activation.
+            if ab.n_targets and not rsv.can_be_cast(state, table, ab, seat,
+                                                    -1, i):
+                continue
+            out.append(i)
+            break
+    return out
 
 
 def _hand_choices(state: GameState, seat: int) -> list[int]:
@@ -244,6 +276,8 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     for i in chain.hidden_playable(state, table, cfg, seat):
         out.append(Action(A_PLAY_HIDDEN, i))
 
+    out += [Action(A_ACTIVATE, p) for p in activatable(state, table, cfg, seat)]
+
     for loc in combat.move_destinations(state, table, cfg):
         out.append(Action(A_DECLARE, loc))
 
@@ -373,6 +407,9 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
 
     if k == A_TARGET:
         return _choose_target(state, table, cfg, action.arg)
+
+    if k == A_ACTIVATE:
+        return _activate(state, table, cfg, int(state.priority), action.arg)
 
     if k == A_ORDER:
         state.pend_order = -1
@@ -527,6 +564,17 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
     # instructions" -- Ekko's "Recycle me to ready your runes" -- would be paid
     # here, and no ability in the pool has one yet.
     if int(state.chain[item, C_ABIL]) >= 0:
+        spec = chain.item_spec(state, table, item)
+        if spec.trigger == TR_ACTIVATED:
+            # 204.1.b -- the base cost is what stands before the ':'.
+            recycle = plan_ability_cost(state, table, seat, card,
+                                        spec.cost_energy, spec.cost_power)
+            assert recycle is not None, "unaffordable ability reached finalize"
+            pay_ability_cost(state, table, seat, spec.cost_energy, recycle)
+            if spec.cost_exhaust:
+                src = int(state.chain[item, C_SRC])
+                assert state.perms[src, P_READY], "exhaust cost with no ready source"
+                state.perms[src, P_READY] = 0
         chain.finalize(state, item)
         state.priority = seat
         return {"finalized_ability": table.names[card]}
@@ -552,6 +600,42 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
     return {"finalized": table.names[card],
             "targets": [int(x) for x in
                         state.chain_targets[item, :spec_for(table, card).n_targets]]}
+
+
+def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
+              perm: int) -> dict:
+    """Put an activated ability on the Chain (151.2.a: like playing a card).
+
+    Costs are paid at finalization, not here, exactly as a spell's are -- so an
+    ability whose targets all become illegal before it finalizes is never paid
+    for.
+    """
+    card = int(state.perms[perm, P_CARD])
+    idx = next(k for k, ab in enumerate(abilities_for(table, card))
+               if ab.trigger == TR_ACTIVATED)
+    spec = abilities_for(table, card)[idx]
+
+    if spec.immediate:
+        # 337.2 -- a resource-adding ability resolves immediately and never
+        # touches the Chain, so no window opens in which the opponent could
+        # answer the resource before it exists.
+        recycle = plan_ability_cost(state, table, seat, card,
+                                    spec.cost_energy, spec.cost_power)
+        assert recycle is not None, "unaffordable ability reached _activate"
+        pay_ability_cost(state, table, seat, spec.cost_energy, recycle)
+        if spec.cost_exhaust:
+            state.perms[perm, P_READY] = 0
+        log = rsv.resolve(state, table, cfg, spec, seat, [], -1, False,
+                          source=perm, ctx=int(state.perms[perm, P_LOC]))
+        log["activated"] = table.names[card]
+        return log
+
+    item = chain.push(state, card, seat, from_hand=False, abil=idx, src=perm,
+                      ctx=int(state.perms[perm, P_LOC]))
+    if spec.n_targets:
+        state.pend_slot = 0
+        return {"activated": table.names[card]}
+    return _finalize_pending(state, table, cfg, item)
 
 
 def _accept_may(state: GameState, table: CardTable, cfg: Config) -> dict:

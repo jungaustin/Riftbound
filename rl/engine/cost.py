@@ -164,6 +164,50 @@ def plan_payment(state: GameState, table: CardTable, seat: int, card: int,
     return picks
 
 
+def plan_ability_cost(state: GameState, table: CardTable, seat: int, card: int,
+                      energy: int, power: int) -> list[int] | None:
+    """Same as `plan_payment` but for a cost that is NOT a card's printed one.
+
+    An activated ability's base cost is written before the ':' (204.1.b) and
+    has nothing to do with what the permanent cost to play. Its Power is paid
+    in the source's own domains, which is what the printed symbols mean.
+    """
+    need_e = max(0, energy - int(state.pool_energy[seat]))
+    if need_e > state.total_ready_runes(seat):
+        return None
+    if power <= 0:
+        return []
+    doms = card_domains(table, card) or list(range(N_DOMAINS))
+    floating = sum(int(state.pool_power[seat, d]) for d in doms)
+    need_p = max(0, power - floating)
+    if need_p == 0:
+        return []
+    in_play = state.runes_in_play(seat)
+    left = {d: int(in_play[d]) for d in doms}
+    picks: list[int] = []
+    for _ in range(need_p):
+        best = max(doms, key=lambda d: (left[d], -d))
+        if left[best] <= 0:
+            return None
+        left[best] -= 1
+        picks.append(best)
+    return picks
+
+
+def pay_ability_cost(state: GameState, table: CardTable, seat: int,
+                     energy: int, recycle: list[int]) -> None:
+    """Pay an activated ability's rune cost."""
+    need_e = max(0, energy - int(state.pool_energy[seat]))
+    state.pool_energy[seat] = max(0, int(state.pool_energy[seat]) - energy)
+    for _ in range(need_e):
+        dom = int(np.argmax(state.runes_ready[seat]))
+        assert state.runes_ready[seat, dom] > 0, "energy payment underflow"
+        state.runes_ready[seat, dom] -= 1
+        state.runes_spent[seat, dom] += 1
+    for dom in recycle:
+        state.recycle_rune(seat, dom)
+
+
 def pay(state: GameState, table: CardTable, seat: int, card: int,
         recycle: list[int], extra_energy: int = 0,
         extra_power: int = 0) -> None:

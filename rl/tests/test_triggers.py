@@ -525,4 +525,47 @@ if int(s.n_trash[0]) != 1:
                 f"cease to exist rather than being trashed (185.3)")
 ok("185.3 -- the dead token left no card behind, only the gear did")
 
+
+# ---------------------------------------------------------------------------
+print("\n[15] activated abilities (151) -- cost, then ':', then effect")
+
+HDI = T.id_of("Heart of Dark Ice")     # Exhaust: give a unit +3 Might
+SEAL = T.id_of("Seal of Insight")      # Exhaust: [Reaction] - [Add] {Mind}
+
+s = fresh(hand=[HDI])
+target = s.add_permanent(PLAIN2, 0, bf_loc(0))
+play(s, V1, 0, base_loc(0))
+gear = next(i for i in range(s.n_perms) if int(s.perms[i, P_CARD]) == HDI)
+acts = A.legal_actions(s, T, V1, 0)
+if not any(a.kind == A.A_ACTIVATE and a.arg == gear for a in acts):
+    die("activate", "the gear's activated ability was never offered")
+ok("an activated ability is offered as its own action")
+
+A.apply(s, T, V1, A.Action(A.A_ACTIVATE, gear))
+A.apply(s, T, V1, A.Action(A.A_TARGET, target))
+if s.perms[gear, P_READY]:
+    die("activate", "the Exhaust cost was not paid at finalization")
+if any(a.kind == A.A_ACTIVATE for a in A.legal_actions(s, T, V1, 0)):
+    die("activate", "an exhausted source was offered again")
+ok("'Exhaust:' is a real cost -- paid at finalization, and not repeatable")
+
+base = combat.might(s, T, target)
+drain(s, V1)
+if combat.might(s, T, target) != base + 3:
+    die("activate", f"effect did not apply: {combat.might(s, T, target)}")
+ok("the effect resolves through the Chain like a spell (151.2.a.1)")
+
+# 337.2 -- a resource-adding ability resolves IMMEDIATELY, no Chain, no window.
+s = fresh(hand=[SEAL])
+play(s, V1, 0, base_loc(0))
+seal = next(i for i in range(s.n_perms) if int(s.perms[i, P_CARD]) == SEAL)
+before = s.pool_power[0].sum()
+A.apply(s, T, V1, A.Action(A.A_ACTIVATE, seal))
+if s.n_chain != 0:
+    die("add", "337.2 -- an [Add] ability must not touch the Chain; the card "
+               "says outright that it cannot be reacted to")
+if s.pool_power[0].sum() != before + 1:
+    die("add", "no Power was added to the Rune Pool")
+ok("[Add] resolves immediately: Power appears with nothing on the Chain")
+
 print("\n\033[32mall trigger tests passed\033[0m")

@@ -199,6 +199,12 @@ def check_actions(state: GameState, table, cfg, seat: int, actions) -> None:
         elif not chain_mod.speed_ok(state, cfg, seat, spec.speed):
             _fail(f"{table.names[card]!r} offered outside its speed window")
 
+    # An activation offered must be one the engine itself would allow.
+    for a in actions:
+        if a.kind == A.A_ACTIVATE and a.arg not in A.activatable(
+                state, table, cfg, seat):
+            _fail(f"activation of permanent {a.arg} offered but not legal")
+
     # Every movement offered must pass the same filter the engine would apply --
     # in particular, lateral battlefield-to-battlefield movement needs [Ganking].
     if state.declaring:

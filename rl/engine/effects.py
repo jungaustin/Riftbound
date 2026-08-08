@@ -60,11 +60,13 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_NO_SPELLS, OP_CREATE_TOKEN, OP_MOVE_TO, OP_RETURN_TO_HAND,
  OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER, OP_READY,
  OP_MODIFY_MIGHT_ALL, OP_DAMAGE_ALL,
- OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT) = range(19)
+ OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT,
+ OP_ADD_ENERGY, OP_ADD_POWER) = range(21)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
-            "damage_all", "discard", "kill_all", "exhaust_all", "heal_at")
+            "damage_all", "discard", "kill_all", "exhaust_all", "heal_at",
+            "add_energy", "add_power")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -122,6 +124,8 @@ class Op(NamedTuple):
     ready: bool = False
     # For OP_MOVE_TO / OP_CREATE_TOKEN: also ready the unit afterwards.
     then_ready: bool = False
+    # For OP_ADD_POWER: which domain's Power is added to the Rune Pool.
+    domain: int = -1
 
 
 class CardSpec(NamedTuple):
@@ -142,8 +146,17 @@ class CardSpec(NamedTuple):
 # -- Lillia's "play a Sprite unit token THERE" means where she came from, and
 # 359.3.f.3 fixes that at trigger time, not at resolution.
 (TR_PLAY_ME, TR_DEATH, TR_MOVE, TR_HOLD, TR_CONQUER,
- TR_PLAY_SPELL) = range(6)
-TRIGGER_NAMES = ("play_me", "death", "move", "hold", "conquer", "play_spell")
+ TR_PLAY_SPELL, TR_ACTIVATED) = range(7)
+TRIGGER_NAMES = ("play_me", "death", "move", "hold", "conquer", "play_spell",
+                 "activated")
+
+# TR_ACTIVATED is not a trigger at all -- it is the marker for an ACTIVATED
+# ability (151.1: "Costs followed by a ':' and then an effect"). No event ever
+# fires it; the player pays and puts it on the Chain themselves via A_ACTIVATE.
+# It rides the trigger machinery because 151.2.a.1 says an activated ability
+# "behaves, once activated, like a spell without an associated card" -- the
+# same finalization, targeting, priority and resolution a triggered ability
+# already uses. Giving it its own path would duplicate all of that.
 
 # TR_HOLD and TR_CONQUER are the two ways a battlefield Scores (469/470), and
 # they fire for the units standing there rather than for the player. TR_PLAY_SPELL
@@ -184,6 +197,21 @@ class Ability(NamedTuple):
     targets: tuple[TargetSpec, ...] = ()
     ops: tuple[Op, ...] = ()
     optional: bool = False
+    # --- activated abilities only (trigger == TR_ACTIVATED) ---------------
+    # 204.1.b: "on activated abilities, the Base Cost is the resource or
+    # instruction written before the ':'". 151.2 restricts a Gear's activated
+    # ability to its controller's Main Phase in an Open State and NOT during a
+    # Showdown, which is exactly what SPEED_MAIN already means.
+    speed: int = SPEED_MAIN
+    cost_energy: int = 0
+    cost_power: int = 0
+    cost_exhaust: bool = False        # "Exhaust:" -- the source must be ready
+    # 337.2 -- a resource-adding ability resolves IMMEDIATELY and never waits
+    # on the Chain, so it cannot be responded to. The cards say so themselves:
+    # "Abilities that add resources can't be reacted to." Without this an [Add]
+    # would open a priority window in which the opponent could answer the mana
+    # before it existed, which is the opposite of the rule.
+    immediate: bool = False
 
     @property
     def n_targets(self) -> int:
@@ -641,6 +669,61 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # [Deathknell] - Draw 1.
     "Watchful Sentry": (
         Ability(TR_DEATH, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+
+    # --- the Seal cycle: "Exhaust: [Reaction] - [Add] {X rune}" -------------
+    # 337.2 makes a resource-adding ability resolve immediately, so `immediate`
+    # keeps it off the Chain entirely.
+    "Seal of Strength": (
+        Ability(TR_ACTIVATED, speed=SPEED_REACTION, cost_exhaust=True,
+                immediate=True,
+                ops=(Op(OP_ADD_POWER, n=1, domain=0),)),
+    ),
+    "Seal of Focus": (
+        Ability(TR_ACTIVATED, speed=SPEED_REACTION, cost_exhaust=True,
+                immediate=True,
+                ops=(Op(OP_ADD_POWER, n=1, domain=1),)),
+    ),
+    "Seal of Discord": (
+        Ability(TR_ACTIVATED, speed=SPEED_REACTION, cost_exhaust=True,
+                immediate=True,
+                ops=(Op(OP_ADD_POWER, n=1, domain=2),)),
+    ),
+    "Seal of Rage": (
+        Ability(TR_ACTIVATED, speed=SPEED_REACTION, cost_exhaust=True,
+                immediate=True,
+                ops=(Op(OP_ADD_POWER, n=1, domain=3),)),
+    ),
+    "Seal of Insight": (
+        Ability(TR_ACTIVATED, speed=SPEED_REACTION, cost_exhaust=True,
+                immediate=True,
+                ops=(Op(OP_ADD_POWER, n=1, domain=4),)),
+    ),
+    "Seal of Unity": (
+        Ability(TR_ACTIVATED, speed=SPEED_REACTION, cost_exhaust=True,
+                immediate=True,
+                ops=(Op(OP_ADD_POWER, n=1, domain=5),)),
+    ),
+
+    # Exhaust: [Reaction] - [Add] {1 energy}.
+    "Energy Conduit": (
+        Ability(TR_ACTIVATED, speed=SPEED_REACTION, cost_exhaust=True,
+                immediate=True, ops=(Op(OP_ADD_ENERGY, n=1),)),
+    ),
+
+    # Exhaust: Play three 1 Might Recruit unit tokens.
+    "Vanguard Armory": (
+        Ability(TR_ACTIVATED, cost_exhaust=True,
+                ops=(Op(OP_CREATE_TOKEN, n=3, token=RECRUIT_TOKEN),)),
+    ),
+
+    # Exhaust: Give a unit +3 Might this turn.
+    # The cost is the whole "Exhaust:" clause; the effect follows the colon.
+    "Heart of Dark Ice": (
+        Ability(TR_ACTIVATED, cost_exhaust=True,
+                targets=(TargetSpec(who=W_ANY),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=3),)),
     ),
 
     # [Temporary]

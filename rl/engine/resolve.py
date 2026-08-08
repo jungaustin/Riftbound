@@ -38,7 +38,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                OP_RETURN_TO_HAND,
                                OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
-                               COND_CONTROL_N_GEAR, OP_DAMAGE_ALL,
+                               COND_CONTROL_N_GEAR, OP_ADD_ENERGY,
+                               OP_ADD_POWER, OP_DAMAGE_ALL,
                                OP_DISCARD, OP_EXHAUST_ALL, OP_HEAL_AT,
                                OP_KILL_ALL, OP_MODIFY_MIGHT_ALL,
                                OP_READY, OP_SWAP_LOC,
@@ -394,6 +395,10 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["stunned"] = log.get("stunned", [])
             if state.stun(a):
                 log["stunned"].append(a)
+        elif op.op == OP_ADD_ENERGY:
+            state.pool_energy[seat] += op.n
+        elif op.op == OP_ADD_POWER:
+            state.pool_power[seat, op.domain] += op.n
         elif op.op == OP_DISCARD:
             log["discarded"] = phases.discard(state, seat, op.n)
         elif op.op == OP_KILL_ALL:
