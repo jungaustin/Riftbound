@@ -515,4 +515,62 @@ if mine2 not in opts2:
     die("deflect", "the free (friendly) target was wrongly removed too")
 ok("an unpayable surcharge makes it not a target -- no announce-then-deadlock")
 
+# ---------------------------------------------------------------------------
+print("\n[8] Banish is not a Kill (427.2.a), and a blink returns a NEW object")
+
+from rl.engine import combat as _combat
+from rl.engine.state import F_BUFFED, P_DMG, P_FLAGS, P_READY
+
+TB = T.id_of("Temporal Breach")
+YORDLE = T.id_of("Lecturing Yordle")      # [Tank] + ETB draw 1
+
+s = GameState()
+s.n_deck[:] = 20
+s.deck[:, :20] = PLAIN[2]
+s.hand[0, 0] = TB
+s.n_hand[0] = 1
+s.runes_ready[:, :] = 6
+s.phase, s.active, s.priority = MAIN, 0, 0
+u = s.add_permanent(YORDLE, 0, bf_loc(0), ready=True)
+s.perms[u, P_FLAGS] |= F_BUFFED
+_combat.mark_damage(s, T, u, 1)
+hand_before = int(s.n_hand[0])
+
+A.apply(s, T, V1, A.Action(A.A_PLAY, 0))
+A.apply(s, T, V1, A.Action(A.A_TARGET, u))
+for _ in range(12):
+    if s.n_chain == 0 and s.n_trig == 0:
+        break
+    seat = A.acting_seat(s)
+    if seat < 0:
+        break
+    acts = A.legal_actions(s, T, V1, seat)
+    A.apply(s, T, V1, next((x for x in acts if x.kind == A.A_PASS), acts[0]))
+
+live = [i for i in range(s.n_perms)
+        if int(s.perms[i, P_CARD]) == YORDLE and s.perms[i, P_ALIVE] == 1]
+if len(live) != 1 or live[0] == u:
+    die("banish", f"expected one NEW row for the returned unit, got {live}")
+new = live[0]
+if int(s.perms[new, P_LOC]) != bf_loc(0):
+    die("banish", "'to the same location' was not honoured")
+if int(s.perms[new, P_DMG]) or (s.perms[new, P_FLAGS] & F_BUFFED):
+    die("banish", "it came back with its damage or Buff -- 705 removes buffs "
+                  "when a unit leaves play, and it is a new object")
+if s.perms[new, P_READY]:
+    die("banish", "359.2.c -- a played unit enters exhausted")
+ok("it returns as a new object: no damage, no Buff, entering exhausted")
+
+# It was PLAYED, so its own entry trigger fires.
+if int(s.n_hand[0]) != hand_before - 1 + 1:
+    die("banish", f"the returned unit's ETB did not fire: hand "
+                  f"{int(s.n_hand[0])}")
+ok("'its owner plays it' fires the unit's own when-you-play-me trigger")
+
+# 427.2.a -- not a Kill: only the spell reached the trash, not the unit.
+if int(s.n_trash[0]) != 1:
+    die("banish", f"trash holds {int(s.n_trash[0])}; banishing must not trash "
+                  f"the unit (427.2.a) -- only Temporal Breach itself goes")
+ok("427.2.a -- banish is not a kill: no trash, and no [Deathknell]")
+
 print("\n\033[32mall effect tests passed\033[0m")

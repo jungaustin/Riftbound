@@ -39,7 +39,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                OP_DRAW, OP_NO_SPELLS,
                                OP_MODIFY_MIGHT, OP_STUN,
                                COND_CONTROL_N_GEAR, OP_ADD_ENERGY,
-                               OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT,
+                               OP_ADD_POWER, OP_BLINK, OP_BUFF,
+                               OP_BUFF_ALL_AT,
                                OP_DAMAGE_ALL,
                                OP_DISCARD, OP_EXHAUST_ALL, OP_HEAL_AT,
                                OP_KILL_ALL, OP_MODIFY_MIGHT_ALL,
@@ -47,7 +48,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
                                TK_LOCATION, TK_SPELL, W_FRIENDLY,
-                               T_CTX, T_HERE, T_OWNER_BASE, T_SELF,
+                               TR_PLAY_ME, T_CTX, T_HERE, T_OWNER_BASE,
+                               T_SELF,
                                CardSpec, Op,
                                TargetSpec)
 from rl.engine import chain
@@ -454,6 +456,28 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["stunned"] = log.get("stunned", [])
             if state.stun(a):
                 log["stunned"].append(a)
+        elif op.op == OP_BLINK:
+            # 427 -- Banish, then the OWNER plays it again. Not a kill
+            # (427.2.a), so nothing is trashed and no [Deathknell] fires.
+            row = state.perms[a]
+            bcard, bctrl = int(row[P_CARD]), int(row[P_CTRL])
+            dst = base_loc(bctrl) if op.to_base else int(row[P_LOC])
+            combat.banish(state, table, a)
+            if table.is_token(bcard):
+                # 186 -- a token in any non-board zone ceases to exist, so it
+                # never comes back. Banishing a token is straight removal.
+                log.setdefault("banished", []).append(a)
+                log["resolved"].append(op.op)
+                continue
+            new = state.add_permanent(
+                bcard, bctrl, dst, ready=False,
+                is_unit=bool(table.is_type(bcard, "Unit")))
+            # It returns as a NEW object: no damage, no Buff (705), no "this
+            # turn" modifiers, and it was *played*, so its own entry triggers
+            # fire for its owner.
+            if chain.has_trigger(table, bcard, TR_PLAY_ME):
+                chain.queue(state, TR_PLAY_ME, new, dst)
+            log["blinked"] = (a, new)
         elif op.op == OP_BUFF:
             # 426.1.b.1 -- a unit that already has a Buff does not get another,
             # and 426.1.c is explicit that it can still be CHOSEN for the

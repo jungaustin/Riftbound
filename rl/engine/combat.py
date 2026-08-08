@@ -242,6 +242,17 @@ def mark_damage(state: GameState, table: CardTable, perm: int,
     return False
 
 
+def banish(state: GameState, table: CardTable, perm: int) -> None:
+    """Remove a permanent to Banishment (427). NOT a kill.
+
+    427.2.a is explicit that "Banish is not a subset of Kill", so this must not
+    do the two things `_destroy` does: no [Deathknell] fires and the card does
+    not go to the trash. Getting that wrong would hand a Deathknell deck free
+    value from the opponent's removal.
+    """
+    state.perms[perm, P_ALIVE] = 0
+
+
 def destroy(state: GameState, table: CardTable, perm: int) -> None:
     """Kill outright (428) -- no damage involved, so no lethal check."""
     _destroy(state, table, perm)

@@ -61,12 +61,13 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_DAMAGE, OP_KILL, OP_DRAW_CONTROLLER, OP_READY,
  OP_MODIFY_MIGHT_ALL, OP_DAMAGE_ALL,
  OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT,
- OP_ADD_ENERGY, OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT) = range(23)
+ OP_ADD_ENERGY, OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT,
+ OP_BLINK) = range(24)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
             "damage_all", "discard", "kill_all", "exhaust_all", "heal_at",
-            "add_energy", "add_power", "buff", "buff_all_at")
+            "add_energy", "add_power", "buff", "buff_all_at", "blink")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -126,6 +127,8 @@ class Op(NamedTuple):
     then_ready: bool = False
     # For OP_ADD_POWER: which domain's Power is added to the Rune Pool.
     domain: int = -1
+    # For OP_BLINK: send it back to its owner's base instead of where it stood.
+    to_base: bool = False
 
 
 class CardSpec(NamedTuple):
@@ -367,6 +370,26 @@ SPECS: dict[str, CardSpec] = {
     # --- transcribed one by one from the card database ---------------------
     # These need no mechanism the DSL did not already have. Kept together so
     # the batch is legible; the ordering tool is `rl/tools/triage.py`.
+
+    # [Hidden] Banish a unit, then its owner plays it to the same location,
+    # ignoring its cost.
+    #
+    # The unit comes back as a NEW game object: damage gone, Buff gone (705),
+    # "this turn" modifiers gone, entering exhausted (359.2.c) and firing its
+    # own "when you play me" triggers. That is the whole card -- it resets a
+    # buffed attacker and re-triggers a friendly one.
+    "Temporal Breach": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_BLINK, target=0),),
+    ),
+
+    # [Action] Banish a friendly unit, then play it to base, ignoring its cost.
+    "Portal Rescue": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_FRIENDLY),),
+        ops=(Op(OP_BLINK, target=0, to_base=True),),
+    ),
 
     # [Reaction] Move up to 2 friendly units to base.
     "Flash": CardSpec(
