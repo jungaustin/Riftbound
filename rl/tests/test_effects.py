@@ -1269,4 +1269,92 @@ if int(s.n_chain):
     die("fizz", "Fizz with an empty trash should leave nothing on the Chain")
 ok("with an empty trash the ability never reaches the Chain (355.8)")
 
+# ---------------------------------------------------------------------------
+print("\n[16] reanimation: playing a UNIT from the trash (337.2, 806.3)")
+
+HARROW = T.id_of("The Harrowing")
+MATRON = ABILITIES["Spectral Matron"][0]
+
+
+def harrow_state(trash=(), control_bf=(0,)):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN[2]
+    s.runes_ready[:, :] = 9
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.hand[0, 0] = HARROW
+    s.n_hand[0] = 1
+    for i, c in enumerate(trash):
+        s.trash[0, i] = c
+    s.n_trash[0] = len(trash)
+    for i in control_bf:
+        s.bf_ctrl[i] = 0
+    return s
+
+
+# **A unit is playable whether or not its text is encoded; a spell is not.**
+# 337.2 resolves a unit immediately and it simply stands there, so a unit whose
+# rules text the DSL cannot express is still a perfectly good unit -- the engine
+# plays them from hand every game. Requiring a spec of both made The Harrowing
+# able to reanimate nothing at all.
+UNENCODED = next(c for c in range(T.n)
+                 if T.is_type(c, "Unit") and not T.is_token(c)
+                 and spec_for(T, c) is None and T.residual_text(c))
+s = harrow_state(trash=[UNENCODED])
+if rsv.legal_targets(s, T, SPECS["The Harrowing"], 0, 0, [], -1) != [UNENCODED]:
+    die("reanimate", f"{T.names[UNENCODED]!r} has text the DSL cannot express, "
+                     f"but a unit is playable regardless -- it just stands there")
+ok("a unit with unencoded text is still a legal reanimation target")
+
+# A SPELL is not: with nothing to do on resolution it would be a card spent on
+# a no-op, and its unfilled target slots could dead-end.
+s = harrow_state(trash=[DREDGE])
+if rsv.legal_targets(s, T, SPECS["The Harrowing"], 0, 0, [], -1):
+    die("reanimate", "'play a UNIT from your trash' must not reach a spell")
+ok("...and a spell is not a unit, so it is out of reach entirely")
+
+# 806.3 -- the destination is your base or a Battlefield YOU CONTROL, never
+# every battlefield. Offering the difference would let this drop a unit onto
+# contested ground as a free Conquer, which is the whole reason 806.3 exists.
+s = harrow_state(trash=[PLAIN[2]], control_bf=(0,))
+s.bf_ctrl[1] = 1
+locs = rsv.legal_targets(s, T, SPECS["The Harrowing"], 1, 0, [PLAIN[2]], -1)
+if bf_loc(1) in locs:
+    die("reanimate", f"806.3 -- a battlefield the opponent controls was "
+                     f"offered as a play destination: {locs}")
+if sorted(locs) != sorted([base_loc(0), bf_loc(0)]):
+    die("reanimate", f"expected base + the controlled battlefield, got {locs}")
+ok("806.3 -- only your base and Battlefields you control are destinations")
+
+# End to end: the unit leaves the trash, enters EXHAUSTED (359.2.c) at the
+# chosen location, and the spell itself goes to the trash.
+s = harrow_state(trash=[PLAIN[2]])
+run(s, (A.A_PLAY, A.A_TARGET, A.A_PASS))
+live = [i for i in range(s.n_perms)
+        if s.perms[i, P_ALIVE] == 1 and int(s.perms[i, P_CARD]) == PLAIN[2]]
+if len(live) != 1:
+    die("reanimate", f"expected the reanimated unit on the board, got {live}")
+if s.perms[live[0], P_READY]:
+    die("reanimate", "359.2.c -- a played unit enters exhausted")
+if int(s.n_trash[0]) != 1 or int(s.trash[0, 0]) != HARROW:
+    die("reanimate", "the unit should have left the trash and the spell "
+                     "entered it")
+ok("the unit leaves the trash and enters exhausted; the spell trashes")
+
+# "ignoring its cost" waives BOTH halves; "ignoring its Energy cost" does not.
+# Spectral Matron and Soulgorger are the same card with the two wordings, which
+# is why the cost mode rides on the slot rather than being assumed.
+POWER_UNIT = next(c for c in range(T.n)
+                  if T.is_type(c, "Unit") and not T.is_token(c)
+                  and int(T.power[c]) > 0 and int(T.energy[c]) <= 3)
+s = harrow_state(trash=[POWER_UNIT])
+s.runes_ready[0, :] = 0                       # no runes at all
+if rsv.legal_targets(s, T, MATRON, 0, 0, [], -1) != [POWER_UNIT]:
+    die("reanimate", "'ignoring its cost' waives the Power cost too, so a "
+                     "rune-less board can still reanimate")
+if rsv.legal_targets(s, T, SPECS["The Harrowing"], 0, 0, [], -1):
+    die("reanimate", "'ignoring its ENERGY cost' still owes Power -- the "
+                     "reminder text on the card exists because this is missed")
+ok("'ignoring its cost' waives Power; 'ignoring its Energy cost' does not")
+
 print("\n\033[32mall effect tests passed\033[0m")

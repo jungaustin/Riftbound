@@ -37,7 +37,9 @@ from typing import NamedTuple
 # the engine, so naming its zone constants here cannot cycle. A card that says
 # "recycle that spell after you play it" has to name a zone, and inventing a
 # parallel enum for the DSL would mean two lists to keep in step.
-from rl.engine.state import DEST_BANISH, DEST_RECYCLE, DEST_TRASH  # noqa: F401
+from rl.engine.state import (COST_FREE, COST_NO_ENERGY,  # noqa: F401
+                             COST_PRINTED, DEST_BANISH, DEST_RECYCLE,
+                             DEST_TRASH)
 
 # --- speeds. When may this card be played? Wire format: append only. -------
 SPEED_MAIN, SPEED_ACTION, SPEED_REACTION = range(3)
@@ -76,13 +78,15 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_MODIFY_MIGHT_ALL, OP_DAMAGE_ALL,
  OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT,
  OP_ADD_ENERGY, OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT,
- OP_BLINK, OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH) = range(26)
+ OP_BLINK, OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
+ OP_PLAY_UNIT_FROM_TRASH) = range(27)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
             "damage_all", "discard", "kill_all", "exhaust_all", "heal_at",
             "add_energy", "add_power", "buff", "buff_all_at", "blink",
-            "trash_to_hand", "play_from_trash")
+            "trash_to_hand", "play_from_trash",
+            "play_unit_from_trash")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -137,7 +141,15 @@ class TargetSpec(NamedTuple):
     # LEGALITY, because offering a target that cannot be finalized announces a
     # card that then deadlocks (359.3.e.14.a).
     playable: bool = False
-    playable_free_energy: bool = False   # "ignoring its Energy cost"
+    # Which cost that play pays -- a COST_* from state.py. The pool prints
+    # three: the printed cost, "ignoring its Energy cost. (You must still pay
+    # its Power cost.)", and the flat "ignoring its cost". The reminder text on
+    # the middle one exists because players get it wrong, and so would this.
+    playable_cost: int = COST_PRINTED
+    # A TK_LOCATION slot that names where a card will be PLAYED, so it must be
+    # narrowed to 806.3's "your base or a Battlefield you control" rather than
+    # offering every battlefield the way a movement destination does.
+    play_destination: bool = False
 
 
 class Op(NamedTuple):
@@ -163,6 +175,10 @@ class Op(NamedTuple):
     # says "Recycle that spell after you play it"; Kai'Sa says nothing, so hers
     # trashes normally. A DEST_* from state.py.
     dest: int = 0
+    # For the play-from-trash ops: which cost the play pays. A COST_* from
+    # state.py, and it must agree with the slot's `playable_cost` -- the slot
+    # uses it to decide legality, the op uses it to charge.
+    cost: int = 0
     # For OP_BLINK: send it back to its owner's base instead of where it stood.
     to_base: bool = False
 
@@ -489,6 +505,25 @@ SPECS: dict[str, CardSpec] = {
         ops=(Op(OP_TRASH_TO_HAND, target=0),),
     ),
 
+    # Play a unit from your trash, ignoring its Energy cost. (You must still
+    # pay its Power cost.)
+    #
+    # A UNIT, not a spell, and that changes the shape completely: 337.2 resolves
+    # a unit immediately, so there is no Chain Item, nothing to respond to, and
+    # no destination to record afterwards. What it needs instead is a place to
+    # stand, and 806.3 restricts that to your base or a Battlefield you control
+    # -- `play_destination` is what stops the slot offering contested ground
+    # that would be a free Conquer.
+    "The Harrowing": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",),
+                            playable=True, playable_cost=COST_NO_ENERGY),
+                 TargetSpec(kind=TK_LOCATION, play_destination=True,
+                            locality=LOC_FREE)),
+        ops=(Op(OP_PLAY_UNIT_FROM_TRASH, target=0, target_b=1,
+                cost=COST_NO_ENERGY),),
+    ),
+
     # Return up to two cards with [Hidden] from your trash to your hand.
     #
     # The second sentence ("You can hide cards ignoring costs this turn") is a
@@ -805,8 +840,56 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
         Ability(TR_PLAY_ME, optional=True,
                 targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Spell",),
                                     max_energy=3, playable=True,
-                                    playable_free_energy=True),),
-                ops=(Op(OP_PLAY_FROM_TRASH, target=0, dest=DEST_RECYCLE),)),
+                                    playable_cost=COST_NO_ENERGY),),
+                ops=(Op(OP_PLAY_FROM_TRASH, target=0, dest=DEST_RECYCLE,
+                        cost=COST_NO_ENERGY),)),
+    ),
+
+    # When you play me, you may play a unit from your trash, ignoring its
+    # Energy cost. (You must still pay its Power cost.)
+    "Soulgorger": (
+        Ability(TR_PLAY_ME, optional=True,
+                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",),
+                                    playable=True,
+                                    playable_cost=COST_NO_ENERGY),
+                         TargetSpec(kind=TK_LOCATION, play_destination=True,
+                                    locality=LOC_FREE)),
+                ops=(Op(OP_PLAY_UNIT_FROM_TRASH, target=0, target_b=1,
+                        cost=COST_NO_ENERGY),)),
+    ),
+
+    # When you play me, you may play a unit costing no more than {3 energy} and
+    # no more than {any rune} from your trash, ignoring its cost.
+    #
+    # "Ignoring its COST", not "its Energy cost" -- both halves are waived, and
+    # Soulgorger three entries up is the same card with the other wording. The
+    # cost restriction is on the PRINTED cost, which is what makes the two
+    # numbers meaningful at all when nothing is being paid.
+    "Spectral Matron": (
+        Ability(TR_PLAY_ME, optional=True,
+                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",),
+                                    max_energy=3, max_power=1, playable=True,
+                                    playable_cost=COST_FREE),
+                         TargetSpec(kind=TK_LOCATION, play_destination=True,
+                                    locality=LOC_FREE)),
+                ops=(Op(OP_PLAY_UNIT_FROM_TRASH, target=0, target_b=1,
+                        cost=COST_FREE),)),
+    ),
+
+    # [Deathknell] You may play a unit with cost no more than {3 energy} and no
+    # more than {any rune} from your trash, ignoring its cost.
+    #
+    # Spectral Matron's ability on a death trigger instead of an entry one, so
+    # it pays off trading her away -- and by then the trash is fuller.
+    "Glasc Mixologist": (
+        Ability(TR_DEATH, optional=True,
+                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",),
+                                    max_energy=3, max_power=1, playable=True,
+                                    playable_cost=COST_FREE),
+                         TargetSpec(kind=TK_LOCATION, play_destination=True,
+                                    locality=LOC_FREE)),
+                ops=(Op(OP_PLAY_UNIT_FROM_TRASH, target=0, target_b=1,
+                        cost=COST_FREE),)),
     ),
 
     # When I hold, you may return a unit or gear from your trash to your hand.

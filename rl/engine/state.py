@@ -172,6 +172,7 @@ N_CHAIN_COLS = 11
 COST_PRINTED = 0     # the corner cost, or nothing at all if played from Hidden
 COST_FLOW = 1        # 829.1.c.1 -- the Flow cost REPLACES the base cost
 COST_NO_ENERGY = 2   # "ignoring its Energy cost"; the Power cost still stands
+COST_FREE = 3        # "ignoring its cost" -- both halves waived
 
 # Where the card goes when it leaves the Chain. Three real destinations, and
 # only one of them gives the card back -- see `GameState.recycle_card`.

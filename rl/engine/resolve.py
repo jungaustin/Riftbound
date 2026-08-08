@@ -52,18 +52,20 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
                                TK_LOCATION, TK_SPELL, TK_TRASH_CARD,
                                OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
-                               W_FRIENDLY,
+                               OP_PLAY_UNIT_FROM_TRASH, W_FRIENDLY,
                                TR_PLAY_ME, T_CTX, T_HERE, T_OWNER_BASE,
                                T_SELF,
                                CardSpec, Op,
                                TargetSpec)
 from rl.engine import chain
-from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, COST_NO_ENERGY,
+from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
+                             COST_NO_ENERGY, COST_PRINTED,
                              F_BUFFED,
                              F_DIED_ALONE,
                              N_BF, P_ALIVE, P_FLAGS,
                              P_CARD, P_CTRL, P_DMG, P_LOC, P_READY, GameState,
-                             base_loc, bf_loc, is_battlefield)
+                             base_loc, bf_index, bf_loc,
+                             is_battlefield)
 
 
 def deflect_cost(state: GameState, table: CardTable, seat: int,
@@ -197,7 +199,7 @@ def _spell_targets(state: GameState, table: CardTable, spec: TargetSpec,
 
 
 def can_play_from_trash(state: GameState, table: CardTable, seat: int,
-                        card: int, free_energy: bool) -> bool:
+                        card: int, cost_mode: int) -> bool:
     """Could `seat` play this card out of their trash right now?
 
     **Asked twice, and the second time is the one that matters.** At
@@ -218,19 +220,50 @@ def can_play_from_trash(state: GameState, table: CardTable, seat: int,
     """
     from rl.engine.cost import plan_ability_cost, plan_payment
     from rl.engine.effects import spec_for as _spec_for
-    card_spec = _spec_for(table, card)
-    if card_spec is None:
+    # **A unit is playable whether or not its text is encoded; a spell is not.**
+    # 337.2 resolves a unit immediately and it simply stands there, so a unit
+    # with rules text the DSL cannot express is still a perfectly good unit --
+    # real decks are full of them and the engine plays them from hand every
+    # game. A SPELL with no spec has nothing to do on resolution, so playing it
+    # would be a no-op that spent a card, and it has target slots that could
+    # dead-end. Requiring a spec of both made The Harrowing able to reanimate
+    # nothing at all.
+    is_unit = bool(table.is_type(card, "Unit"))
+    card_spec = None if is_unit else _spec_for(table, card)
+    if not is_unit and card_spec is None:
         return False                       # no rules text the engine can run
     # "ignoring its Energy cost. (You must still pay its Power cost.)"
-    plan = (plan_ability_cost(state, table, seat, card, 0,
-                              int(table.power[card])) if free_energy
-            else plan_payment(state, table, seat, card))
+    if cost_mode == COST_FREE:
+        plan = []                          # "ignoring its cost": nothing to pay
+    elif cost_mode == COST_NO_ENERGY:
+        plan = plan_ability_cost(state, table, seat, card, 0,
+                                 int(table.power[card]))
+    else:
+        plan = plan_payment(state, table, seat, card)
     if plan is None:
         return False
     # Terminates because no spell in the pool replays a spell that replays a
     # spell; two that did would recurse forever right here.
-    return not card_spec.n_targets or can_be_cast(
+    return card_spec is None or not card_spec.n_targets or can_be_cast(
         state, table, card_spec, seat, -1, card=card)
+
+
+def _pay_trash_play(state: GameState, table: CardTable, seat: int, card: int,
+                    cost_mode: int) -> None:
+    """Charge for a card played out of the trash, per its cost mode."""
+    from rl.engine.cost import pay, pay_ability_cost, plan_ability_cost, \
+        plan_payment
+    if cost_mode == COST_FREE:
+        return                             # "ignoring its cost"
+    if cost_mode == COST_NO_ENERGY:
+        recycle = plan_ability_cost(state, table, seat, card, 0,
+                                    int(table.power[card]))
+        assert recycle is not None, "unaffordable Power cost reached the play"
+        pay_ability_cost(state, table, seat, 0, recycle)
+        return
+    recycle = plan_payment(state, table, seat, card)
+    assert recycle is not None, "unaffordable card reached the play"
+    pay(state, table, seat, card, recycle)
 
 
 def _trash_card_ok(table: CardTable, spec: TargetSpec, card: int,
@@ -252,7 +285,7 @@ def _trash_card_ok(table: CardTable, spec: TargetSpec, card: int,
             from rl.engine.effects import spec_for as _spec_for
             return _spec_for(table, card) is not None
         if not can_play_from_trash(state, table, seat, card,
-                                   spec.playable_free_energy):
+                                   spec.playable_cost):
             return False
     if spec.tags and not any(t in table.tags[card] for t in spec.tags):
         return False
@@ -305,6 +338,16 @@ def _location_targets(state: GameState, spec: TargetSpec, seat: int,
     """
     if bound_bf >= 0 and spec.locality == LOC_BOUND:
         return [bf_loc(bound_bf)]
+    if spec.play_destination:
+        # 806.3 -- a Unit may only be PLAYED to your base or a Battlefield you
+        # control. A movement destination is any location; a play destination
+        # is not, and offering the difference would let The Harrowing drop a
+        # unit onto contested ground without ever fighting for it. Same
+        # restriction `actions.play_destinations` enforces for a card from
+        # hand, and for the same reason.
+        return ([base_loc(seat)]
+                + [bf_loc(i) for i in range(N_BF)
+                   if int(state.bf_ctrl[i]) == seat])
     return [base_loc(seat)] + [bf_loc(i) for i in range(N_BF)]
 
 
@@ -602,14 +645,45 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # stood between the two and the board has moved. See
             # `can_play_from_trash`.
             if (a < 0 or idx < 0
-                    or not can_play_from_trash(state, table, seat, a, True)):
+                    or not can_play_from_trash(state, table, seat, a,
+                                               op.cost)):
                 log["fizzled"].append(op.op)
                 continue
             state.trash[seat, idx:n - 1] = state.trash[seat, idx + 1:n]
             state.trash[seat, n - 1] = -1
             state.n_trash[seat] = n - 1
             chain.push(state, a, seat, from_hand=False, bound_bf=-1,
-                       cost=COST_NO_ENERGY, dest=op.dest)
+                       cost=op.cost, dest=op.dest)
+            log.setdefault("played_from_trash", []).append(table.names[a])
+        elif op.op == OP_PLAY_UNIT_FROM_TRASH:
+            # A unit, not a spell, so 337.2 resolves it IMMEDIATELY -- no chain
+            # item, nothing to respond to, and therefore no destination to
+            # record. It goes on the board instead, which is why this needs a
+            # location where `OP_PLAY_FROM_TRASH` needs a `dest`.
+            n = int(state.n_trash[seat])
+            idx = next((i for i in range(n)
+                        if int(state.trash[seat, i]) == a), -1)
+            if (a < 0 or idx < 0
+                    or not can_play_from_trash(state, table, seat, a, op.cost)):
+                log["fizzled"].append(op.op)
+                continue
+            dst = _slot(state, still_legal, op.target_b, source, ctx)
+            # The destination was chosen at finalization and a response window
+            # has passed since. If that Battlefield is no longer this seat's,
+            # 806.3 no longer permits it -- but the base always does, and the
+            # play itself is not optional, so it lands there rather than
+            # fizzling a card the player already committed to.
+            if dst < 0 or (is_battlefield(dst)
+                           and int(state.bf_ctrl[bf_index(dst)]) != seat):
+                dst = base_loc(seat)
+            state.trash[seat, idx:n - 1] = state.trash[seat, idx + 1:n]
+            state.trash[seat, n - 1] = -1
+            state.n_trash[seat] = n - 1
+            _pay_trash_play(state, table, seat, a, op.cost)
+            # 359.2.c -- it enters exhausted, exactly as if played from hand.
+            src2 = state.add_permanent(a, seat, dst, ready=False, is_unit=True)
+            if chain.has_trigger(table, a, TR_PLAY_ME):
+                chain.queue(state, TR_PLAY_ME, src2, dst)
             log.setdefault("played_from_trash", []).append(table.names[a])
         elif op.op == OP_COUNTER:
             # Record the controller BEFORE removing the item -- Lilting
