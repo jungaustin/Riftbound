@@ -33,7 +33,7 @@ from rl.config import DOMAINS, Config
 from rl.engine import actions as A
 from rl.engine import chain, combat
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import TK_LOCATION, TK_SPELL, TK_UNIT
+from rl.engine.effects import TK_LOCATION, TK_SPELL, TK_TRASH_CARD, TK_UNIT
 from rl.engine.state import (C_CARD, C_SRC, F_NO_COMBAT_DAMAGE,
                              F_STUNNED, MAX_HAND, MAX_PERMS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_ARRIVED, P_CARD,
@@ -284,14 +284,7 @@ class Encoder:
 
     def _open_slot_kind(self, state: GameState) -> int:
         """The TK_* kind of the target slot currently being filled."""
-        item = chain.oldest_pending(state)
-        if item < 0 or state.pend_slot < 0:
-            return TK_UNIT
-        spec = chain.item_spec(state, self.table, item)
-        slot = int(state.pend_slot)
-        if spec is None or slot >= spec.n_targets:
-            return TK_UNIT
-        return spec.targets[slot].kind
+        return chain.open_slot_kind(state, self.table)
 
     def _action_row(self, act: A.Action, state: GameState,
                     seat: int) -> np.ndarray:
@@ -348,6 +341,11 @@ class Encoder:
                 i = chain.index_of_uid(state, int(act.arg))
                 if i >= 0:
                     card = int(state.chain[i, C_CARD])
+            elif kind == TK_TRASH_CARD:
+                # Already a card id, and the trash is public (108.2), so
+                # naming it leaks nothing. There is no row and no location to
+                # describe: the choice is purely "which card do I want back".
+                card = int(act.arg)
             else:
                 card = int(state.perms[act.arg, P_CARD])
                 loc = int(state.perms[act.arg, P_LOC])

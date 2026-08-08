@@ -796,4 +796,125 @@ if int(s.deck[0, cap - 10]) != DREDGE:
     die("recycle", "the recycled card is not on the bottom after compaction")
 ok("a full deck array reclaims the drawn prefix instead of overflowing")
 
+# ---------------------------------------------------------------------------
+print("\n[12] trash recursion: naming a card in an unordered zone (108.2.c)")
+
+from rl.engine import resolve as rsv
+from rl.engine.effects import ABILITIES, TR_PLAY_ME
+
+MORBID = T.id_of("Morbid Return")
+GEAR = next(c for c in range(T.n) if T.is_type(c, "Gear") and not T.is_token(c))
+DOG = T.id_of("Starhound")                       # tags: Dog, Mount Targon
+
+
+def trash_state(cards, seat=0):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN[2]
+    for i, c in enumerate(cards):
+        s.trash[seat, i] = c
+    s.n_trash[seat] = len(cards)
+    s.runes_ready[:, :] = 6
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    return s
+
+
+def names(cs):
+    return sorted(T.names[c] for c in cs)
+
+
+# The slot's restrictions are on the CARD, since there is no permanent to ask.
+s = trash_state([PLAIN[2], GEAR, MORBID])
+cases = [
+    (SPECS["Morbid Return"], [PLAIN[2]], "a unit"),
+    (ABILITIES["Aspiring Engineer"][0], [GEAR], "a gear"),
+    (ABILITIES["Annie - Stubborn"][0], [MORBID], "a spell"),
+    (ABILITIES["Guardian of the Passage"][0], [PLAIN[2], GEAR], "a unit or gear"),
+]
+for spec, want, label in cases:
+    got = rsv.legal_targets(s, T, spec, 0, 0, [], -1)
+    if names(got) != names(want):
+        die("trash", f"{label!r} slot offered {names(got)}, wanted {names(want)}")
+ok("card_type narrows a trash slot: unit / spell / gear / unit-or-gear")
+
+# Tags, not types: Starhound returns "a Bird, Cat, Dog, or Poro" and says
+# nothing about what type the thing is.
+s = trash_state([PLAIN[2], DOG])
+got = rsv.legal_targets(s, T, ABILITIES["Starhound"][0], 0, 0, [], -1)
+if names(got) != [T.names[DOG]]:
+    die("trash", f"the tag whitelist offered {names(got)}")
+ok("a tag whitelist reaches the Dog and not the plain unit")
+
+# --- duplicates, the whole reason the slot holds a CARD and not an index ---
+# 108.2.c: the trash is unordered, so two copies are one choice.
+s = trash_state([PLAIN[2], PLAIN[2]])
+got = rsv.legal_targets(s, T, SPECS["Morbid Return"], 0, 0, [], -1)
+if len(got) != 1:
+    die("trash", f"two copies of one card must be ONE offer, got {len(got)}")
+ok("two copies of a card in the trash collapse to one offer (108.2.c)")
+
+# ...but a SECOND slot may name it again, because a second copy is there.
+HID = next(c for c in range(T.n) if T.has(c, "Hidden") and not T.is_token(c))
+GW = SPECS["Guerilla Warfare"]
+s = trash_state([HID, HID])
+if not rsv.legal_targets(s, T, GW, 1, 0, [HID], -1):
+    die("trash", "with two copies present, both slots should be able to take one")
+ok("two slots may name the same card when the trash holds two copies")
+
+# With only one copy, the second slot may not repeat it. This is the case a
+# `not in chosen` membership test gets right by accident and a raw index test
+# gets wrong: it has to COUNT.
+s = trash_state([HID])
+if rsv.legal_targets(s, T, GW, 1, 0, [HID], -1):
+    die("trash", "the second slot took a copy that was already spoken for")
+ok("with one copy, the second slot cannot name it again")
+
+# --- a full play-through ---------------------------------------------------
+s = trash_state([PLAIN[2]])
+s.hand[0, 0] = MORBID
+s.n_hand[0] = 1
+play = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY]
+if not play:
+    die("trash", "Morbid Return was not playable with a unit in the trash")
+A.apply(s, T, V1, play[0])
+tgts = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_TARGET]
+if len(tgts) != 1 or tgts[0].arg != PLAIN[2]:
+    die("trash", f"the target offer should be the CARD id, got {tgts}")
+A.apply(s, T, V1, tgts[0])
+settle(s)
+if int(s.n_hand[0]) != 1 or int(s.hand[0, 0]) != PLAIN[2]:
+    die("trash", f"the unit did not reach the hand: "
+                 f"{[T.names[c] for c in s.hand[0, :max(1, int(s.n_hand[0]))]]}")
+if int(s.n_trash[0]) != 1 or int(s.trash[0, 0]) != MORBID:
+    die("trash", "the trash should now hold Morbid Return and nothing else")
+ok("Morbid Return moves the unit trash -> hand and itself hand -> trash")
+
+# --- 355.8: an empty trash must not put an unfillable ability on the Chain --
+s = GameState()
+s.n_deck[:] = 20
+s.deck[:, :20] = PLAIN[2]
+s.runes_ready[:, :] = 6
+s.phase, s.active, s.priority = MAIN, 0, 0
+u = s.add_permanent(T.id_of("Cemetery Attendant"), 0, base_loc(0))
+if chain.fire(s, T, V1, TR_PLAY_ME, u) or s.n_chain:
+    die("trash", "355.8 -- an ability with no legal choice must never reach "
+                 "the Chain; with an empty trash it would sit Pending forever")
+ok("355.8 -- an ETB that needs the trash does not fire on an empty one")
+
+# --- 359.3.e: a target that leaves the trash before resolution fizzles ------
+s = trash_state([PLAIN[2]])
+s.hand[0, 0] = MORBID
+s.n_hand[0] = 1
+A.apply(s, T, V1, next(a for a in A.legal_actions(s, T, V1, 0)
+                       if a.kind == A.A_PLAY))
+A.apply(s, T, V1, next(a for a in A.legal_actions(s, T, V1, 0)
+                       if a.kind == A.A_TARGET))
+s.n_trash[0] = 0                      # something else claimed it mid-chain
+s.trash[0, 0] = -1
+settle(s)
+if int(s.n_hand[0]) != 0:
+    die("trash", "a card that left the trash between finalization and "
+                 "resolution must not still arrive in hand (359.3.e)")
+ok("a target that leaves the trash mid-chain fizzles rather than crashing")
+
 print("\n\033[32mall effect tests passed\033[0m")

@@ -38,12 +38,20 @@ SPEED_MAIN, SPEED_ACTION, SPEED_REACTION = range(3)
 SPEED_NAMES = ("main", "action", "reaction")
 
 # --- target slots ---------------------------------------------------------
-TK_UNIT, TK_BATTLEFIELD, TK_SPELL, TK_LOCATION = range(4)
+TK_UNIT, TK_BATTLEFIELD, TK_SPELL, TK_LOCATION, TK_TRASH_CARD = range(5)
 
 # The stored value of a target slot means whatever its KIND says it means:
 # TK_UNIT a permanent row, TK_SPELL a Chain Item uid (C_UID), TK_LOCATION a
-# location int. Nothing has to disambiguate them at runtime because the slot's
-# kind is always known from the spec.
+# location int, TK_TRASH_CARD a CARD ID. Nothing has to disambiguate them at
+# runtime because the slot's kind is always known from the spec.
+#
+# **TK_TRASH_CARD stores the card, not the trash index, and that is the rules
+# answer rather than a convenience.** 108.2.c: "Cards in each player's Trash are
+# unordered. Their sequence does not matter." Two copies of one card in an
+# unordered zone are indistinguishable, so there is nothing for a per-copy
+# identity to mean -- and an index would be actively wrong, because the window
+# between finalization and resolution (359.3.e) is exactly when another card
+# dies into the trash and shifts everything after it.
 
 W_ANY, W_FRIENDLY, W_ENEMY = range(3)      # relative to the caster
 WHO_NAMES = ("any", "friendly", "enemy")
@@ -62,12 +70,13 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_MODIFY_MIGHT_ALL, OP_DAMAGE_ALL,
  OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT,
  OP_ADD_ENERGY, OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT,
- OP_BLINK) = range(24)
+ OP_BLINK, OP_TRASH_TO_HAND) = range(25)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
             "damage_all", "discard", "kill_all", "exhaust_all", "heal_at",
-            "add_energy", "add_power", "buff", "buff_all_at", "blink")
+            "add_energy", "add_power", "buff", "buff_all_at", "blink",
+            "trash_to_hand")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -106,6 +115,15 @@ class TargetSpec(NamedTuple):
     # this, "Deal 6 to each of up to two units" would be unplayable whenever
     # only one unit existed.
     optional: bool = False
+    # For TK_TRASH_CARD: which cards in the trash the slot may name.
+    # `card_type` is the printed type ("Unit", "Spell", "Gear"); a tuple means
+    # "a unit OR gear", which Guardian of the Passage asks for. `tags` is a
+    # tag whitelist -- Starhound's "a Bird, Cat, Dog, or Poro". Both empty means
+    # any card, which is what Guerilla Warfare's keyword restriction needs once
+    # it is expressed through `has_keyword` instead.
+    card_type: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+    has_keyword: str | None = None
 
 
 class Op(NamedTuple):
@@ -415,6 +433,35 @@ SPECS: dict[str, CardSpec] = {
         ops=(Op(OP_RETURN_TO_HAND, target=0),),
     ),
 
+    # --- trash recursion ---------------------------------------------------
+    # Every card below names a card in a TRASH rather than on the board, which
+    # is what TK_TRASH_CARD is for. Read the note beside it in this file before
+    # adding another: the slot holds a card id, not a row and not an index.
+
+    # [Action] Return a unit from your trash to your hand.
+    "Morbid Return": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",)),),
+        ops=(Op(OP_TRASH_TO_HAND, target=0),),
+    ),
+
+    # Return up to two cards with [Hidden] from your trash to your hand.
+    #
+    # The second sentence ("You can hide cards ignoring costs this turn") is a
+    # turn-scoped cost modifier on the Hide action and is NOT implemented, so
+    # this card is deliberately absent from `plays_as_printed`. Half a card is
+    # still worth having: the half that is here is the reason the card is in a
+    # deck, and the coverage metric counts it honestly as missing.
+    "Guerilla Warfare": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(kind=TK_TRASH_CARD, has_keyword="Hidden",
+                            optional=True),
+                 TargetSpec(kind=TK_TRASH_CARD, has_keyword="Hidden",
+                            optional=True)),
+        ops=(Op(OP_TRASH_TO_HAND, target=0),
+             Op(OP_TRASH_TO_HAND, target=1)),
+    ),
+
     # [Action] Deal 4 to a unit at a battlefield. Draw 1.
     "Void Seeker": CardSpec(
         speed=SPEED_ACTION,
@@ -614,6 +661,52 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # DSL only owns the second sentence.
     "Lecturing Yordle": (
         Ability(TR_PLAY_ME, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # --- trash recursion, on a trigger -------------------------------------
+    # 355.8 makes the empty-trash case free: an ability whose only slot has no
+    # legal choice is never put on the Chain at all, so none of these deadlock
+    # on turn one. That is already enforced centrally in `chain.fire`.
+
+    # When you play me, return a unit from your trash to your hand.
+    "Cemetery Attendant": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",)),),
+                ops=(Op(OP_TRASH_TO_HAND, target=0),)),
+    ),
+
+    # When you play me, return a spell from your trash to your hand.
+    "Annie - Stubborn": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Spell",)),),
+                ops=(Op(OP_TRASH_TO_HAND, target=0),)),
+    ),
+
+    # When you play me, return a gear from your trash to your hand.
+    "Aspiring Engineer": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Gear",)),),
+                ops=(Op(OP_TRASH_TO_HAND, target=0),)),
+    ),
+
+    # When you play me, return a Bird, Cat, Dog, or Poro from your trash to
+    # your hand. A TAG list, not a type list -- the card says nothing about
+    # whether the thing it returns is a unit.
+    "Starhound": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(kind=TK_TRASH_CARD,
+                                    tags=("Bird", "Cat", "Dog", "Poro")),),
+                ops=(Op(OP_TRASH_TO_HAND, target=0),)),
+    ),
+
+    # When I hold, you may return a unit or gear from your trash to your hand.
+    # A Hold trigger, so it pays off a battlefield that survived the opponent's
+    # whole turn -- and "unit or gear" is why `card_type` is a tuple.
+    "Guardian of the Passage": (
+        Ability(TR_HOLD, optional=True,
+                targets=(TargetSpec(kind=TK_TRASH_CARD,
+                                    card_type=("Unit", "Gear")),),
+                ops=(Op(OP_TRASH_TO_HAND, target=0),)),
     ),
 
     # When you play me, play a ready 3 Might Sprite unit token with [Temporary]

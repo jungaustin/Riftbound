@@ -244,6 +244,32 @@ def item_spec(state: GameState, table: CardTable, item: int):
     return abilities[abil]
 
 
+def open_slot_kind(state: GameState, table: CardTable) -> int:
+    """The TK_* kind of the target slot currently being filled.
+
+    **Anything reading an `A_TARGET` arg must ask this first.** The arg means
+    whatever the slot's kind says: a permanent row, a location, a Chain uid, or
+    a card id. Three separate bugs have come from reading it as a row anyway --
+    the observation encoder describing permanent 0-3 for a location target,
+    `deflect_cost` charging a surcharge for whichever unit sat in row 2, and
+    the greedy baseline sorting counterspell targets by the Might of a row
+    picked by a monotonic counter. Every one of those indices was VALID, so
+    none of them crashed; they just described the wrong thing on exactly the
+    decisions where the description mattered.
+
+    Lives here rather than in either caller so there is one answer.
+    """
+    from rl.engine.effects import TK_UNIT
+    item = oldest_pending(state)
+    if item < 0 or state.pend_slot < 0:
+        return TK_UNIT
+    spec = item_spec(state, table, item)
+    slot = int(state.pend_slot)
+    if spec is None or slot >= spec.n_targets:
+        return TK_UNIT
+    return spec.targets[slot].kind
+
+
 def has_trigger(table: CardTable, card: int, trigger: int) -> bool:
     """Does this card have an ability on `trigger`? Cheap pre-filter so the
     queue only ever holds triggers that will actually produce something."""

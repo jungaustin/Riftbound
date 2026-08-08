@@ -26,6 +26,8 @@ spell fizzle (355.9.b).
 
 from __future__ import annotations
 
+import numpy as np
+
 from rl.config import Config
 from rl.engine import phases
 from rl.engine.cardtable import CardTable
@@ -47,7 +49,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_FROM_HAND,
                                OP_READY, OP_SWAP_LOC,
                                REL_DIFFERENT_LOC, REL_NONE,
                                REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
-                               TK_LOCATION, TK_SPELL, W_FRIENDLY,
+                               TK_LOCATION, TK_SPELL, TK_TRASH_CARD,
+                               OP_TRASH_TO_HAND, W_FRIENDLY,
                                TR_PLAY_ME, T_CTX, T_HERE, T_OWNER_BASE,
                                T_SELF,
                                CardSpec, Op,
@@ -177,6 +180,50 @@ def _spell_targets(state: GameState, table: CardTable, spec: TargetSpec,
     return out
 
 
+def _trash_card_ok(table: CardTable, spec: TargetSpec, card: int) -> bool:
+    """Does one card in the trash satisfy a TK_TRASH_CARD slot's restrictions?"""
+    if spec.card_type and not any(table.is_type(card, t) for t in spec.card_type):
+        return False
+    if spec.tags and not any(t in table.tags[card] for t in spec.tags):
+        return False
+    if spec.has_keyword and not table.has(card, spec.has_keyword):
+        return False
+    if spec.max_energy >= 0 and int(table.energy[card]) > spec.max_energy:
+        return False
+    if spec.max_power >= 0 and int(table.power[card]) > spec.max_power:
+        return False
+    return True
+
+
+def _trash_targets(state: GameState, table: CardTable, spec: TargetSpec,
+                   seat: int, chosen: list[int]) -> list[int]:
+    """Distinct cards in `seat`'s trash this slot may name (108.2.c).
+
+    Returns CARD IDS, deduplicated: two copies of one card in an unordered zone
+    are the same choice, and offering both would double the branching factor to
+    describe a decision that does not exist.
+
+    But a slot may still name a card an EARLIER slot already named, so long as
+    the trash actually holds another copy -- Guerilla Warfare returning two
+    Sprite Calls is legal when two are there and illegal when one is. So the
+    exclusion counts copies rather than testing membership, which is the same
+    duplicate bookkeeping [Flow] needed and the opposite of the `not in chosen`
+    rule that unit slots use (a permanent row IS unique).
+    """
+    n = int(state.n_trash[seat])
+    have: dict[int, int] = {}
+    for i in range(n):
+        c = int(state.trash[seat, i])
+        have[c] = have.get(c, 0) + 1
+    out: list[int] = []
+    for card, count in have.items():
+        if chosen.count(card) >= count:
+            continue
+        if _trash_card_ok(table, spec, card):
+            out.append(card)
+    return sorted(out)
+
+
 def _location_targets(state: GameState, spec: TargetSpec, seat: int,
                       bound_bf: int) -> list[int]:
     """Locations this slot may name.
@@ -201,6 +248,8 @@ def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
         return _location_targets(state, t, seat, bound_bf)
     if t.kind == TK_SPELL:
         return _spell_targets(state, table, t, chosen)
+    if t.kind == TK_TRASH_CARD:
+        return _trash_targets(state, table, t, seat, chosen)
     return [i for i in range(state.n_perms)
             if i not in chosen
             and _matches(state, table, t, i, seat, chosen, bound_bf, source)
@@ -340,6 +389,15 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # Still legal iff the item is still on the chain. If someone else
             # countered it first, this one fizzles (359.3.e).
             ok = t >= 0 and chain.index_of_uid(state, t) >= 0
+        elif spec.targets[slot].kind == TK_TRASH_CARD:
+            # Still legal iff a copy is still there -- and iff no EARLIER slot
+            # of this same card has already spoken for the last one. Two slots
+            # naming the same card were legal at finalization because two copies
+            # existed; if one has since been played out of the trash with
+            # [Flow], only the first slot may still have it.
+            need = chosen_so_far.count(t) + 1
+            ok = t >= 0 and int(np.count_nonzero(
+                state.trash[seat, :int(state.n_trash[seat])] == t)) >= need
         else:
             ok = (t >= 0 and _matches(state, table, spec.targets[slot], t, seat,
                                       chosen_so_far, bound_bf, source))
@@ -423,6 +481,24 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                 state.hand[owner, h] = card
                 state.n_hand[owner] = h + 1
             log.setdefault("returned", []).append(a)
+        elif op.op == OP_TRASH_TO_HAND:
+            # `a` is a CARD, not a permanent row -- see the TK_TRASH_CARD note
+            # in effects.py. Any copy will do, since 108.2.c makes the trash
+            # unordered and the copies interchangeable.
+            n = int(state.n_trash[seat])
+            idx = next((i for i in range(n)
+                        if int(state.trash[seat, i]) == a), -1)
+            if a < 0 or idx < 0:
+                log["fizzled"].append(op.op)
+                continue
+            state.trash[seat, idx:n - 1] = state.trash[seat, idx + 1:n]
+            state.trash[seat, n - 1] = -1
+            state.n_trash[seat] = n - 1
+            h = int(state.n_hand[seat])
+            assert h < state.hand.shape[1], "hand overflow"
+            state.hand[seat, h] = a
+            state.n_hand[seat] = h + 1
+            log.setdefault("from_trash", []).append(table.names[a])
         elif op.op == OP_COUNTER:
             # Record the controller BEFORE removing the item -- Lilting
             # Lullaby's second op ("its controller can't play spells this

@@ -95,12 +95,21 @@ def deck_slots(table) -> Counter:
 
 
 def classify(table, cid: int) -> tuple[str, bool]:
-    """(blocking mechanism or '-', ready-to-transcribe)."""
-    text = table.raw_text[cid]
-    for label, pat in MECHANISMS:
-        if re.search(pat, text):
-            return label, False
+    """(blocking mechanism or '-', ready-to-transcribe).
+
+    Both questions are asked of `residual_text`, never of `raw_text`. A
+    keyword's REMINDER text describes the keyword, and once the engine
+    implements that keyword the reminder is no longer a statement about work
+    left to do. [Flow] prints "(You may play this from your trash for its flow
+    cost)", so matching raw text filed eleven ordinary spells -- Brittle Steel's
+    "Kill a gear", Onslaught's "+6 Might" -- under a trash-recursion mechanism
+    none of them touch, and buried them behind the cluster's design work when
+    they were pure transcription.
+    """
     residual = table.residual_text(cid)
+    for label, pat in MECHANISMS:
+        if re.search(pat, residual):
+            return label, False
     if not residual:
         return "-", True                     # keywords only
     # Ready iff every sentence matches something the DSL can already say.

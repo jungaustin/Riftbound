@@ -102,7 +102,17 @@ def _biggest_enemy(state: GameState, table, seat: int, cands):
     Crude on purpose. The point of the baseline is to be a *fair yardstick*, not
     to play well -- but it has to use combat tricks at all, or "beats greedy"
     silently starts measuring an opponent that ignores half the game.
+
+    Only meaningful for a UNIT slot: an `A_TARGET` arg is a permanent row only
+    when the open slot says so. For a location, a chain uid or a card in the
+    trash it is a different kind of number entirely, and `state.perms[arg]`
+    would be reading a row chosen at random -- or, for a card id, off the end
+    of the array. The caller checks the kind; this asserts it rather than
+    trusting, because the failure is silent for three of the four kinds.
     """
+    from rl.engine import chain as chain_mod
+    from rl.engine.effects import TK_UNIT
+    assert chain_mod.open_slot_kind(state, table) == TK_UNIT
     enemy = [a for a in cands if state.perms[a.arg, P_CTRL] != seat]
     pool = enemy or list(cands)
     key = (max if enemy else min)
@@ -116,7 +126,14 @@ def greedy_agent(rng: np.random.Generator):
             kinds.setdefault(a.kind, []).append(a)
 
         # Filling a target slot: stun the biggest thing that is not ours.
+        # Only unit slots carry a permanent row -- for every other kind the
+        # baseline has no opinion and takes the first offer, which is honest
+        # about what it is rather than sorting a number it cannot read.
         if A.A_TARGET in kinds:
+            from rl.engine import chain as chain_mod
+            from rl.engine.effects import TK_UNIT
+            if chain_mod.open_slot_kind(state, table) != TK_UNIT:
+                return kinds[A.A_TARGET][0]
             return _biggest_enemy(state, table, seat, kinds[A.A_TARGET])
 
         if A.A_HIDE_AT in kinds:

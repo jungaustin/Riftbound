@@ -228,6 +228,13 @@ class CardTable:
     flow_power: np.ndarray    # int16
     text_len: np.ndarray      # int16, reminder text stripped
     token: np.ndarray         # bool, supertype == Token (185.3)
+    # Printed tags -- Bird, Fae, Mech, Shurima. Cards name them constantly
+    # ("return a Bird, Cat, Dog, or Poro from your trash"), and unlike a
+    # keyword a tag carries no rules of its own: it exists only to be
+    # referenced. A tuple of frozensets rather than a bitmask because the pool
+    # has well over a hundred distinct tags and nothing reads this in a hot
+    # loop -- same treatment as `names`.
+    tags: tuple[frozenset[str], ...]
 
     @property
     def n(self) -> int:
@@ -331,6 +338,7 @@ def _rows(cards: list[Card]) -> CardTable:
         flow_power=np.array([flow_cost(c.text)[1] for c in cards], np.int16),
         text_len=np.array([len(body_text(c.text)) for c in cards], np.int16),
         token=np.array([c.name in _tokens for c in cards], bool),
+        tags=tuple(frozenset(getattr(c, "tags", None) or ()) for c in cards),
     )
     assert tbl.n == n
     return tbl
