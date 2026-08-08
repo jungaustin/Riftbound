@@ -35,7 +35,7 @@ from rl.engine import chain, combat
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import TK_LOCATION, TK_SPELL, TK_UNIT
 from rl.engine.state import (C_CARD, C_SRC, F_NO_COMBAT_DAMAGE,
-                             F_STUNNED, MAX_PERMS, N_BF,
+                             F_STUNNED, MAX_HAND, MAX_PERMS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_ARRIVED, P_CARD,
                              P_CTRL, P_DMG, P_FLAGS, P_LOC, P_READY,
                              PHASE_NAMES, GameState, base_loc, bf_index,
@@ -55,7 +55,11 @@ CTX_DIM = 23
 
 # Slot counts. Overflow is a bug, not a resize -- silently dropping a card from
 # the observation would be invisible in training.
-HAND_SLOTS = 16   # spells draw cards; 12 was reachable
+# Both derived from the engine's own caps for the same reason, twice learned:
+# `HAND_SLOTS` was 16 ("spells draw cards; 12 was reachable") and real decks
+# reached 23. Tracking `MAX_HAND` is the one value that cannot be outgrown
+# without the engine itself refusing the state first.
+HAND_SLOTS = MAX_HAND
 # **Derived, not chosen.** This was 24, picked as "far above anything a legal
 # game reaches" -- and then 806.3 landed, games got ~3x longer, and boards of 31
 # live permanents appeared in ordinary random play. A hand-tuned headroom
