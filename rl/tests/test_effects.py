@@ -1068,4 +1068,27 @@ for order in (0, 1):
                           f"Destroying inline made this depend on row order.")
 ok("two units dying together: neither died alone, in either trigger order")
 
+# The batch-mate does not need a Deathknell of its own. A Poro dying at the
+# same instant as any friendly unit did not die alone -- and this is the case
+# the old inline destroy got wrong most often, because a plain unit queues no
+# trigger and so left no trace that it had ever been there.
+for first_poro in (True, False):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN[2]
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    rows = ([s.add_permanent(PORO, 0, bf_loc(0)),
+             s.add_permanent(PLAIN[2], 0, bf_loc(0))] if first_poro else
+            [s.add_permanent(PLAIN[2], 0, bf_loc(0)),
+             s.add_permanent(PORO, 0, bf_loc(0))])
+    for perm in rows:
+        s.perms[perm, P_DMG] = 99
+    combat.enforce_lethal(s, T)
+    drain(s)
+    if int(s.n_hand[0]) != 0:
+        die("deathknell", f"a Poro dying at the same instant as a plain "
+                          f"friendly unit did not die alone (poro first="
+                          f"{first_poro}); drew {int(s.n_hand[0])}")
+ok("...and the other unit needs no Deathknell of its own to count")
+
 print("\n\033[32mall effect tests passed\033[0m")
