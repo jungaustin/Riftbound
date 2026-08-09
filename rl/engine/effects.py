@@ -151,6 +151,16 @@ class TargetSpec(NamedTuple):
     rel_to: int = -1          # index of the earlier slot `rel` refers to
     max_might: int = -1       # 355.9.b "with N might or less"; -1 = no limit
     at_battlefield: bool = False   # must be at a Battlefield, not a base
+    # The mirror: "Deal 4 to a unit in a base", "Deal 3 to a unit at a base".
+    # Unqualified, so it reaches EITHER base -- narrow it with `who` to get
+    # "a friendly unit at your base". Both flags false means "anywhere", which
+    # is what most cards print.
+    at_base: bool = False
+    # For TK_SPELL: may this slot also name an ABILITY on the Chain? Eleven of
+    # the thirteen counter cards say "Counter a spell" and mean only a spell;
+    # Not So Fast and Repulse say "spell or ability". Units never reach the
+    # Chain at all (337.2), so they are never a question here.
+    chain_abilities: bool = False
     # Cost restrictions, for TK_SPELL. Defy: "costs no more than {4 energy}
     # and no more than {any rune}" -- energy <= 4 AND power <= 1.
     max_energy: int = -1
@@ -355,17 +365,36 @@ SPECS: dict[str, CardSpec] = {
     ),
 
     # [Reaction] Counter a spell. Its controller can't play spells this turn.
+    #
+    # **"A spell" is exactly a spell.** Not a unit -- 337.2 resolves those
+    # immediately and they never become a Chain Item, so there is nothing to
+    # counter and this is not a Magic-style "counter target spell" that stops a
+    # creature. And not an ability either: abilities do sit on the Chain
+    # (383.3), so `chain_abilities` has to be opted into, and only Not So Fast
+    # and Repulse ("spell or ability") print the words that would.
     "Lilting Lullaby": CardSpec(
         speed=SPEED_REACTION,
-        targets=(TargetSpec(kind=TK_SPELL),),
+        targets=(TargetSpec(kind=TK_SPELL, who=W_ANY),),
         ops=(Op(OP_COUNTER, target=0), Op(OP_NO_SPELLS, target=0)),
     ),
 
     # [Reaction] Counter a spell that costs no more than {4 energy} and no
     # more than {any rune}.  "{any rune}" is one Power symbol of any domain.
+    #
+    # The cost limit is another reason abilities are out: an ability has no
+    # printed cost, so the only number to compare would be its SOURCE card's,
+    # which the ability never paid.
     "Defy": CardSpec(
         speed=SPEED_REACTION,
-        targets=(TargetSpec(kind=TK_SPELL, max_energy=4, max_power=1),),
+        targets=(TargetSpec(kind=TK_SPELL, who=W_ANY,
+                            max_energy=4, max_power=1),),
+        ops=(Op(OP_COUNTER, target=0),),
+    ),
+
+    # [Reaction] Counter a spell.  The plain one, with no rider at all.
+    "Wind Wall": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(kind=TK_SPELL, who=W_ANY),),
         ops=(Op(OP_COUNTER, target=0),),
     ),
 
@@ -374,14 +403,14 @@ SPECS: dict[str, CardSpec] = {
     # existing Beginning-Phase path -- the conquer-vs-hold inversion.
     "Sprite Call": CardSpec(
         speed=SPEED_ACTION,
-        targets=(TargetSpec(kind=TK_LOCATION),),
+        targets=(TargetSpec(kind=TK_LOCATION, who=W_FRIENDLY),),
         ops=(Op(OP_CREATE_TOKEN, target=0, n=1, token=SPRITE_TOKEN, ready=True),),
     ),
 
     # Play two ready 3 Might Sprite unit tokens with [Temporary].
     "Sprite Burst": CardSpec(
         speed=SPEED_MAIN,
-        targets=(TargetSpec(kind=TK_LOCATION),),
+        targets=(TargetSpec(kind=TK_LOCATION, who=W_FRIENDLY),),
         ops=(Op(OP_CREATE_TOKEN, target=0, n=2, token=SPRITE_TOKEN, ready=True),),
     ),
 
@@ -389,7 +418,7 @@ SPECS: dict[str, CardSpec] = {
     "Ride The Wind": CardSpec(
         speed=SPEED_ACTION,
         targets=(TargetSpec(who=W_FRIENDLY),
-                 TargetSpec(kind=TK_LOCATION, locality=LOC_FREE)),
+                 TargetSpec(kind=TK_LOCATION, who=W_FRIENDLY, locality=LOC_FREE)),
         ops=(Op(OP_MOVE_TO, target=0, target_b=1, then_ready=True),),
     ),
 
@@ -398,7 +427,7 @@ SPECS: dict[str, CardSpec] = {
     "Charm": CardSpec(
         speed=SPEED_MAIN,
         targets=(TargetSpec(who=W_ENEMY),
-                 TargetSpec(kind=TK_LOCATION, locality=LOC_FREE)),
+                 TargetSpec(kind=TK_LOCATION, who=W_FRIENDLY, locality=LOC_FREE)),
         ops=(Op(OP_MOVE_TO, target=0, target_b=1),),
     ),
 

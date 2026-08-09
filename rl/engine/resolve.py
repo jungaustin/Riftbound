@@ -59,7 +59,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                CardSpec, Op, pack_trash, unpack_trash,
                                TargetSpec)
 from rl.engine import chain
-from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
+from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
                              COST_NO_ENERGY, COST_PRINTED,
                              F_BUFFED,
                              F_DIED_ALONE,
@@ -152,6 +152,11 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
 
     if spec.at_battlefield and not is_battlefield(loc):
         return False
+    # "a unit at a base" -- unqualified, so EITHER base. `who` narrows it to
+    # one side when the card says so; without that this would silently mean
+    # "your base" and Rocket Barrage could never hit anything worth hitting.
+    if spec.at_base and is_battlefield(loc):
+        return False
     if spec.max_might >= 0 and int(table.might[int(row[P_CARD])]) > spec.max_might:
         return False
 
@@ -176,23 +181,45 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
 
 
 def _spell_targets(state: GameState, table: CardTable, spec: TargetSpec,
-                   chosen: list[int]) -> list[int]:
+                   seat: int, chosen: list[int]) -> list[int]:
     """Chain items this slot may counter, as stable uids.
 
     Excludes items still Pending and the countering card itself: at the moment
     its targets are chosen it is the newest item on the chain, and a spell
     cannot counter itself.
+
+    **A unit is not a spell, and neither is an ability.** Units never appear
+    here at all -- 337.2 resolves them immediately at finalization, so they
+    never become a Chain Item and there is nothing to counter. Abilities DO sit
+    on the Chain (383.3), and eleven of the thirteen counter cards in the pool
+    say "Counter a spell" and mean only that; just Not So Fast and Repulse say
+    "spell or ability". So the slot has to opt IN to reaching abilities, and
+    the default excludes them.
+
+    The cost restrictions come off the printed card, which is meaningful for a
+    spell and meaningless for an ability -- Defy's "costs no more than
+    {4 energy}" would otherwise be measured against the ability's SOURCE card,
+    a number the ability never had.
     """
     out = []
     newest = state.n_chain - 1
     for i in range(state.n_chain):
         if i == newest or state.chain[i, C_FINAL] != 1:
             continue
+        is_ability = int(state.chain[i, C_ABIL]) >= 0
+        if is_ability and not spec.chain_abilities:
+            continue
+        ctrl = int(state.chain[i, C_CTRL])
+        if spec.who == W_FRIENDLY and ctrl != seat:
+            continue
+        if spec.who == W_ENEMY and ctrl == seat:
+            continue
         card = int(state.chain[i, C_CARD])
-        if spec.max_energy >= 0 and int(table.energy[card]) > spec.max_energy:
-            continue
-        if spec.max_power >= 0 and int(table.power[card]) > spec.max_power:
-            continue
+        if not is_ability:
+            if spec.max_energy >= 0 and int(table.energy[card]) > spec.max_energy:
+                continue
+            if spec.max_power >= 0 and int(table.power[card]) > spec.max_power:
+                continue
         uid = int(state.chain[i, C_UID])
         if uid not in chosen:
             out.append(uid)
@@ -383,7 +410,23 @@ def _location_targets(state: GameState, spec: TargetSpec, seat: int,
         return ([base_loc(seat)]
                 + [bf_loc(i) for i in range(N_BF)
                    if int(state.bf_ctrl[i]) == seat])
-    return [base_loc(seat)] + [bf_loc(i) for i in range(N_BF)]
+    # **Which bases this slot reaches.** A location is a base or a battlefield,
+    # and there are two bases. `who` picks them the same way it picks a unit's
+    # controller, so "a unit at a base" can reach the far side.
+    #
+    # The default is W_FRIENDLY rather than W_ANY, and that is a rules answer
+    # rather than caution: every location slot written so far is a DESTINATION
+    # -- a Move or a token placement -- and no card in the pool sends anything
+    # to the opponent's base. Movement is base<->battlefield with a unit going
+    # to ITS OWN base (`T_OWNER_BASE`), so offering the enemy base as somewhere
+    # to move to would invent a play the game does not have.
+    if spec.who == W_ENEMY:
+        bases = [base_loc(1 - seat)]
+    elif spec.who == W_ANY:
+        bases = [base_loc(seat), base_loc(1 - seat)]
+    else:
+        bases = [base_loc(seat)]
+    return bases + [bf_loc(i) for i in range(N_BF)]
 
 
 def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
@@ -395,7 +438,7 @@ def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
     if t.kind == TK_LOCATION:
         return _location_targets(state, t, seat, bound_bf)
     if t.kind == TK_SPELL:
-        return _spell_targets(state, table, t, chosen)
+        return _spell_targets(state, table, t, seat, chosen)
     if t.kind == TK_TRASH_CARD:
         return _trash_targets(state, table, t, seat, chosen)
     return [i for i in range(state.n_perms)

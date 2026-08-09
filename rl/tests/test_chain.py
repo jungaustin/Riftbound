@@ -286,4 +286,54 @@ if int(s.n_trash[1]) != 1 or int(s.trash[1, 0]) != BACK_OFF:
 ok("...but a countered spell still reaches the trash: it was played (349)")
 
 
+# --- "Counter a spell" means a SPELL --------------------------------------
+# Unlike Magic, a unit is not a spell here. 337.2 resolves a unit immediately
+# at finalization, so it never becomes a Chain Item and there is nothing for a
+# counterspell to point at -- you answer a unit by killing it, not by
+# countering it. Abilities DO sit on the Chain (383.3), which is the case that
+# actually needed fixing: "Counter a spell" was reaching them.
+from rl.engine.effects import (SPECS, TK_SPELL, W_ANY, W_ENEMY,
+                               CardSpec, TargetSpec)
+from rl.engine.state import C_ABIL
+
+s = fresh()
+spell = chain.push(s, BACK_OFF, 1)
+chain.finalize(s, spell)
+src = s.add_permanent(T.id_of("Watchful Sentry"), 1, bf_loc(0))
+abil = chain.push(s, T.id_of("Watchful Sentry"), 1, abil=0, src=src)
+chain.finalize(s, abil)
+_ = chain.push(s, T.id_of("Defy"), 0)          # the newest item: the counter
+
+opts = rsv.legal_targets(s, T, SPECS["Wind Wall"], 0, 0, [], -1)
+if int(s.chain[abil, C_UID]) in opts:
+    die("counter", "'Counter a spell' must not reach an ABILITY on the Chain")
+if int(s.chain[spell, C_UID]) not in opts:
+    die("counter", f"...but it must still reach the spell: {opts}")
+ok("'Counter a spell' reaches spells only, never abilities (383.3)")
+
+# "Counter an enemy spell or ability" -- both halves opted into explicitly.
+both = CardSpec(speed=SPECS["Wind Wall"].speed,
+                targets=(TargetSpec(kind=TK_SPELL, who=W_ENEMY,
+                                    chain_abilities=True),),
+                ops=SPECS["Wind Wall"].ops)
+opts = rsv.legal_targets(s, T, both, 0, 0, [], -1)
+if int(s.chain[abil, C_UID]) not in opts:
+    die("counter", "'spell or ability' must reach the ability")
+ok("...and 'spell or ability' reaches both, because those cards say so")
+
+# `who` on a chain slot: an "enemy spell" slot cannot answer your own.
+s = fresh()
+own = chain.push(s, BACK_OFF, 0)
+chain.finalize(s, own)
+_ = chain.push(s, T.id_of("Defy"), 0)
+enemy_only = CardSpec(speed=SPECS["Wind Wall"].speed,
+                      targets=(TargetSpec(kind=TK_SPELL, who=W_ENEMY),),
+                      ops=SPECS["Wind Wall"].ops)
+if rsv.legal_targets(s, T, enemy_only, 0, 0, [], -1):
+    die("counter", "an 'enemy spell' slot reached the caster's own spell")
+if not rsv.legal_targets(s, T, SPECS["Wind Wall"], 0, 0, [], -1):
+    die("counter", "a plain 'a spell' slot may answer your own spell")
+ok("who narrows a chain slot: 'an enemy spell' vs the unqualified 'a spell'")
+
+
 print("\n\033[32mall chain tests passed\033[0m")
