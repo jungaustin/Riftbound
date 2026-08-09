@@ -26,6 +26,7 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]
 from rl.config import Config
 from rl.engine import combat
 from rl.engine.cardtable import full_table
+from rl.engine.cost import card_domains, plan_payment
 from rl.engine.state import (P_ALIVE, P_DMG, P_LOC, GameState, base_loc,
                              bf_loc)
 
@@ -187,5 +188,100 @@ for name in STATICS:
     if not plays_as_printed(T, T.id_of(name)):
         die("coverage", f"{name!r} has a static spec but is not counted")
 ok(f"all {len(STATICS)} cards with statics count as played as printed")
+
+# ---------------------------------------------------------------------------
+print("\n[6] counting a ZONE instead of the board")
+
+from rl.engine.cost import effective_energy
+from rl.engine.effects import (CNT_TRASH, SC_SELF, ST_COST_ENERGY, ST_MIGHT,
+                               STATICS, Static)
+
+RHASA = T.id_of("Rhasa the Sunderer")
+LURKER = T.id_of("Shadowblade Lurker")
+GUARD = T.id_of("Plaza Guardian")
+FILLER = T.id_of("Stupefy")
+
+
+def trashed(n, cards=None):
+    s = GameState()
+    s.n_deck[:] = 20
+    for i in range(n):
+        s.trash[0, i] = cards[i] if cards else FILLER
+    s.n_trash[0] = n
+    return s
+
+
+# "I cost {1 energy} less for each card in your trash" -- the count only ever
+# goes up, so this is the one discount an opponent cannot answer on board.
+printed = int(T.energy[RHASA])
+for n, want in ((0, printed), (3, printed - 3), (printed, 0), (printed + 5, 0)):
+    got = effective_energy(trashed(n), T, 0, RHASA)
+    if got != want:
+        die("zone", f"Rhasa with {n} in the trash cost {got}, wanted {want}")
+ok(f"a zone-counting discount scales and floors at 0 ({printed} -> 0)")
+
+# "for each card with MY NAME in your trash" counts copies, not cards.
+s = trashed(4, [FILLER, LURKER, FILLER, LURKER])
+want = int(T.energy[LURKER]) - 2 * 2
+if effective_energy(s, T, 0, LURKER) != want:
+    die("zone", f"per_same_name counted the whole trash, not the copies: "
+                f"{effective_energy(s, T, 0, LURKER)} != {want}")
+if effective_energy(trashed(4), T, 0, LURKER) != int(T.energy[LURKER]):
+    die("zone", "a trash with no copies of the card must give no discount")
+ok("per_same_name counts only copies of the card itself, not the whole pile")
+
+# A board count by TYPE, not keyword: "for each gear you control".
+s = GameState()
+s.n_deck[:] = 20
+GEAR = next(c for c in range(T.n) if T.is_type(c, "Gear") and not T.is_token(c))
+if effective_energy(s, T, 0, GUARD) != int(T.energy[GUARD]):
+    die("zone", "no gear on board should mean no discount")
+s.add_permanent(GEAR, 0, base_loc(0))
+s.add_permanent(GEAR, 0, bf_loc(0))
+s.add_permanent(GEAR, 1, base_loc(1))          # theirs: "you control" excludes
+if effective_energy(s, T, 0, GUARD) != int(T.energy[GUARD]) - 2:
+    die("zone", f"'for each gear you control' counted {int(T.energy[GUARD]) - effective_energy(s, T, 0, GUARD)}"
+                f", wanted 2 (theirs must not count, location must not matter)")
+ok("a board count by TYPE ignores location and the opponent's copies")
+
+# The affordability path must agree with the display path, or a card is
+# offered as playable and then underflows the rune payment.
+s = trashed(7)
+# Her own domain, because the Power half is domain-bound (163.2) and is not
+# what this case is testing. The rune requirement is max(energy, power).
+dom = card_domains(T, RHASA)[0]
+s.runes_ready[0, dom] = max(int(T.energy[RHASA]) - 7, int(T.power[RHASA]))
+if plan_payment(s, T, 0, RHASA) is None:
+    die("zone", "the discount applied to the cost but not to affordability")
+s2 = trashed(0)
+s2.runes_ready[0, dom] = max(int(T.energy[RHASA]) - 7, int(T.power[RHASA]))
+if plan_payment(s2, T, 0, RHASA) is not None:
+    die("zone", "with an EMPTY trash there is no discount, so the same runes "
+                "must not be enough")
+ok("plan_payment and effective_energy agree: no offer the payment can't honour")
+
+# --- ST_MIGHT over a zone -------------------------------------------------
+# Dr. Mundo's clause. Not in STATICS (his second sentence has no trigger yet),
+# so it is driven directly -- the point is that a static reading a ZONE moves
+# when nothing on the board did, and 143.2.a is a continuous check.
+MUNDO_MIGHT = Static(ST_MIGHT, n=1, scope=SC_SELF, per=CNT_TRASH)
+STATICS["Rhasa the Sunderer"] = (STATICS["Rhasa the Sunderer"][0], MUNDO_MIGHT)
+try:
+    s = trashed(5)
+    u = s.add_permanent(RHASA, 0, base_loc(0))
+    if m(s, u) != int(T.might[RHASA]) + 5:
+        die("zone", f"a zone-counting Might static gave {m(s, u)}")
+    s.perms[u, P_DMG] = int(T.might[RHASA]) + 3      # survives at +5
+    combat.enforce_lethal(s, T)
+    if s.perms[u, P_ALIVE] != 1:
+        die("zone", "damage below the boosted Might must not kill")
+    s.n_trash[0] = 2                                  # the pile shrinks by 3
+    combat.enforce_lethal(s, T)
+    if s.perms[u, P_ALIVE] == 1:
+        die("zone", "143.2.a is continuous: shrinking the TRASH shrank the "
+                    "unit onto its damage and must kill it")
+    ok("emptying a trash kills a damaged unit whose Might counted it (143.2.a)")
+finally:
+    STATICS["Rhasa the Sunderer"] = (STATICS["Rhasa the Sunderer"][0],)
 
 print("\n\033[32mall static tests passed\033[0m")

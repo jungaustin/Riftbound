@@ -748,11 +748,17 @@ SPECS: dict[str, CardSpec] = {
 # check ("if a Unit EVER has damage equalling or exceeding its Might"), a static
 # going away can kill. Killing Soul Shepherd shrinks every token she was pumping
 # and any of them already carrying damage dies with her.
-ST_MIGHT = 0
-ST_NAMES = ("might",)
+ST_MIGHT, ST_COST_ENERGY = range(2)
+ST_NAMES = ("might", "cost_energy")
 
 # Who a static applies to.
 SC_SELF, SC_FRIENDLY_UNITS = range(2)
+
+# What a "for each ..." clause COUNTS. The board is the obvious source and was
+# the only one; a zone is the other, and it is a different kind of number --
+# Rhasa reads a pile that grows all game and never shrinks on its own, so her
+# cost falls monotonically rather than swinging with the board.
+CNT_NONE, CNT_BOARD, CNT_TRASH = range(3)
 
 
 class Static(NamedTuple):
@@ -771,6 +777,19 @@ class Static(NamedTuple):
     per_keyword: str | None = None
     per_friendly: bool = True
     per_same_loc: bool = True
+    # What the "for each" clause counts. CNT_BOARD is implied whenever
+    # `per_keyword` or `per_card_type` is set, so existing entries keep working
+    # without saying so; CNT_TRASH is the new one.
+    per: int = CNT_NONE
+    per_card_type: str | None = None   # "for each gear you control"
+    # CNT_TRASH only: "for each card with MY NAME in your trash" narrows the
+    # pile to copies of the static's own card (Shadowblade Lurker), where the
+    # bare form counts every card in it (Rhasa).
+    per_same_name: bool = False
+    # 356.4.e -- "to a minimum of {N energy}". The floor binds only THIS
+    # discount, which is why it rides here and not on the total; see
+    # `cost.order_discounts` for why that makes the ordering matter.
+    floor: int = 0
 
 
 STATICS: dict[str, tuple[Static, ...]] = {
@@ -786,6 +805,53 @@ STATICS: dict[str, tuple[Static, ...]] = {
     "Soul Shepherd": (
         Static(ST_MIGHT, n=1, scope=SC_FRIENDLY_UNITS, scope_token=True),
     ),
+
+    # --- costs that count a zone -------------------------------------------
+    # I cost {1 energy} less for each card in your trash.
+    #
+    # A 10-Energy unit that no one ever pays 10 for. The count only goes UP:
+    # a trash is the one zone that fills as a game runs and never empties on
+    # its own, so unlike a board-counting discount this one cannot be answered
+    # by killing anything. It is the payoff for a deck that was filling its
+    # trash anyway -- and it is why Forge of the Future recycling an opponent's
+    # trash is a real answer rather than a nuisance.
+    "Rhasa the Sunderer": (
+        Static(ST_COST_ENERGY, n=1, scope=SC_SELF, per=CNT_TRASH),
+    ),
+
+    # I cost {2 energy} less for each card with my name in your trash.
+    #
+    # "With my name", so it counts only the other copies of Shadowblade Lurker
+    # -- at 3 in a deck this is at most -4, and it rewards trading the early
+    # ones away. `per_same_name` is the difference between that and Rhasa.
+    "Shadowblade Lurker": (
+        Static(ST_COST_ENERGY, n=2, scope=SC_SELF, per=CNT_TRASH,
+               per_same_name=True),
+    ),
+
+    # I cost {1 energy} less for each gear you control.
+    #
+    # A BOARD count rather than a zone one, and `per_card_type` instead of
+    # `per_keyword` -- "gear" is a type, not a keyword. No location clause:
+    # "you control" is the whole board, so `per_same_loc` is off.
+    "Plaza Guardian": (
+        Static(ST_COST_ENERGY, n=1, scope=SC_SELF, per_card_type="Gear",
+               per_friendly=True, per_same_loc=False),
+    ),
+
+    # Dr. Mundo - Expert wants exactly this shape on the Might side -- "My
+    # Might is increased by the number of cards in your trash" is `Static(
+    # ST_MIGHT, n=1, scope=SC_SELF, per=CNT_TRASH)` and works today. He is
+    # deliberately NOT here, because his second sentence ("At the start of your
+    # Beginning Phase, recycle 3 from your trash") has no Beginning Phase
+    # trigger to hang on, and presence in this table is what tells
+    # `decks.plays_as_printed` a card's whole text is transcribed. Half a card
+    # listed here would silently inflate the coverage number.
+    #
+    # The combination is worth reaching, though, and `test_statics` drives it
+    # directly: a static that reads a ZONE moves when nothing on the board
+    # moved, and 143.2.a is continuous -- so Mundo's own recycle shrinks him by
+    # 3 and can kill him where he stands.
 }
 
 

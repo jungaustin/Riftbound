@@ -32,8 +32,13 @@ MULTI_DOMAIN_POWER_IS_PERMISSIVE = True
 
 
 # ---------------------------------------------------------------------------
-# NOT IMPLEMENTED YET, and the design is already decided -- read this before
-# adding the first cost-reducing card.
+# Cost modification. `effective_energy` is the entry point; everything below
+# explains why it is shaped the way it is. Read this before adding a discount.
+#
+# Implemented so far: discounts a card prints on ITSELF ("I cost {1 energy}
+# less for each card in your trash"). Not yet: discounts other permanents grant
+# ("Your spells cost {1 energy} less"), Power-side discounts, and the
+# "{1 energy} OR {any rune} less" choice described below.
 # ---------------------------------------------------------------------------
 # 356.1 lets the player "apply base cost modifications in any order", and the
 # order genuinely changes the answer, because 356.4.e says "if a discount
@@ -96,6 +101,44 @@ def apply_discounts(cost: int, discounts: list[tuple[int, int]]) -> int:
     return cost
 
 
+def energy_discounts(state: GameState, table: CardTable, seat: int,
+                     card: int) -> list[tuple[int, int]]:
+    """(amount, floor) Energy discounts that apply to `seat` playing `card`.
+
+    Only the card's OWN statics for now -- "I cost {1 energy} less for each
+    card in your trash". Those are the ones that can be read without a board
+    presence, which matters because the card is still in hand: it is not a
+    permanent, so `static_might`'s "walk the board" approach cannot see it.
+    Discounts printed on OTHER permanents ("Your spells cost {1 energy} less")
+    are a second source and are not implemented yet.
+    """
+    from rl.engine.combat import static_count
+    from rl.engine.effects import SC_SELF, ST_COST_ENERGY, statics_for
+    out: list[tuple[int, int]] = []
+    for st in statics_for(table, card):
+        if st.kind != ST_COST_ENERGY or st.scope != SC_SELF:
+            continue
+        # The card is in hand, so it has no location; a self-discount that
+        # counted "at my battlefield" would be meaningless and none print it.
+        amount = st.n * static_count(state, table, st, seat, -1, card)
+        if amount:
+            out.append((amount, st.floor))
+    return out
+
+
+def effective_energy(state: GameState, table: CardTable, seat: int,
+                     card: int) -> int:
+    """The Energy `card` actually costs `seat` right now.
+
+    **Never read `table.energy[card]` at a call site** -- the same rule
+    `combat.might` states for Might, and for the same reason. A cost discount
+    that `plan_payment` applies and `pay` does not is not a rounding error: the
+    card is offered as affordable and then underflows the rune payment.
+    """
+    return apply_discounts(int(table.energy[card]),
+                           energy_discounts(state, table, seat, card))
+
+
 def card_domains(table: CardTable, card: int) -> list[int]:
     mask = int(table.domain_mask[card])
     return [d for d in range(N_DOMAINS) if mask >> d & 1]
@@ -129,7 +172,8 @@ def plan_payment(state: GameState, table: CardTable, seat: int, card: int,
     share the overlapping-pool rule: a unit costing {2 energy} accelerated for
     {1 energy}{1 power} needs max(3, 1) = 3 runes, not 4.
     """
-    need_e = int(table.energy[card]) + extra_energy - int(state.pool_energy[seat])
+    need_e = (effective_energy(state, table, seat, card) + extra_energy
+              - int(state.pool_energy[seat]))
     need_e = max(0, need_e)
     if need_e > state.total_ready_runes(seat):
         return None
@@ -261,7 +305,7 @@ def pay(state: GameState, table: CardTable, seat: int, card: int,
     Exhausting first is what makes one rune pay both halves: the recycle step
     can then take a rune that was just spent on Energy.
     """
-    total_e = int(table.energy[card]) + extra_energy
+    total_e = effective_energy(state, table, seat, card) + extra_energy
     need_e = max(0, total_e - int(state.pool_energy[seat]))
     state.pool_energy[seat] = max(0, int(state.pool_energy[seat]) - total_e)
     for _ in range(need_e):

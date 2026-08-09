@@ -47,7 +47,8 @@ import numpy as np
 
 from rl.config import Config
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import (SC_SELF, ST_MIGHT, TR_DEATH, TR_MOVE,
+from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH, SC_SELF,
+                               ST_MIGHT, TR_DEATH, TR_MOVE,
                                abilities_for, statics_for)
 from rl.engine.state import (P_MIGHT_MOD, F_BUFFED, F_DIED_ALONE,
                              F_NON_UNIT, F_NO_COMBAT_DAMAGE,
@@ -102,25 +103,50 @@ def static_might(state: GameState, table: CardTable, perm: int) -> int:
                     continue
                 if not table.is_type(int(row[P_CARD]), "Unit"):
                     continue
-            if st.per_keyword is None:
-                total += st.n
-                continue
-            # "for each of your units with [X] at my battlefield"
-            src_loc = int(src[P_LOC])
-            n = 0
-            for j in range(state.n_perms):
-                o = state.perms[j]
-                if o[P_ALIVE] != 1:
-                    continue
-                if st.per_friendly and int(o[P_CTRL]) != src_seat:
-                    continue
-                if st.per_same_loc and int(o[P_LOC]) != src_loc:
-                    continue
-                if not table.has(int(o[P_CARD]), st.per_keyword):
-                    continue
-                n += 1
-            total += st.n * n
+            total += st.n * static_count(state, table, st, src_seat,
+                                         int(src[P_LOC]), int(src[P_CARD]))
     return total
+
+
+def static_count(state: GameState, table: CardTable, st, src_seat: int,
+                 src_loc: int, src_card: int) -> int:
+    """How many things this static's "for each ..." clause counts. 1 if none.
+
+    Shared by Might statics and cost discounts on purpose: "I have +1 Might for
+    each X" and "I cost {1 energy} less for each X" differ only in what they do
+    with the number, and letting them count separately is how the two drift
+    apart.
+
+    Returning 1 for a static with no counting clause is what makes `n * count`
+    the single formula for both the flat and the scaled case.
+    """
+    source = (CNT_TRASH if st.per == CNT_TRASH else
+              CNT_BOARD if (st.per_keyword or st.per_card_type) else CNT_NONE)
+    if source == CNT_NONE:
+        return 1
+    if source == CNT_TRASH:
+        # "in your trash" -- the STATIC's controller, never the reader's. A
+        # card is in exactly one player's trash and that is whose it counts.
+        n = int(state.n_trash[src_seat])
+        if st.per_same_name:
+            return int(np.count_nonzero(state.trash[src_seat, :n] == src_card))
+        return n
+    n = 0
+    for j in range(state.n_perms):
+        o = state.perms[j]
+        if o[P_ALIVE] != 1:
+            continue
+        if st.per_friendly and int(o[P_CTRL]) != src_seat:
+            continue
+        if st.per_same_loc and int(o[P_LOC]) != src_loc:
+            continue
+        card = int(o[P_CARD])
+        if st.per_keyword and not table.has(card, st.per_keyword):
+            continue
+        if st.per_card_type and not table.is_type(card, st.per_card_type):
+            continue
+        n += 1
+    return n
 
 
 def combat_role_bonus(state: GameState, table: CardTable, perm: int) -> int:
