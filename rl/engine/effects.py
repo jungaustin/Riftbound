@@ -161,6 +161,10 @@ class TargetSpec(NamedTuple):
     # Not So Fast and Repulse say "spell or ability". Units never reach the
     # Chain at all (337.2), so they are never a question here.
     chain_abilities: bool = False
+    # For TK_BATTLEFIELD: "a battlefield where you have units" (Moonfall). A
+    # restriction on the battlefield itself, so it is re-checked at resolution
+    # -- the units that qualified it can be answered in the response window.
+    needs_own_units: bool = False
     # Cost restrictions, for TK_SPELL. Defy: "costs no more than {4 energy}
     # and no more than {any rune}" -- energy <= 4 AND power <= 1.
     max_energy: int = -1
@@ -220,6 +224,19 @@ class Op(NamedTuple):
     then_ready: bool = False
     # For OP_ADD_POWER: which domain's Power is added to the Rune Pool.
     domain: int = -1
+    # --- scoping for the board-wide ops -----------------------------------
+    # These three turn "all units at battlefields" into "each other enemy unit
+    # THERE", which is what most of the mass effects in the pool actually say.
+    # 355.10 still applies: none of this makes them targets, because there is
+    # no count and no choice -- the SLOT that names the location is the target,
+    # and the sweep that follows is not.
+    at: int = -1              # slot (or T_*) giving the location to sweep
+    who: int = W_ANY          # whose units the sweep reaches
+    except_target: int = -1   # slot whose unit is spared -- "each OTHER unit"
+    # "all units AT BATTLEFIELDS" -- printed on the mass-damage cards and NOT
+    # on the mass Might reduction, which reaches units at bases too. A property
+    # of the card, so it lives here rather than being a default.
+    at_battlefields: bool = False
     # For OP_PLAY_FROM_TRASH: where the replayed card goes afterwards. Fizz
     # says "Recycle that spell after you play it"; Kai'Sa says nothing, so hers
     # trashes normally. A DEST_* from state.py.
@@ -389,6 +406,67 @@ SPECS: dict[str, CardSpec] = {
         targets=(TargetSpec(kind=TK_SPELL, who=W_ANY,
                             max_energy=4, max_power=1),),
         ops=(Op(OP_COUNTER, target=0),),
+    ),
+
+    # --- battlefield slots: "choose a battlefield and ... there" -----------
+    # [Action] Choose a battlefield and an enemy unit there. Deal 4 to that
+    # unit and 1 to each other enemy unit there.
+    #
+    # **Two slots, and the second is relative to the first.** The battlefield
+    # is itself a target -- chosen at finalization, respondable -- and
+    # `REL_SAME_BF` against slot 0 is what "there" means. That relation used to
+    # assume the slot it pointed at held a unit ROW; a battlefield slot holds a
+    # LOCATION, and reading one as the other compares against whichever unit
+    # happens to sit in row 0-3.
+    #
+    # The second op is not a target (355.10): "each other enemy unit there" has
+    # no count and no choice, so the opponent cannot answer by making one of
+    # them illegal. `except_target=1` is the "other" -- the chosen unit takes 4,
+    # not 5.
+    "Crescent Strike": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(kind=TK_BATTLEFIELD, who=W_ANY),
+                 TargetSpec(who=W_ENEMY, rel=REL_SAME_BF, rel_to=0)),
+        ops=(Op(OP_DAMAGE, target=1, n=4),
+             Op(OP_DAMAGE_ALL, n=1, at=0, who=W_ENEMY, except_target=1)),
+    ),
+
+    # [Hidden] [Reaction] Choose a battlefield you control and a unit you
+    # control at a different location. Move that unit to that battlefield and
+    # give it +2 Might this turn.
+    #
+    # "A battlefield YOU CONTROL" is `who=W_FRIENDLY` on the battlefield slot;
+    # "at a different location" is REL_DIFFERENT_LOC against it, which reads
+    # the location directly rather than through a unit. Both slots are LOC_FREE
+    # because the card is [Hidden] and the whole point is reinforcing a
+    # battlefield from somewhere else -- binding them to the hiding place would
+    # make the card unplayable from hiding, which is the only way it is played.
+    "Resonating Strike": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(kind=TK_BATTLEFIELD, who=W_FRIENDLY,
+                            locality=LOC_FREE),
+                 TargetSpec(who=W_FRIENDLY, rel=REL_DIFFERENT_LOC, rel_to=0,
+                            locality=LOC_FREE)),
+        ops=(Op(OP_MOVE_TO, target=1, target_b=0),
+             Op(OP_MODIFY_MIGHT, target=1, n=2)),
+    ),
+
+    # [Action] Choose a battlefield where you have units. You may move up to
+    # one enemy unit to that battlefield. Then give enemy units there -2 Might
+    # this turn.
+    #
+    # The move is "up to one", so slot 1 is optional (355.14) -- the card is
+    # still playable with no enemy to drag in, and then it is just a Might
+    # reduction on whoever is already there. The Might sweep is scoped to the
+    # battlefield and to enemies, and it happens AFTER the move, so a unit
+    # pulled in by the first op is caught by the second.
+    "Moonfall": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(kind=TK_BATTLEFIELD, who=W_ANY,
+                            needs_own_units=True),
+                 TargetSpec(who=W_ENEMY, optional=True)),
+        ops=(Op(OP_MOVE_TO, target=1, target_b=0),
+             Op(OP_MODIFY_MIGHT_ALL, n=-2, at=0, who=W_ENEMY)),
     ),
 
     # [Reaction] Counter a spell.  The plain one, with no rider at all.
@@ -651,7 +729,7 @@ SPECS: dict[str, CardSpec] = {
     # even if the damage kills nothing.
     "Unchecked Power": CardSpec(
         speed=SPEED_MAIN,
-        ops=(Op(OP_EXHAUST_ALL), Op(OP_DAMAGE_ALL, n=12)),
+        ops=(Op(OP_EXHAUST_ALL), Op(OP_DAMAGE_ALL, n=12, at_battlefields=True)),
     ),
 
     # [Reaction] Discard 1, then draw 2.
@@ -713,7 +791,7 @@ SPECS: dict[str, CardSpec] = {
     # Tailed Watcher's mass Might reduction, and it hits BOTH sides.
     "Flurry of Blades": CardSpec(
         speed=SPEED_REACTION,
-        ops=(Op(OP_DAMAGE_ALL, n=1),),
+        ops=(Op(OP_DAMAGE_ALL, n=1, at_battlefields=True),),
     ),
 
     # [Hidden] [Action] Choose a unit you control and another unit you control
@@ -1115,7 +1193,7 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # slot and no restriction -- it simply applies to all of them.
     "Thousand-Tailed Watcher": (
         Ability(TR_PLAY_ME,
-                ops=(Op(OP_MODIFY_MIGHT_ALL, n=-3, floor=1),)),
+                ops=(Op(OP_MODIFY_MIGHT_ALL, n=-3, floor=1, who=W_ENEMY),)),
     ),
 
     # [Shield] When I hold, play a ready 3 Might Sprite unit token with

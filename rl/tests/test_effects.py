@@ -28,8 +28,8 @@ from rl.engine.cardtable import full_table
 from rl.engine import phases
 from rl.engine.effects import (LOC_BOUND, LOC_FREE, OP_DRAW, OP_STUN,
                                OP_SWAP_LOC, SPECS, spec_for)
-from rl.engine.state import (P_ALIVE, P_CARD, P_LOC, GameState, base_loc,
-                             bf_loc)
+from rl.engine.state import (N_BF, P_ALIVE, P_CARD, P_LOC, GameState,
+                             base_loc, bf_loc)
 
 T = full_table()
 CFG = Config()
@@ -1509,6 +1509,95 @@ if int(s.n_hand[1]) != 1 or int(s.hand[1, 0]) != PLAIN[3]:
 if int(s.n_hand[0]) != 0:
     die("shadows", "the caster must not receive an opponent's card")
 ok("a unit pulled from their trash returns to THEIR hand, not the caster's")
+
+
+# ---------------------------------------------------------------------------
+print("\n[18] battlefield slots, and sweeps scoped to one")
+
+from rl.engine.state import P_MIGHT_MOD
+
+BIG = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c)
+           and int(T.might[c]) >= 5 and not T.residual_text(c))
+
+
+def bf_board(bf_ctrl=()):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = BIG
+    s.runes_ready[:, :] = 8
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    for i, who in bf_ctrl:
+        s.bf_ctrl[i] = who
+    return s
+
+
+# A battlefield slot returns LOCATIONS, never battlefield indices -- so the ops
+# that move and sweep need no idea which kind of slot named the place.
+s = bf_board()
+e1 = s.add_permanent(BIG, 1, bf_loc(0))
+e2 = s.add_permanent(BIG, 1, bf_loc(0))
+friend = s.add_permanent(BIG, 0, bf_loc(0))
+far = s.add_permanent(BIG, 1, bf_loc(1))
+got = rsv.legal_targets(s, T, SPECS["Crescent Strike"], 0, 0, [], -1)
+if got != [bf_loc(i) for i in range(N_BF)]:
+    die("bf", f"an unqualified battlefield slot should offer every one: {got}")
+if base_loc(0) in got or base_loc(1) in got:
+    die("bf", "a battlefield slot must never offer a base")
+ok("a battlefield slot offers battlefields as LOCATIONS, and never a base")
+
+# "an enemy unit THERE" -- a relation pointing at a battlefield slot, which
+# holds a location rather than a unit row.
+got = rsv.legal_targets(s, T, SPECS["Crescent Strike"], 1, 0, [bf_loc(0)], -1)
+if sorted(got) != sorted([e1, e2]):
+    die("bf", f"'enemy unit there' offered {got}, wanted the two at B0")
+ok("REL_SAME_BF against a battlefield slot reads the LOCATION, not a unit row")
+
+rsv.resolve(s, T, V1, SPECS["Crescent Strike"], 0, [bf_loc(0), e1], -1, True)
+if int(s.perms[e1, P_DMG]) != 4:
+    die("bf", f"the chosen unit takes 4, got {int(s.perms[e1, P_DMG])}")
+if int(s.perms[e2, P_DMG]) != 1:
+    die("bf", f"each OTHER enemy there takes 1, got {int(s.perms[e2, P_DMG])}")
+if int(s.perms[friend, P_DMG]) or int(s.perms[far, P_DMG]):
+    die("bf", "the sweep must spare friendly units and the other battlefield")
+ok("except_target spares the chosen unit; the sweep stays on one side, one place")
+
+# "a battlefield you control" excludes the uncontrolled and the enemy's.
+s = bf_board(bf_ctrl=((0, 0), (1, 1)))
+u_base = s.add_permanent(BIG, 0, base_loc(0))
+u_there = s.add_permanent(BIG, 0, bf_loc(0))
+if rsv.legal_targets(s, T, SPECS["Resonating Strike"], 0, 0, [], -1) != [bf_loc(0)]:
+    die("bf", "'a battlefield you control' reached one you do not")
+got = rsv.legal_targets(s, T, SPECS["Resonating Strike"], 1, 0, [bf_loc(0)], -1)
+if got != [u_base]:
+    die("bf", f"'at a different location' offered {got}, wanted only the base unit")
+rsv.resolve(s, T, V1, SPECS["Resonating Strike"], 0, [bf_loc(0), u_base], -1, True)
+if int(s.perms[u_base, P_LOC]) != bf_loc(0) or int(s.perms[u_base, P_MIGHT_MOD]) != 2:
+    die("bf", "the unit should have moved to the battlefield and gained +2")
+ok("who on a battlefield slot reads CONTROL; REL_DIFFERENT_LOC works off it")
+
+# "where you have units" is a restriction, and the sweep runs AFTER the move,
+# so a unit dragged in is caught by it.
+s = bf_board()
+mine0 = s.add_permanent(BIG, 0, bf_loc(0))
+foe = s.add_permanent(BIG, 1, base_loc(1))
+foe2 = s.add_permanent(BIG, 1, bf_loc(0))
+if rsv.legal_targets(s, T, SPECS["Moonfall"], 0, 0, [], -1) != [bf_loc(0)]:
+    die("bf", "'where you have units' offered a battlefield with none of yours")
+rsv.resolve(s, T, V1, SPECS["Moonfall"], 0, [bf_loc(0), foe], -1, True)
+if int(s.perms[foe, P_LOC]) != bf_loc(0) or int(s.perms[foe, P_MIGHT_MOD]) != -2:
+    die("bf", "a unit dragged in must be caught by the sweep that follows")
+if int(s.perms[foe2, P_MIGHT_MOD]) != -2 or int(s.perms[mine0, P_MIGHT_MOD]):
+    die("bf", "the sweep must hit every enemy there and no friendly unit")
+ok("op order matters: the dragged unit is swept because the move came first")
+
+# 355.14 -- "up to one" keeps the card playable with nothing to drag.
+s = bf_board()
+s.add_permanent(BIG, 0, bf_loc(0))
+alone = s.add_permanent(BIG, 1, bf_loc(0))
+rsv.resolve(s, T, V1, SPECS["Moonfall"], 0, [bf_loc(0), -1], -1, True)
+if int(s.perms[alone, P_MIGHT_MOD]) != -2:
+    die("bf", "with the optional slot empty the Might sweep must still happen")
+ok("an empty 'up to one' slot skips its op and leaves the rest of the card")
 
 
 print("\n\033[32mall effect tests passed\033[0m")

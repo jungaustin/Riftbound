@@ -49,7 +49,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                OP_KILL_ALL, OP_MODIFY_MIGHT_ALL,
                                OP_READY, OP_SWAP_LOC,
                                REL_DIFFERENT_LOC, REL_NONE,
-                               REL_SAME_BF, TK_UNIT, W_ANY, W_ENEMY,
+                               REL_SAME_BF, TK_BATTLEFIELD, TK_UNIT,
+                               W_ANY, W_ENEMY,
                                TK_LOCATION, TK_SPELL, TK_TRASH_CARD,
                                OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
                                OP_PLAY_UNIT_FROM_TRASH, W_FRIENDLY,
@@ -122,7 +123,7 @@ def _affordable_with(state: GameState, table: CardTable, card: int, seat: int,
 
 def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
              seat: int, chosen: list[int], bound_bf: int,
-             source: int = -1) -> bool:
+             source: int = -1, parent: CardSpec | None = None) -> bool:
     """Does `perm` satisfy one slot's restrictions?"""
     row = state.perms[perm]
     if row[P_ALIVE] != 1:
@@ -170,9 +171,21 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
         other = chosen[spec.rel_to]
         if other < 0:
             return False
-        if perm == other:
-            return False                   # "another unit" is never the same one
-        other_loc = int(state.perms[other, P_LOC])
+        # **What the referenced slot HOLDS decides how to read it.** "another
+        # unit at a different location" points at a unit row; Crescent Strike's
+        # "an enemy unit THERE" points at a battlefield slot, which holds a
+        # location. Reading a location as a permanent row silently compares
+        # against whatever unit happens to sit in row 0-3 -- a valid index and
+        # the wrong question.
+        ref_kind = (parent.targets[spec.rel_to].kind
+                    if parent is not None and spec.rel_to < parent.n_targets
+                    else TK_UNIT)
+        if ref_kind in (TK_BATTLEFIELD, TK_LOCATION):
+            other_loc = other
+        else:
+            if perm == other:
+                return False               # "another unit" is never the same one
+            other_loc = int(state.perms[other, P_LOC])
         if spec.rel == REL_SAME_BF and loc != other_loc:
             return False
         if spec.rel == REL_DIFFERENT_LOC and loc == other_loc:
@@ -429,12 +442,48 @@ def _location_targets(state: GameState, spec: TargetSpec, seat: int,
     return bases + [bf_loc(i) for i in range(N_BF)]
 
 
+def _battlefield_targets(state: GameState, table: CardTable, spec: TargetSpec,
+                         seat: int, bound_bf: int,
+                         chosen: list[int]) -> list[int]:
+    """Battlefields this slot may name, as LOCATIONS.
+
+    A battlefield slot returns the same encoding a TK_LOCATION slot does, so an
+    op that moves or damages "there" needs no idea which kind of slot chose it.
+    The difference is only in what may be chosen: never a base.
+
+    `who` reads as CONTROL here, because that is what the cards say -- "a
+    battlefield you control" (Resonating Strike) against the unqualified "a
+    battlefield" (Crescent Strike). An uncontrolled battlefield is neither
+    player's, so W_ENEMY excludes it as well as excluding your own.
+    """
+    if bound_bf >= 0 and spec.locality == LOC_BOUND:
+        return [bf_loc(bound_bf)]
+    out = []
+    for i in range(N_BF):
+        ctrl = int(state.bf_ctrl[i])
+        if spec.who == W_FRIENDLY and ctrl != seat:
+            continue
+        if spec.who == W_ENEMY and (ctrl == seat or ctrl < 0):
+            continue
+        # "a battlefield where you have units" (Moonfall). A restriction on the
+        # battlefield, checked when it is chosen -- and re-checked at
+        # resolution, where the units may already be gone.
+        if spec.needs_own_units and state.units_at(bf_loc(i), seat).size == 0:
+            continue
+        loc = bf_loc(i)
+        if loc not in chosen:
+            out.append(loc)
+    return out
+
+
 def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
                   seat: int, chosen: list[int], bound_bf: int,
                   source: int = -1, card: int = -1) -> list[int]:
     """Values that may fill `slot`. Their meaning depends on the slot's kind:
     a permanent row, a chain uid (TK_SPELL), or a location (TK_LOCATION)."""
     t = spec.targets[slot]
+    if t.kind == TK_BATTLEFIELD:
+        return _battlefield_targets(state, table, t, seat, bound_bf, chosen)
     if t.kind == TK_LOCATION:
         return _location_targets(state, t, seat, bound_bf)
     if t.kind == TK_SPELL:
@@ -443,7 +492,8 @@ def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
         return _trash_targets(state, table, t, seat, chosen)
     return [i for i in range(state.n_perms)
             if i not in chosen
-            and _matches(state, table, t, i, seat, chosen, bound_bf, source)
+            and _matches(state, table, t, i, seat, chosen, bound_bf, source,
+                         parent=spec)
             # 809 -- an unaffordable Deflect surcharge makes it not a choice.
             and _affordable_with(state, table, card, seat, chosen,
                                  int(table.deflect[int(state.perms[i, P_CARD])])
@@ -546,6 +596,48 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
     raise ValueError(f"unknown condition {op.cond}")
 
 
+def _sweep(state: GameState, table: CardTable, op: Op, seat: int,
+           still_legal: list[int], source: int, ctx: int) -> list[int]:
+    """Live unit rows a board-wide op reaches, after its scoping clauses.
+
+    The mass effects in the pool are rarely as broad as "all units": they say
+    "enemy units", or "units there", or "each OTHER enemy unit there". None of
+    those are targets under 355.10 -- there is no count and no choice, so the
+    opponent cannot respond by making one of them illegal -- but they are still
+    restrictions, and applying them here keeps the sweep in one place instead
+    of one `continue` chain per op.
+
+    **An unscoped op reaches the whole board, bases included.** "Give enemy
+    units -3 Might" has no location clause and means all of them; the mass
+    DAMAGE cards happen to print "at battlefields", which is `at_battlefields`
+    and belongs to the card rather than to the op. Defaulting to battlefields
+    would have quietly spared every unit sitting at a base.
+    """
+    where = _slot(state, still_legal, op.at, source, ctx) if op.at != -1 else -1
+    spare = (_slot(state, still_legal, op.except_target, source, ctx)
+             if op.except_target != -1 else -1)
+    out = []
+    for i in range(state.n_perms):
+        r = state.perms[i]
+        if r[P_ALIVE] != 1 or i == spare:
+            continue
+        if not table.is_type(int(r[P_CARD]), "Unit"):
+            continue
+        loc = int(r[P_LOC])
+        if where >= 0:
+            if loc != where:
+                continue
+        elif op.at_battlefields and not is_battlefield(loc):
+            continue
+        ctrl = int(r[P_CTRL])
+        if op.who == W_FRIENDLY and ctrl != seat:
+            continue
+        if op.who == W_ENEMY and ctrl == seat:
+            continue
+        out.append(i)
+    return out
+
+
 def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
           ctx: int, seat: int = -1) -> int:
     """Decode an op's target index, including the pseudo-slots.
@@ -596,7 +688,13 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
     still_legal: list[int] = []
     chosen_so_far: list[int] = []
     for slot, t in enumerate(targets):
-        if spec.targets[slot].kind == TK_LOCATION:
+        if spec.targets[slot].kind == TK_BATTLEFIELD:
+            # Re-checked, unlike a plain location: "a battlefield you control"
+            # and "where you have units" are both things a response window can
+            # take away.
+            ok = t >= 0 and t in _battlefield_targets(
+                state, table, spec.targets[slot], seat, bound_bf, [])
+        elif spec.targets[slot].kind == TK_LOCATION:
             ok = t >= 0
         elif spec.targets[slot].kind == TK_SPELL:
             # Still legal iff the item is still on the chain. If someone else
@@ -620,7 +718,8 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                     == card_t)) >= need
         else:
             ok = (t >= 0 and _matches(state, table, spec.targets[slot], t, seat,
-                                      chosen_so_far, bound_bf, source))
+                                      chosen_so_far, bound_bf, source,
+                                      parent=spec))
         still_legal.append(t if ok else -1)
         chosen_so_far.append(t if ok else -1)
 
@@ -883,27 +982,19 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                 state.perms[i, P_DMG] = 0
             log["healed_at"] = a
         elif op.op == OP_DAMAGE_ALL:
-            # "Deal N to all units at battlefields" -- untargeted (355.10) and
-            # indiscriminate: it hits the caster's units too.
-            for i in range(state.n_perms):
-                r = state.perms[i]
-                if r[P_ALIVE] != 1 or not is_battlefield(int(r[P_LOC])):
-                    continue
-                if not table.is_type(int(r[P_CARD]), "Unit"):
-                    continue
+            # "Deal N to all units at battlefields" -- untargeted (355.10) and,
+            # unscoped, indiscriminate: it hits the caster's units too.
+            # `_sweep` narrows it to one location, one side, or everything but
+            # an already-chosen unit, which is what Crescent Strike's "1 to
+            # each OTHER enemy unit there" needs.
+            for i in _sweep(state, table, op, seat, still_legal, source, ctx):
                 if combat.mark_damage(state, table, i, op.n):
                     log.setdefault("killed", []).append(i)
         elif op.op == OP_MODIFY_MIGHT_ALL:
             # "give enemy units -3 Might this turn" -- no count, no choice, so
-            # not targets (355.10) and no slot. It reaches every enemy unit on
-            # the board, and each one gets the same 143.2.a re-check a single
-            # Might change would.
-            for i in range(state.n_perms):
-                r = state.perms[i]
-                if r[P_ALIVE] != 1 or int(r[P_CTRL]) == seat:
-                    continue
-                if not table.is_type(int(r[P_CARD]), "Unit"):
-                    continue
+            # not targets (355.10) and no slot. Each unit it reaches gets the
+            # same 143.2.a re-check a single Might change would.
+            for i in _sweep(state, table, op, seat, still_legal, source, ctx):
                 if combat.set_might_mod(state, table, i, op.n, op.floor):
                     log.setdefault("killed_by_might", []).append(i)
         elif op.op == OP_READY:
