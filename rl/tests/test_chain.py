@@ -23,8 +23,8 @@ from rl.config import Config
 from rl.engine import phases
 from rl.engine import chain
 from rl.engine.cardtable import full_table
-from rl.engine.state import (C_CARD, F_STUNNED, P_FLAGS, GameState,
-                             bf_loc)
+from rl.engine.state import (C_CARD, C_UID, F_STUNNED, P_FLAGS,
+                             GameState, bf_loc)
 
 T = full_table()
 CFG = Config()
@@ -248,5 +248,42 @@ if int(s.chain[pricey, C_UID]) in opts:
 if int(s.chain[cheap, C_UID]) not in opts:
     die("counter", f"Defy should reach a 3E 0P spell: {opts}")
 ok("Defy's cost limit narrows the legal targets (a restriction, not a condition)")
+
+# --- countering an ABILITY moves no card anywhere -------------------------
+# 151.2.a.1: an activated ability behaves "like a spell without an associated
+# card", and a triggered ability is the same (383.3). Its source is a permanent
+# that is still on the board, or already dead and in the trash -- either way,
+# removing the ability from the Chain must not put anything in a zone.
+#
+# This trashed the SOURCE'S card a second time, minting a duplicate out of
+# nothing. Caught by the fuzz gate's per-seat card conservation, not by any
+# rules test: a phantom copy in a trash is indistinguishable from a card that
+# was legitimately trashed, right up until Fizz or Forge of the Future names a
+# copy the game never had.
+s = fresh()
+src = s.add_permanent(T.id_of("Watchful Sentry"), 1, bf_loc(0))
+s.trash[1, 0] = T.id_of("Watchful Sentry")     # its card, already dead
+s.n_trash[1] = 1
+item = chain.push(s, T.id_of("Watchful Sentry"), 1, abil=0, src=src)
+chain.finalize(s, item)
+before = (int(s.n_trash[1]), int(s.n_banished[1]))
+name = chain.counter(s, T, int(s.chain[item, C_UID]))
+if name is None or s.n_chain:
+    die("counter", "the ability should have left the Chain")
+if (int(s.n_trash[1]), int(s.n_banished[1])) != before:
+    die("counter", f"countering an ability moved a card: trash/banish "
+                   f"{before} -> {(int(s.n_trash[1]), int(s.n_banished[1]))}")
+ok("countering an ABILITY moves no card -- an ability has no card to move")
+
+# ...while countering a real spell still trashes it, which is the whole point
+# of the distinction.
+s = fresh()
+item = chain.push(s, BACK_OFF, 1)
+chain.finalize(s, item)
+chain.counter(s, T, int(s.chain[item, C_UID]))
+if int(s.n_trash[1]) != 1 or int(s.trash[1, 0]) != BACK_OFF:
+    die("counter", "a countered SPELL was played, so it still goes to the trash")
+ok("...but a countered spell still reaches the trash: it was played (349)")
+
 
 print("\n\033[32mall chain tests passed\033[0m")

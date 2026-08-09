@@ -588,6 +588,17 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
                 src = int(state.chain[item, C_SRC])
                 assert state.perms[src, P_READY], "exhaust cost with no ready source"
                 state.perms[src, P_READY] = 0
+            if spec.cost_kill_self:
+                # 204.1.b -- "Kill this" stands before the ':', so it is a COST
+                # and is paid now, at finalization. The source is therefore
+                # already dead while the ability sits on the Chain waiting to
+                # resolve, and the opponent's response window happens over its
+                # corpse. Routed through `combat.destroy` rather than clearing
+                # P_ALIVE inline so the card reaches its trash and any
+                # [Deathknell] on it fires -- a kill is a kill (427.2.a).
+                src = int(state.chain[item, C_SRC])
+                assert state.perms[src, P_ALIVE], "kill cost with no live source"
+                combat.destroy(state, table, src)
         chain.finalize(state, item)
         state.priority = seat
         return {"finalized_ability": table.names[card]}
@@ -671,8 +682,11 @@ def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
         pay_ability_cost(state, table, seat, spec.cost_energy, recycle)
         if spec.cost_exhaust:
             state.perms[perm, P_READY] = 0
+        ctx_loc = int(state.perms[perm, P_LOC])
+        if spec.cost_kill_self:
+            combat.destroy(state, table, perm)
         log = rsv.resolve(state, table, cfg, spec, seat, [], -1, False,
-                          source=perm, ctx=int(state.perms[perm, P_LOC]))
+                          source=perm, ctx=ctx_loc)
         log["activated"] = table.names[card]
         return log
 

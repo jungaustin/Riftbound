@@ -33,7 +33,8 @@ from rl.config import DOMAINS, Config
 from rl.engine import actions as A
 from rl.engine import chain, combat
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import TK_LOCATION, TK_SPELL, TK_TRASH_CARD, TK_UNIT
+from rl.engine.effects import (TK_LOCATION, TK_SPELL, TK_TRASH_CARD, TK_UNIT,
+                               unpack_trash)
 from rl.engine.state import (C_CARD, C_SRC, F_NO_COMBAT_DAMAGE,
                              F_STUNNED, MAX_HAND, MAX_PERMS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_ARRIVED, P_CARD,
@@ -71,7 +72,15 @@ BOARD_SLOTS = MAX_PERMS
 GLOBAL_DIM = 39 + 5 * N_DOMAINS
 
 # Action-row layout after the kind one-hot and card block.
-ACT_EXTRA = 4 + 1 + 3 + 1 + 1 + 1 + 1 + 2   # loc, is_bf, ctrl(3), counts, might, cost
+ACT_EXTRA = 4 + 1 + 3 + 1 + 1 + 1 + 1 + 2 + 1
+# loc, is_bf, ctrl(3), counts, might, cost, whose
+#
+# The last slot is "whose thing is this", and it exists because a target's
+# owner is not always recoverable from the rest of the row. A permanent target
+# carries its controller in the location block; a card in a TRASH does not, and
+# "recycle a card from trashes" reaches both piles. Recycling your own card
+# refills your deck, recycling theirs denies them a redraw -- opposite plays
+# from one action kind, indistinguishable without this bit.
 
 
 @dataclass(frozen=True)
@@ -293,6 +302,7 @@ class Encoder:
         r[act.kind] = 1.0
 
         card, loc, might = -1, -1, -1
+        whose = -1.0
         k = act.kind
         if k == A.A_PLAY:
             card = int(state.hand[seat, act.arg])
@@ -342,10 +352,11 @@ class Encoder:
                 if i >= 0:
                     card = int(state.chain[i, C_CARD])
             elif kind == TK_TRASH_CARD:
-                # Already a card id, and the trash is public (108.2), so
+                # A packed (owner, card); the trash is public (108.2), so
                 # naming it leaks nothing. There is no row and no location to
-                # describe: the choice is purely "which card do I want back".
-                card = int(act.arg)
+                # describe -- the choice is "which card, out of whose pile".
+                owner, card = unpack_trash(int(act.arg))
+                whose = 1.0 if owner == seat else 0.0
             else:
                 card = int(state.perms[act.arg, P_CARD])
                 loc = int(state.perms[act.arg, P_LOC])
@@ -381,6 +392,8 @@ class Encoder:
         if card >= 0:
             r[o + 12] = float(self.table.energy[card]) / 5.0
             r[o + 13] = float(self.table.power[card]) / 3.0
+        if whose >= 0.0:
+            r[o + 14] = whose
         return r
 
     def _actions(self, legal: list[A.Action], state: GameState, seat: int):

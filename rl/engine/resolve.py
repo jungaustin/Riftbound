@@ -53,16 +53,17 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                TK_LOCATION, TK_SPELL, TK_TRASH_CARD,
                                OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
                                OP_PLAY_UNIT_FROM_TRASH, W_FRIENDLY,
-                               TR_PLAY_ME, T_CTX, T_HERE, T_OWNER_BASE,
-                               T_SELF,
-                               CardSpec, Op,
+                               OP_RECYCLE_FROM_TRASH,
+                               TR_PLAY_ME, T_CTX, T_HERE, T_MY_BASE,
+                               T_OWNER_BASE, T_SELF,
+                               CardSpec, Op, pack_trash, unpack_trash,
                                TargetSpec)
 from rl.engine import chain
 from rl.engine.state import (C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
                              COST_NO_ENERGY, COST_PRINTED,
                              F_BUFFED,
                              F_DIED_ALONE,
-                             N_BF, P_ALIVE, P_FLAGS,
+                             N_BF, N_SEATS, P_ALIVE, P_FLAGS,
                              P_CARD, P_CTRL, P_DMG, P_LOC, P_READY, GameState,
                              base_loc, bf_index, bf_loc,
                              is_battlefield)
@@ -298,13 +299,29 @@ def _trash_card_ok(table: CardTable, spec: TargetSpec, card: int,
     return True
 
 
+def _trash_seats(spec: TargetSpec, seat: int) -> tuple[int, ...]:
+    """Which trashes a slot may draw from -- the pile(s) `spec.who` names.
+
+    An unqualified "from trashes" reaches both piles. That is not a generosity
+    the engine grants; it is what the card omits to restrict, the same way an
+    unqualified "a unit" may be pointed at your own.
+    """
+    if spec.who == W_FRIENDLY:
+        return (seat,)
+    if spec.who == W_ENEMY:
+        return tuple(s for s in range(N_SEATS) if s != seat)
+    return (seat,) + tuple(s for s in range(N_SEATS) if s != seat)
+
+
 def _trash_targets(state: GameState, table: CardTable, spec: TargetSpec,
                    seat: int, chosen: list[int]) -> list[int]:
-    """Distinct cards in `seat`'s trash this slot may name (108.2.c).
+    """Distinct cards in the trashes this slot may name (108.2.c).
 
-    Returns CARD IDS, deduplicated: two copies of one card in an unordered zone
-    are the same choice, and offering both would double the branching factor to
-    describe a decision that does not exist.
+    Returns values packed by `pack_trash`, deduplicated: two copies of one card
+    in an unordered zone are the same choice, and offering both would double the
+    branching factor to describe a decision that does not exist. Two copies in
+    DIFFERENT trashes are not the same choice, which is why the owner is part of
+    the packed value and part of the key counted below.
 
     But a slot may still name a card an EARLIER slot already named, so long as
     the trash actually holds another copy -- Guerilla Warfare returning two
@@ -313,18 +330,36 @@ def _trash_targets(state: GameState, table: CardTable, spec: TargetSpec,
     duplicate bookkeeping [Flow] needed and the opposite of the `not in chosen`
     rule that unit slots use (a permanent row IS unique).
     """
-    n = int(state.n_trash[seat])
     have: dict[int, int] = {}
-    for i in range(n):
-        c = int(state.trash[seat, i])
-        have[c] = have.get(c, 0) + 1
+    for owner in _trash_seats(spec, seat):
+        for i in range(int(state.n_trash[owner])):
+            key = pack_trash(owner, int(state.trash[owner, i]))
+            have[key] = have.get(key, 0) + 1
     out: list[int] = []
-    for card, count in have.items():
-        if chosen.count(card) >= count:
+    for key, count in have.items():
+        if chosen.count(key) >= count:
             continue
-        if _trash_card_ok(table, spec, card, state, seat):
-            out.append(card)
+        if _trash_card_ok(table, spec, unpack_trash(key)[1], state, seat):
+            out.append(key)
     return sorted(out)
+
+
+def take_from_trash(state: GameState, owner: int, card: int) -> bool:
+    """Remove one copy of `card` from `owner`'s trash. False if it is not there.
+
+    Any copy will do -- 108.2.c makes the zone unordered, so the copies are
+    interchangeable and there is no "which one" to get right. The caller checks
+    the return value because the trash it was promised at finalization is not
+    the trash it gets at resolution: a whole priority window stands between.
+    """
+    n = int(state.n_trash[owner])
+    idx = next((i for i in range(n) if int(state.trash[owner, i]) == card), -1)
+    if card < 0 or idx < 0:
+        return False
+    state.trash[owner, idx:n - 1] = state.trash[owner, idx + 1:n]
+    state.trash[owner, n - 1] = -1
+    state.n_trash[owner] = n - 1
+    return True
 
 
 def _location_targets(state: GameState, spec: TargetSpec, seat: int,
@@ -469,7 +504,7 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
 
 
 def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
-          ctx: int) -> int:
+          ctx: int, seat: int = -1) -> int:
     """Decode an op's target index, including the pseudo-slots.
 
     A spell's ops address chosen targets by slot. A unit ability also has to
@@ -483,6 +518,8 @@ def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
         return int(state.perms[source, P_LOC]) if source >= 0 else -1
     if idx == T_CTX:
         return ctx
+    if idx == T_MY_BASE:
+        return base_loc(seat) if seat >= 0 else -1
 
     return still_legal[idx] if 0 <= idx < len(still_legal) else -1
 
@@ -527,10 +564,17 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # of this same card has already spoken for the last one. Two slots
             # naming the same card were legal at finalization because two copies
             # existed; if one has since been played out of the trash with
-            # [Flow], only the first slot may still have it.
+            # [Flow], only the first slot may still have it. Counted in the
+            # OWNER's pile, which the packed value names -- the same card in the
+            # other player's trash is a different choice and does not stand in.
             need = chosen_so_far.count(t) + 1
-            ok = t >= 0 and int(np.count_nonzero(
-                state.trash[seat, :int(state.n_trash[seat])] == t)) >= need
+            if t < 0:
+                ok = False
+            else:
+                owner, card_t = unpack_trash(t)
+                ok = int(np.count_nonzero(
+                    state.trash[owner, :int(state.n_trash[owner])]
+                    == card_t)) >= need
         else:
             ok = (t >= 0 and _matches(state, table, spec.targets[slot], t, seat,
                                       chosen_so_far, bound_bf, source))
@@ -553,7 +597,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["resolved"].append(op.op)
             continue
 
-        a = _slot(state, still_legal, op.target, source, ctx)
+        a = _slot(state, still_legal, op.target, source, ctx, seat)
         if op.target != -1 and a < 0:
             log["fizzled"].append(op.op)      # this target specifically is gone
             continue
@@ -592,7 +636,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                 # a card moving two units sends each to the right place.
                 dst = base_loc(int(state.perms[a, P_CTRL])) if a >= 0 else -1
             else:
-                dst = _slot(state, still_legal, op.target_b, source, ctx)
+                dst = _slot(state, still_legal, op.target_b, source, ctx, seat)
             if dst < 0:
                 log["fizzled"].append(op.op)
                 continue
@@ -615,59 +659,76 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                 state.n_hand[owner] = h + 1
             log.setdefault("returned", []).append(a)
         elif op.op == OP_TRASH_TO_HAND:
-            # `a` is a CARD, not a permanent row -- see the TK_TRASH_CARD note
-            # in effects.py. Any copy will do, since 108.2.c makes the trash
-            # unordered and the copies interchangeable.
-            n = int(state.n_trash[seat])
-            idx = next((i for i in range(n)
-                        if int(state.trash[seat, i]) == a), -1)
-            if a < 0 or idx < 0:
+            # `a` is a packed (owner, card), not a permanent row -- see the
+            # TK_TRASH_CARD note in effects.py.
+            if a < 0:
                 log["fizzled"].append(op.op)
                 continue
-            state.trash[seat, idx:n - 1] = state.trash[seat, idx + 1:n]
-            state.trash[seat, n - 1] = -1
-            state.n_trash[seat] = n - 1
-            h = int(state.n_hand[seat])
+            owner, card = unpack_trash(a)
+            if not take_from_trash(state, owner, card):
+                log["fizzled"].append(op.op)
+                continue
+            # To the OWNER's hand, not the caster's. Shadows of the Past says
+            # "to their owners' hands" and means it: raising an opponent's unit
+            # hands it back to them, which is why the card is a symmetric
+            # rebuild and not a theft.
+            h = int(state.n_hand[owner])
             assert h < state.hand.shape[1], "hand overflow"
-            state.hand[seat, h] = a
-            state.n_hand[seat] = h + 1
-            log.setdefault("from_trash", []).append(table.names[a])
+            state.hand[owner, h] = card
+            state.n_hand[owner] = h + 1
+            log.setdefault("from_trash", []).append(table.names[card])
+        elif op.op == OP_RECYCLE_FROM_TRASH:
+            # 416.1.c -- "each player recycles to their own Main Deck",
+            # regardless of who was instructed to perform the Recycle. So this
+            # reads the owner off the packed target rather than using `seat`;
+            # Forge of the Future recycling an opponent's card puts it on the
+            # bottom of THEIR deck, which is a mill answer rather than a steal.
+            if a < 0:
+                log["fizzled"].append(op.op)
+                continue
+            owner, card = unpack_trash(a)
+            if not take_from_trash(state, owner, card):
+                log["fizzled"].append(op.op)
+                continue
+            state.recycle_card(owner, card)
+            log.setdefault("recycled", []).append(table.names[card])
         elif op.op == OP_PLAY_FROM_TRASH:
             # 349 -- this PLAYS the card. It is not moved to the board and it is
             # not resolved here: it goes on the Chain as a new Pending Item and
             # takes its own priority windows, which is why the opponent can
             # counter what Fizz digs up. `actions._advance_pending` picks it up
             # after this resolution finishes (340.3).
-            n = int(state.n_trash[seat])
-            idx = next((i for i in range(n)
-                        if int(state.trash[seat, i]) == a), -1)
+            if a < 0:
+                log["fizzled"].append(op.op)
+                continue
+            owner, card = unpack_trash(a)
+            assert owner == seat, "playing from another player's trash"
             # Re-checked HERE, not just at finalization -- a priority window
             # stood between the two and the board has moved. See
             # `can_play_from_trash`.
-            if (a < 0 or idx < 0
-                    or not can_play_from_trash(state, table, seat, a,
-                                               op.cost)):
+            if not can_play_from_trash(state, table, seat, card, op.cost):
                 log["fizzled"].append(op.op)
                 continue
-            state.trash[seat, idx:n - 1] = state.trash[seat, idx + 1:n]
-            state.trash[seat, n - 1] = -1
-            state.n_trash[seat] = n - 1
-            chain.push(state, a, seat, from_hand=False, bound_bf=-1,
+            if not take_from_trash(state, owner, card):
+                log["fizzled"].append(op.op)
+                continue
+            chain.push(state, card, seat, from_hand=False, bound_bf=-1,
                        cost=op.cost, dest=op.dest)
-            log.setdefault("played_from_trash", []).append(table.names[a])
+            log.setdefault("played_from_trash", []).append(table.names[card])
         elif op.op == OP_PLAY_UNIT_FROM_TRASH:
             # A unit, not a spell, so 337.2 resolves it IMMEDIATELY -- no chain
             # item, nothing to respond to, and therefore no destination to
             # record. It goes on the board instead, which is why this needs a
             # location where `OP_PLAY_FROM_TRASH` needs a `dest`.
-            n = int(state.n_trash[seat])
-            idx = next((i for i in range(n)
-                        if int(state.trash[seat, i]) == a), -1)
-            if (a < 0 or idx < 0
-                    or not can_play_from_trash(state, table, seat, a, op.cost)):
+            if a < 0:
                 log["fizzled"].append(op.op)
                 continue
-            dst = _slot(state, still_legal, op.target_b, source, ctx)
+            owner, card = unpack_trash(a)
+            assert owner == seat, "playing from another player's trash"
+            if not can_play_from_trash(state, table, seat, card, op.cost):
+                log["fizzled"].append(op.op)
+                continue
+            dst = _slot(state, still_legal, op.target_b, source, ctx, seat)
             # The destination was chosen at finalization and a response window
             # has passed since. If that Battlefield is no longer this seat's,
             # 806.3 no longer permits it -- but the base always does, and the
@@ -676,15 +737,16 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             if dst < 0 or (is_battlefield(dst)
                            and int(state.bf_ctrl[bf_index(dst)]) != seat):
                 dst = base_loc(seat)
-            state.trash[seat, idx:n - 1] = state.trash[seat, idx + 1:n]
-            state.trash[seat, n - 1] = -1
-            state.n_trash[seat] = n - 1
-            _pay_trash_play(state, table, seat, a, op.cost)
+            if not take_from_trash(state, owner, card):
+                log["fizzled"].append(op.op)
+                continue
+            _pay_trash_play(state, table, seat, card, op.cost)
             # 359.2.c -- it enters exhausted, exactly as if played from hand.
-            src2 = state.add_permanent(a, seat, dst, ready=False, is_unit=True)
-            if chain.has_trigger(table, a, TR_PLAY_ME):
+            src2 = state.add_permanent(card, seat, dst, ready=False,
+                                       is_unit=True)
+            if chain.has_trigger(table, card, TR_PLAY_ME):
                 chain.queue(state, TR_PLAY_ME, src2, dst)
-            log.setdefault("played_from_trash", []).append(table.names[a])
+            log.setdefault("played_from_trash", []).append(table.names[card])
         elif op.op == OP_COUNTER:
             # Record the controller BEFORE removing the item -- Lilting
             # Lullaby's second op ("its controller can't play spells this
@@ -805,7 +867,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             state.perms[a, P_READY] = 1
             log.setdefault("readied", []).append(a)
         elif op.op == OP_SWAP_LOC:
-            b = _slot(state, still_legal, op.target_b, source, ctx)
+            b = _slot(state, still_legal, op.target_b, source, ctx, seat)
             if b < 0:
                 log["fizzled"].append(op.op)
                 continue

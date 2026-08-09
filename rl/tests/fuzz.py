@@ -25,6 +25,9 @@ from rl.config import Config
 from rl.engine import actions as A
 from rl.engine import game
 from rl.engine.cardtable import full_table
+from rl.engine import invariants
+from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, N_BF,
+                             N_SEATS, P_ALIVE, P_CTRL, P_CARD)
 
 
 # Recorded v0 replay fingerprints: (deal seed, victory) -> (winner, turns,
@@ -101,6 +104,50 @@ def make_deck_game(table, cfg, seed):
     return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
 
 
+
+def cards_owned(state, table, seat: int) -> int:
+    """Every non-token card accounted to `seat`, across every zone at once.
+
+    The count is CONSERVED for a whole game: cards move between zones, but a
+    card is never created, destroyed, or handed to the other player. Checking
+    that is worth a gate of its own because nothing else notices when it
+    breaks -- a card duplicated into a trash looks exactly like a card that was
+    legitimately trashed, and only surfaces much later as a Fizz or a Forge of
+    the Future naming a copy the game never had.
+
+    Three things are easy to get wrong here:
+
+      - A card being PLAYED is on the Chain and in no zone at all.
+      - A Chain Item for an ABILITY names its source's card while that card is
+        already somewhere else, so counting it would double-count.
+      - **Tokens must be excluded in EVERY zone, not just on the board.** 186
+        has a token cease to exist off the board, so it is genuinely created
+        and destroyed and cannot be conserved -- but the v0 fixture deals decks
+        of token CARDS, so filtering only the board silently loses one card per
+        token played and makes the gate fire on a healthy game.
+    """
+    def live(ids):
+        return sum(1 for c in ids if int(c) >= 0 and not table.is_token(int(c)))
+
+    n = live(state.hand[seat, :int(state.n_hand[seat])])
+    n += live(state.deck[seat, int(state.deck_ptr[seat]):int(state.n_deck[seat])])
+    n += live(state.trash[seat, :int(state.n_trash[seat])])
+    n += live(state.banished[seat, :int(state.n_banished[seat])])
+    n += sum(1 for i in range(state.n_perms)
+             if state.perms[i, P_ALIVE] == 1
+             and int(state.perms[i, P_CTRL]) == seat
+             and not table.is_token(int(state.perms[i, P_CARD])))
+    n += sum(1 for b in range(N_BF)
+             if int(state.fd_owner[b]) == seat
+             and not table.is_token(int(state.fd_card[b])))
+    n += sum(1 for i in range(int(state.n_chain))
+             if int(state.chain[i, C_ABIL]) < 0
+             and int(state.chain[i, C_CTRL]) == seat
+             and int(state.chain[i, C_CARD]) >= 0
+             and not table.is_token(int(state.chain[i, C_CARD])))
+    return n
+
+
 def main(n_games=2000, victory=3, check=True, spells=False,
          decks=False):
     """Random-game gate. `spells=True` fuzzes the v1 game instead of v0.
@@ -129,8 +176,14 @@ def main(n_games=2000, victory=3, check=True, spells=False,
     for i in range(n_games):
         rng = np.random.default_rng(i)
         s = build(table, cfg, i)
+        before = [cards_owned(s, table, k) for k in range(N_SEATS)]
         r = game.play_game(table, cfg, s, [game.random_agent(rng)] * 2,
                            check=check)
+        after = [cards_owned(s, table, k) for k in range(N_SEATS)]
+        if check and after != before:
+            raise invariants.InvariantError(
+                f"seed {i}: cards were created or changed owner -- per-seat "
+                f"totals went {before} -> {after}")
         winners[r["winner"]] += 1
         turns.append(r["turns"])
         steps.append(r["steps"])

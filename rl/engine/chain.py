@@ -432,8 +432,21 @@ def counter(state: GameState, table: CardTable, uid: int) -> str | None:
     if i < 0:
         return None
     dest = int(state.chain[i, C_DEST])
+    abil = int(state.chain[i, C_ABIL])
     card, ctrl, *_ = _pop(state, i)
-    _send(state, ctrl, card, dest)
+    # **An ability is not a card and has no zone to go to.** 151.2.a.1 makes an
+    # activated ability behave "like a spell WITHOUT an associated card", and a
+    # triggered ability is the same (383.3): its source is still a permanent on
+    # the board, or already dead and in the trash. `resolve_top` has always
+    # known this; this path did not, so countering an ability trashed its
+    # source's card a second time and minted a duplicate out of nothing.
+    #
+    # It was invisible until the trash became a resource. A phantom copy pads
+    # Rhasa's discount and Dr. Mundo's Might, and -- worse -- Fizz, Soulgorger
+    # and Forge of the Future could all name a card that does not exist,
+    # playing or recycling a copy the game never had.
+    if abil < 0:
+        _send(state, ctrl, card, dest)
     return table.names[card]
 
 

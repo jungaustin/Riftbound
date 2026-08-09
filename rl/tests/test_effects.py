@@ -800,7 +800,8 @@ ok("a full deck array reclaims the drawn prefix instead of overflowing")
 print("\n[12] trash recursion: naming a card in an unordered zone (108.2.c)")
 
 from rl.engine import resolve as rsv
-from rl.engine.effects import ABILITIES, TR_PLAY_ME
+from rl.engine.effects import (ABILITIES, TR_PLAY_ME, W_ANY,
+                               pack_trash, unpack_trash)
 
 MORBID = T.id_of("Morbid Return")
 GEAR = next(c for c in range(T.n) if T.is_type(c, "Gear") and not T.is_token(c))
@@ -820,16 +821,23 @@ def trash_state(cards, seat=0):
 
 
 def names(cs):
-    return sorted(T.names[c] for c in cs)
+    """Card names behind a list of PACKED trash targets."""
+    return sorted(T.names[unpack_trash(c)[1]] for c in cs)
+
+
+def mine(*cards):
+    """Pack cards as seat 0's, the seat every case below casts from."""
+    return [pack_trash(0, c) for c in cards]
 
 
 # The slot's restrictions are on the CARD, since there is no permanent to ask.
 s = trash_state([PLAIN[2], GEAR, MORBID])
 cases = [
-    (SPECS["Morbid Return"], [PLAIN[2]], "a unit"),
-    (ABILITIES["Aspiring Engineer"][0], [GEAR], "a gear"),
-    (ABILITIES["Annie - Stubborn"][0], [MORBID], "a spell"),
-    (ABILITIES["Guardian of the Passage"][0], [PLAIN[2], GEAR], "a unit or gear"),
+    (SPECS["Morbid Return"], mine(PLAIN[2]), "a unit"),
+    (ABILITIES["Aspiring Engineer"][0], mine(GEAR), "a gear"),
+    (ABILITIES["Annie - Stubborn"][0], mine(MORBID), "a spell"),
+    (ABILITIES["Guardian of the Passage"][0], mine(PLAIN[2], GEAR),
+     "a unit or gear"),
 ]
 for spec, want, label in cases:
     got = rsv.legal_targets(s, T, spec, 0, 0, [], -1)
@@ -857,7 +865,7 @@ ok("two copies of a card in the trash collapse to one offer (108.2.c)")
 HID = next(c for c in range(T.n) if T.has(c, "Hidden") and not T.is_token(c))
 GW = SPECS["Guerilla Warfare"]
 s = trash_state([HID, HID])
-if not rsv.legal_targets(s, T, GW, 1, 0, [HID], -1):
+if not rsv.legal_targets(s, T, GW, 1, 0, mine(HID), -1):
     die("trash", "with two copies present, both slots should be able to take one")
 ok("two slots may name the same card when the trash holds two copies")
 
@@ -865,7 +873,7 @@ ok("two slots may name the same card when the trash holds two copies")
 # `not in chosen` membership test gets right by accident and a raw index test
 # gets wrong: it has to COUNT.
 s = trash_state([HID])
-if rsv.legal_targets(s, T, GW, 1, 0, [HID], -1):
+if rsv.legal_targets(s, T, GW, 1, 0, mine(HID), -1):
     die("trash", "the second slot took a copy that was already spoken for")
 ok("with one copy, the second slot cannot name it again")
 
@@ -878,8 +886,8 @@ if not play:
     die("trash", "Morbid Return was not playable with a unit in the trash")
 A.apply(s, T, V1, play[0])
 tgts = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_TARGET]
-if len(tgts) != 1 or tgts[0].arg != PLAIN[2]:
-    die("trash", f"the target offer should be the CARD id, got {tgts}")
+if len(tgts) != 1 or tgts[0].arg != pack_trash(0, PLAIN[2]):
+    die("trash", f"the target offer should be the packed card, got {tgts}")
 A.apply(s, T, V1, tgts[0])
 settle(s)
 if int(s.n_hand[0]) != 1 or int(s.hand[0, 0]) != PLAIN[2]:
@@ -1215,11 +1223,11 @@ s = populated([POWERED], 0)
 got = rsv.legal_targets(s, T, ABILITIES["Fizz - Trickster"][0], 0, 0, [], -1)
 if got:
     die("fizz", f"a spell whose Power cost cannot be paid was offered: "
-                f"{[T.names[c] for c in got]}")
+                f"{names(got)}")
 s = populated([POWERED], 6)
 got = rsv.legal_targets(s, T, ABILITIES["Fizz - Trickster"][0], 0, 0, [], -1)
-if got != [POWERED]:
-    die("fizz", f"with runes available it should be reachable: {got}")
+if got != [pack_trash(0, POWERED)]:
+    die("fizz", f"with runes available it should be reachable: {names(got)}")
 ok("an unpayable Power cost makes a trash spell not a target (359.3.e.14.a)")
 
 # A spell whose own targets cannot all be chosen is likewise not a choice --
@@ -1233,7 +1241,7 @@ if rsv.legal_targets(s, T, ABILITIES["Fizz - Trickster"][0], 0, 0, [], -1):
                 "it can never be played, so it is not a legal choice")
 s.add_permanent(PLAIN[2], 1, bf_loc(0))
 if rsv.legal_targets(s, T, ABILITIES["Fizz - Trickster"][0], 0, 0, [], -1) \
-        != [REBUKE]:
+        != mine(REBUKE):
     die("fizz", "with a unit at a battlefield Rebuke becomes reachable")
 ok("a spell that cannot fill its own targets is not a legal choice either")
 
@@ -1269,6 +1277,25 @@ if int(s.n_chain):
     die("fizz", "Fizz with an empty trash should leave nothing on the Chain")
 ok("with an empty trash the ability never reaches the Chain (355.8)")
 
+# 383.3.a -- "you MAY play a spell" is a choice, not an obligation, and it is
+# made at finalization. Having a perfectly legal target does not force the
+# replay: a spell that does not help right now should be left in the trash.
+# So the decline has to be a real offered action, not merely the absence of
+# targets.
+s = fizz_state(trash=[DREDGE])
+run(s, (A.A_PLAY, A.A_PLAY_AT))          # play Fizz, stop at her "you may"
+kinds = {a.kind for a in A.legal_actions(s, T, V1, 0)}
+if A.A_DECLINE not in kinds or A.A_ACCEPT not in kinds:
+    die("fizz", f"both accept and decline must be offered, got "
+                f"{sorted(A.KIND_NAMES[k] for k in kinds)}")
+run(s, (A.A_DECLINE, A.A_PASS))
+if int(s.n_trash[0]) != 1 or int(s.trash[0, 0]) != DREDGE:
+    die("fizz", "383.3.a.2 -- declining counts as never having triggered, so "
+                "the spell stays in the trash untouched")
+if int(s.deck_ptr[0]):
+    die("fizz", "the declined spell must not have resolved")
+ok("with a legal target available, the 'you may' can still be declined")
+
 # ---------------------------------------------------------------------------
 print("\n[16] reanimation: playing a UNIT from the trash (337.2, 806.3)")
 
@@ -1301,7 +1328,8 @@ UNENCODED = next(c for c in range(T.n)
                  if T.is_type(c, "Unit") and not T.is_token(c)
                  and spec_for(T, c) is None and T.residual_text(c))
 s = harrow_state(trash=[UNENCODED])
-if rsv.legal_targets(s, T, SPECS["The Harrowing"], 0, 0, [], -1) != [UNENCODED]:
+if rsv.legal_targets(s, T, SPECS["The Harrowing"], 0, 0, [], -1) \
+        != mine(UNENCODED):
     die("reanimate", f"{T.names[UNENCODED]!r} has text the DSL cannot express, "
                      f"but a unit is playable regardless -- it just stands there")
 ok("a unit with unencoded text is still a legal reanimation target")
@@ -1318,7 +1346,8 @@ ok("...and a spell is not a unit, so it is out of reach entirely")
 # contested ground as a free Conquer, which is the whole reason 806.3 exists.
 s = harrow_state(trash=[PLAIN[2]], control_bf=(0,))
 s.bf_ctrl[1] = 1
-locs = rsv.legal_targets(s, T, SPECS["The Harrowing"], 1, 0, [PLAIN[2]], -1)
+locs = rsv.legal_targets(s, T, SPECS["The Harrowing"], 1, 0,
+                         mine(PLAIN[2]), -1)
 if bf_loc(1) in locs:
     die("reanimate", f"806.3 -- a battlefield the opponent controls was "
                      f"offered as a play destination: {locs}")
@@ -1349,12 +1378,137 @@ POWER_UNIT = next(c for c in range(T.n)
                   and int(T.power[c]) > 0 and int(T.energy[c]) <= 3)
 s = harrow_state(trash=[POWER_UNIT])
 s.runes_ready[0, :] = 0                       # no runes at all
-if rsv.legal_targets(s, T, MATRON, 0, 0, [], -1) != [POWER_UNIT]:
+if rsv.legal_targets(s, T, MATRON, 0, 0, [], -1) != mine(POWER_UNIT):
     die("reanimate", "'ignoring its cost' waives the Power cost too, so a "
                      "rune-less board can still reanimate")
 if rsv.legal_targets(s, T, SPECS["The Harrowing"], 0, 0, [], -1):
     die("reanimate", "'ignoring its ENERGY cost' still owes Power -- the "
                      "reminder text on the card exists because this is missed")
 ok("'ignoring its cost' waives Power; 'ignoring its Energy cost' does not")
+
+# ---------------------------------------------------------------------------
+print("\n[17] whose trash: an unqualified 'trashes' reaches both (416.1.c)")
+
+from rl.engine.effects import (SPEED_MAIN, CardSpec, W_ENEMY,
+                               W_FRIENDLY)
+
+FORGE = T.id_of("Forge of the Future")
+SHADOWS = T.id_of("Shadows of the Past")
+
+
+def two_trashes(mine_cards, theirs):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN[2]
+    for seat, cards in ((0, mine_cards), (1, theirs)):
+        for i, c in enumerate(cards):
+            s.trash[seat, i] = c
+        s.n_trash[seat] = len(cards)
+    s.runes_ready[:, :] = 6
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    return s
+
+
+# The three readings of the same slot, on one board. Seat 0 casts; PLAIN[2] is
+# in both trashes, so the only thing distinguishing the two offers is the pile.
+s = two_trashes([PLAIN[2]], [PLAIN[2], PLAIN[3]])
+UNIT_SLOT = SPECS["Shadows of the Past"].targets[0]
+cases = [
+    (W_FRIENDLY, [pack_trash(0, PLAIN[2])], "your trash"),
+    (W_ENEMY, [pack_trash(1, PLAIN[2]), pack_trash(1, PLAIN[3])],
+     "an opponent's trash"),
+    (W_ANY, [pack_trash(0, PLAIN[2]), pack_trash(1, PLAIN[2]),
+             pack_trash(1, PLAIN[3])], "trashes"),
+]
+for who, want, label in cases:
+    got = rsv.legal_targets(s, T, CardSpec(speed=SPEED_MAIN,
+                                           targets=(UNIT_SLOT._replace(who=who),)),
+                            0, 0, [], -1)
+    if sorted(got) != sorted(want):
+        die("whose", f"{label!r} offered {got}, wanted {want}")
+ok("who selects the PILE: your trash / an opponent's / both")
+
+# The same card in both trashes is TWO offers, not one -- unlike two copies in
+# one pile, which collapse. They are not interchangeable: 416.1.c sends each to
+# a different deck.
+if len({pack_trash(0, PLAIN[2]), pack_trash(1, PLAIN[2])}) != 2:
+    die("whose", "a card in each trash must pack to two distinct choices")
+ok("one card in two piles stays two decisions; two in one pile collapse")
+
+# --- Forge of the Future: recycle to the OWNER's deck ----------------------
+s = two_trashes([MORBID], [PLAIN[3]])
+forge = s.add_permanent(FORGE, 0, base_loc(0))
+chain.fire(s, T, V1, TR_PLAY_ME, forge)
+settle(s)
+RECRUIT = T.id_of("Recruit (271) // Buff")
+tok = [i for i in range(s.n_perms)
+       if s.perms[i, P_ALIVE] == 1 and int(s.perms[i, P_CARD]) == RECRUIT]
+if len(tok) != 1 or int(s.perms[tok[0], P_LOC]) != base_loc(0):
+    die("forge", "the ETB token belongs at YOUR base, wherever the gear sits")
+ok("'at your base' resolves to the controller's base, not the source's location")
+
+acts = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_ACTIVATE]
+if not acts:
+    die("forge", "'Kill this:' should be activatable on a live gear")
+A.apply(s, T, V1, acts[0])
+deck0, deck1 = int(s.n_deck[0]), int(s.n_deck[1])
+
+# Targets are chosen BEFORE the cost is paid (337.1), so the gear is still
+# alive here -- and its own card is not yet in the trash, which is why Forge
+# can never recycle itself.
+if not s.perms[forge, P_ALIVE]:
+    die("forge", "the cost is paid at finalization, after targets are chosen")
+
+# Slot 0 takes their card, slot 1 takes mine, slots 2-3 are declined.
+for want in (pack_trash(1, PLAIN[3]), pack_trash(0, MORBID), -1, -1):
+    tg = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_TARGET]
+    if any(a.arg == pack_trash(0, FORGE) for a in tg):
+        die("forge", "the gear is still on the board while targets are chosen, "
+                     "so it cannot be among the cards its own ability recycles")
+    pick = next((a for a in tg if a.arg == want), None)
+    if pick is None:
+        die("forge", f"wanted target {want}, offered {[a.arg for a in tg]}")
+    A.apply(s, T, V1, pick)
+
+# The last slot finalizes the ability, which is when 204.1.b's cost is paid.
+# The opponent's response window therefore happens over the gear's corpse.
+if s.perms[forge, P_ALIVE]:
+    die("forge", "204.1.b -- a 'Kill this' cost is paid at finalization, so "
+                 "the gear is already dead while the ability is on the Chain")
+settle(s)
+
+if int(s.n_trash[1]) != 0 or int(s.n_deck[1]) != deck1 + 1:
+    die("forge", "their card should have gone to the bottom of THEIR deck")
+if int(s.deck[1, deck1]) != PLAIN[3]:
+    die("forge", "416.1.a -- recycle is the BOTTOM of the deck")
+if int(s.n_deck[0]) != deck0 + 1 or int(s.deck[0, deck0]) != MORBID:
+    die("forge", "my card should have gone to the bottom of MY deck, not theirs")
+ok("416.1.c -- each recycled card goes to its own owner's deck, not the caster's")
+
+# The gear's own corpse is in the trash, not recycled or banished: killing is a
+# cost here, but a kill is still a kill (427.2.a).
+if FORGE not in [int(c) for c in s.trash[0, :int(s.n_trash[0])]]:
+    die("forge", "the killed gear belongs in its controller's trash")
+ok("the gear killed as a cost lands in its trash, not the Banishment")
+
+# --- Shadows of the Past: to their OWNERS' hands ---------------------------
+s = two_trashes([], [PLAIN[3]])
+s.hand[0, 0] = SHADOWS
+s.n_hand[0] = 1
+A.apply(s, T, V1, next(a for a in A.legal_actions(s, T, V1, 0)
+                       if a.kind == A.A_PLAY))
+A.apply(s, T, V1, next(a for a in A.legal_actions(s, T, V1, 0)
+                       if a.kind == A.A_TARGET
+                       and a.arg == pack_trash(1, PLAIN[3])))
+A.apply(s, T, V1, next(a for a in A.legal_actions(s, T, V1, 0)
+                       if a.kind == A.A_TARGET and a.arg == -1))
+settle(s)
+if int(s.n_hand[1]) != 1 or int(s.hand[1, 0]) != PLAIN[3]:
+    die("shadows", "'to their owners' hands' means the OPPONENT gets it back, "
+                   f"not the caster: their hand is {int(s.n_hand[1])}")
+if int(s.n_hand[0]) != 0:
+    die("shadows", "the caster must not receive an opponent's card")
+ok("a unit pulled from their trash returns to THEIR hand, not the caster's")
+
 
 print("\n\033[32mall effect tests passed\033[0m")

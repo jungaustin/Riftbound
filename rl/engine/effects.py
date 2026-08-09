@@ -39,7 +39,7 @@ from typing import NamedTuple
 # parallel enum for the DSL would mean two lists to keep in step.
 from rl.engine.state import (COST_FREE, COST_NO_ENERGY,  # noqa: F401
                              COST_PRINTED, DEST_BANISH, DEST_RECYCLE,
-                             DEST_TRASH)
+                             DEST_TRASH, MAX_TARGETS, N_SEATS)
 
 # --- speeds. When may this card be played? Wire format: append only. -------
 SPEED_MAIN, SPEED_ACTION, SPEED_REACTION = range(3)
@@ -50,8 +50,9 @@ TK_UNIT, TK_BATTLEFIELD, TK_SPELL, TK_LOCATION, TK_TRASH_CARD = range(5)
 
 # The stored value of a target slot means whatever its KIND says it means:
 # TK_UNIT a permanent row, TK_SPELL a Chain Item uid (C_UID), TK_LOCATION a
-# location int, TK_TRASH_CARD a CARD ID. Nothing has to disambiguate them at
-# runtime because the slot's kind is always known from the spec.
+# location int, TK_TRASH_CARD an (owner, card) pair packed by `pack_trash`.
+# Nothing has to disambiguate them at runtime because the slot's kind is always
+# known from the spec.
 #
 # **TK_TRASH_CARD stores the card, not the trash index, and that is the rules
 # answer rather than a convenience.** 108.2.c: "Cards in each player's Trash are
@@ -60,9 +61,35 @@ TK_UNIT, TK_BATTLEFIELD, TK_SPELL, TK_LOCATION, TK_TRASH_CARD = range(5)
 # identity to mean -- and an index would be actively wrong, because the window
 # between finalization and resolution (359.3.e) is exactly when another card
 # dies into the trash and shifts everything after it.
+#
+# **It stores WHICH TRASH alongside the card, because a card id alone is not a
+# choice.** Most trash cards say "your trash" and narrow to one pile, but the
+# pool also prints "cards from trashes" (Forge of the Future, Shadows of the
+# Past) and "cards from opponents' trashes" (Disposal Order). When both piles
+# are in scope and each holds a Sprite Call, "Sprite Call" names two different
+# decisions -- and they are not interchangeable the way two copies in ONE pile
+# are, because 416.1.c recycles each card to its OWNER's deck. Packing the
+# owner in is what lets the destination be owner-relative without a second
+# lookup that could disagree.
 
 W_ANY, W_FRIENDLY, W_ENEMY = range(3)      # relative to the caster
 WHO_NAMES = ("any", "friendly", "enemy")
+
+
+def pack_trash(owner: int, card: int) -> int:
+    """Pack a trash choice into the single int a target slot stores.
+
+    Card-major so that sorting packed values groups the copies of one card
+    together, which keeps the option list stable and readable.
+    """
+    return card * N_SEATS + owner
+
+
+def unpack_trash(value: int) -> tuple[int, int]:
+    """Inverse of `pack_trash`. Returns `(owner, card)`."""
+    card, owner = divmod(value, N_SEATS)
+    return owner, card
+
 
 # Locality of a slot when the card is played from a Facedown Zone (811.1.d.2.a).
 LOC_FREE, LOC_BOUND = range(2)
@@ -79,14 +106,14 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT,
  OP_ADD_ENERGY, OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT,
  OP_BLINK, OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
- OP_PLAY_UNIT_FROM_TRASH) = range(27)
+ OP_PLAY_UNIT_FROM_TRASH, OP_RECYCLE_FROM_TRASH) = range(28)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
             "damage_all", "discard", "kill_all", "exhaust_all", "heal_at",
             "add_energy", "add_power", "buff", "buff_all_at", "blink",
             "trash_to_hand", "play_from_trash",
-            "play_unit_from_trash")
+            "play_unit_from_trash", "recycle_from_trash")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -97,6 +124,11 @@ T_SELF = -2      # the permanent the ability is printed on
 T_HERE = -3      # that permanent's current location
 T_CTX = -4       # the location captured when the trigger fired (359.3.f.3)
 T_OWNER_BASE = -5  # the base of the unit in the op's FIRST slot ("to its base")
+# "at YOUR base" -- the resolving player's own base. Distinct from T_HERE, which
+# is wherever the source happens to stand: Gear is base-only under 149.2, but a
+# Gear played from a Facedown Zone sits at a battlefield instead, and Forge of
+# the Future still makes its token at the base either way.
+T_MY_BASE = -6
 
 # --- conditions, checked at resolution ------------------------------------
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
@@ -106,6 +138,13 @@ T_OWNER_BASE = -5  # the base of the unit in the op's FIRST slot ("to its base")
 class TargetSpec(NamedTuple):
     """One target slot. Restrictions here narrow what is *legal to choose*."""
     kind: int = TK_UNIT
+    # Whose things this slot may name, relative to the caster. **W_ANY is not a
+    # default to fall back on -- it is a printed word, or rather its absence.**
+    # "Give an ENEMY unit -2 Might" and "Give a unit -2 Might" are different
+    # cards, and the second one may point at your own. The same reading applies
+    # to a TK_TRASH_CARD slot, where `who` selects the PILE: W_FRIENDLY is
+    # "your trash", W_ENEMY is "an opponent's trash", and W_ANY is the
+    # unqualified "trashes", which reaches both.
     who: int = W_ANY
     locality: int = LOC_BOUND
     rel: int = REL_NONE
@@ -261,6 +300,13 @@ class Ability(NamedTuple):
     cost_energy: int = 0
     cost_power: int = 0
     cost_exhaust: bool = False        # "Exhaust:" -- the source must be ready
+    # "Kill this:" -- the source is killed to pay, which makes the ability a
+    # once-per-permanent effect rather than a repeatable one. It is a COST, so
+    # it is paid at finalization and the source is already gone by the time the
+    # effect resolves; nothing here may reference it (383.2.c.2). Killing is a
+    # real death, not a banish (427.2.a), so the card lands in its trash and any
+    # [Deathknell] on it fires.
+    cost_kill_self: bool = False
     # 337.2 -- a resource-adding ability resolves IMMEDIATELY and never waits
     # on the Chain, so it cannot be responded to. The cards say so themselves:
     # "Abilities that add resources can't be reacted to." Without this an [Add]
@@ -280,6 +326,7 @@ class Ability(NamedTuple):
 # comment so a future reader can check the transcription without the card.
 
 SPRITE_TOKEN = "Sprite (274) // Buff"   # 3 Might Fae unit token, [Temporary]
+RECRUIT_TOKEN = "Recruit (271) // Buff"  # 1 Might Recruit unit token
 
 SPECS: dict[str, CardSpec] = {
 
@@ -496,12 +543,31 @@ SPECS: dict[str, CardSpec] = {
     # --- trash recursion ---------------------------------------------------
     # Every card below names a card in a TRASH rather than on the board, which
     # is what TK_TRASH_CARD is for. Read the note beside it in this file before
-    # adding another: the slot holds a card id, not a row and not an index.
+    # adding another: the slot holds a packed (owner, card), and `who` decides
+    # WHICH trash -- most of these say "your trash", but not all of them do.
+
+    # Return up to 2 units from trashes to their owners' hands.
+    #
+    # **"From trashes", not "from your trash"** -- so both piles are in scope,
+    # which is the whole reason `who` reaches TK_TRASH_CARD at all. And "their
+    # owners' hands" is the matching half: pulling an opponent's unit out of
+    # their trash hands it back to THEM. That makes the enemy-facing mode a
+    # denial play rather than a theft -- you take a unit out of reach of their
+    # own Soulgorger and pay them a card for it.
+    "Shadows of the Past": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_ANY,
+                            card_type=("Unit",), optional=True),
+                 TargetSpec(kind=TK_TRASH_CARD, who=W_ANY,
+                            card_type=("Unit",), optional=True)),
+        ops=(Op(OP_TRASH_TO_HAND, target=0),
+             Op(OP_TRASH_TO_HAND, target=1)),
+    ),
 
     # [Action] Return a unit from your trash to your hand.
     "Morbid Return": CardSpec(
         speed=SPEED_ACTION,
-        targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",)),),
+        targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, card_type=("Unit",)),),
         ops=(Op(OP_TRASH_TO_HAND, target=0),),
     ),
 
@@ -516,7 +582,7 @@ SPECS: dict[str, CardSpec] = {
     # that would be a free Conquer.
     "The Harrowing": CardSpec(
         speed=SPEED_MAIN,
-        targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",),
+        targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, card_type=("Unit",),
                             playable=True, playable_cost=COST_NO_ENERGY),
                  TargetSpec(kind=TK_LOCATION, play_destination=True,
                             locality=LOC_FREE)),
@@ -533,9 +599,9 @@ SPECS: dict[str, CardSpec] = {
     # deck, and the coverage metric counts it honestly as missing.
     "Guerilla Warfare": CardSpec(
         speed=SPEED_MAIN,
-        targets=(TargetSpec(kind=TK_TRASH_CARD, has_keyword="Hidden",
+        targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, has_keyword="Hidden",
                             optional=True),
-                 TargetSpec(kind=TK_TRASH_CARD, has_keyword="Hidden",
+                 TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, has_keyword="Hidden",
                             optional=True)),
         ops=(Op(OP_TRASH_TO_HAND, target=0),
              Op(OP_TRASH_TO_HAND, target=1)),
@@ -791,21 +857,21 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # When you play me, return a unit from your trash to your hand.
     "Cemetery Attendant": (
         Ability(TR_PLAY_ME,
-                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",)),),
+                targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, card_type=("Unit",)),),
                 ops=(Op(OP_TRASH_TO_HAND, target=0),)),
     ),
 
     # When you play me, return a spell from your trash to your hand.
     "Annie - Stubborn": (
         Ability(TR_PLAY_ME,
-                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Spell",)),),
+                targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, card_type=("Spell",)),),
                 ops=(Op(OP_TRASH_TO_HAND, target=0),)),
     ),
 
     # When you play me, return a gear from your trash to your hand.
     "Aspiring Engineer": (
         Ability(TR_PLAY_ME,
-                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Gear",)),),
+                targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, card_type=("Gear",)),),
                 ops=(Op(OP_TRASH_TO_HAND, target=0),)),
     ),
 
@@ -814,7 +880,7 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # whether the thing it returns is a unit.
     "Starhound": (
         Ability(TR_PLAY_ME,
-                targets=(TargetSpec(kind=TK_TRASH_CARD,
+                targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY,
                                     tags=("Bird", "Cat", "Dog", "Poro")),),
                 ops=(Op(OP_TRASH_TO_HAND, target=0),)),
     ),
@@ -838,7 +904,7 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # Power Fizz's controller cannot pay was never a legal choice.
     "Fizz - Trickster": (
         Ability(TR_PLAY_ME, optional=True,
-                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Spell",),
+                targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, card_type=("Spell",),
                                     max_energy=3, playable=True,
                                     playable_cost=COST_NO_ENERGY),),
                 ops=(Op(OP_PLAY_FROM_TRASH, target=0, dest=DEST_RECYCLE,
@@ -849,7 +915,7 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # Energy cost. (You must still pay its Power cost.)
     "Soulgorger": (
         Ability(TR_PLAY_ME, optional=True,
-                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",),
+                targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, card_type=("Unit",),
                                     playable=True,
                                     playable_cost=COST_NO_ENERGY),
                          TargetSpec(kind=TK_LOCATION, play_destination=True,
@@ -867,7 +933,7 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # numbers meaningful at all when nothing is being paid.
     "Spectral Matron": (
         Ability(TR_PLAY_ME, optional=True,
-                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",),
+                targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, card_type=("Unit",),
                                     max_energy=3, max_power=1, playable=True,
                                     playable_cost=COST_FREE),
                          TargetSpec(kind=TK_LOCATION, play_destination=True,
@@ -883,7 +949,7 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # it pays off trading her away -- and by then the trash is fuller.
     "Glasc Mixologist": (
         Ability(TR_DEATH, optional=True,
-                targets=(TargetSpec(kind=TK_TRASH_CARD, card_type=("Unit",),
+                targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY, card_type=("Unit",),
                                     max_energy=3, max_power=1, playable=True,
                                     playable_cost=COST_FREE),
                          TargetSpec(kind=TK_LOCATION, play_destination=True,
@@ -897,7 +963,7 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # whole turn -- and "unit or gear" is why `card_type` is a tuple.
     "Guardian of the Passage": (
         Ability(TR_HOLD, optional=True,
-                targets=(TargetSpec(kind=TK_TRASH_CARD,
+                targets=(TargetSpec(kind=TK_TRASH_CARD, who=W_FRIENDLY,
                                     card_type=("Unit", "Gear")),),
                 ops=(Op(OP_TRASH_TO_HAND, target=0),)),
     ),
@@ -1027,6 +1093,32 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
         Ability(TR_DEATH, ops=(Op(OP_DRAW, n=1),)),
     ),
 
+    # When you play this, play a 1 Might Recruit unit token at your base.
+    # Kill this: Recycle up to 4 cards from trashes.
+    #
+    # **"From trashes" reaches BOTH piles, and 416.1.c sends each card to its
+    # own owner's deck.** That is what makes the enemy-facing half a real mode
+    # rather than a rounding error: their [Flow] cards are banished on use and
+    # never come back, but everything else in their trash is live ammunition for
+    # a Soulgorger or a Fizz, and putting it on the bottom of their deck is the
+    # only answer in the pool that does not require killing the recursion
+    # engine first. Pointing it at your OWN trash is the opposite play -- it
+    # refills a deck that is running out of cards.
+    #
+    # `T_MY_BASE`, not `T_HERE`: Gear is base-only under 149.2, but a Gear
+    # played from a Facedown Zone stands at a battlefield, and the token still
+    # goes to the base.
+    "Forge of the Future": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_CREATE_TOKEN, target=T_MY_BASE, n=1,
+                        token=RECRUIT_TOKEN),)),
+        Ability(TR_ACTIVATED, cost_kill_self=True,
+                targets=tuple(TargetSpec(kind=TK_TRASH_CARD, who=W_ANY,
+                                         optional=True) for _ in range(4)),
+                ops=tuple(Op(OP_RECYCLE_FROM_TRASH, target=i)
+                          for i in range(4))),
+    ),
+
 
     # --- the Seal cycle: "Exhaust: [Reaction] - [Add] {X rune}" -------------
     # 337.2 makes a resource-adding ability resolve immediately, so `immediate`
@@ -1122,3 +1214,18 @@ def abilities_for(table, card: int) -> tuple[Ability, ...]:
 def implemented(table) -> list[int]:
     """Card ids with a spec. The v1 spell pool grows by extending SPECS."""
     return [c for c in range(table.n) if table.names[c] in SPECS]
+
+
+# --- import-time capacity check -------------------------------------------
+# `state.MAX_TARGETS` sizes a numpy column, so it cannot be derived from this
+# file without inverting the one-way import. What it CAN do is fail here, at
+# import, the moment a card is encoded that does not fit -- rather than in an
+# assert a thousand fuzz games deep, or worse, in a silent truncation. Forge of
+# the Future's four "up to" slots sit exactly at the limit, so the next card
+# with five will trip this on the line that adds it.
+_WIDEST = max(
+    [(s.n_targets, name) for name, s in SPECS.items()]
+    + [(a.n_targets, name) for name, abs_ in ABILITIES.items() for a in abs_])
+assert _WIDEST[0] <= MAX_TARGETS, (
+    f"{_WIDEST[1]} needs {_WIDEST[0]} target slots but state.MAX_TARGETS is "
+    f"{MAX_TARGETS}; raise it there (it sizes GameState.chain_targets)")
