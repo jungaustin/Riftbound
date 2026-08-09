@@ -1600,4 +1600,106 @@ if int(s.perms[alone, P_MIGHT_MOD]) != -2:
 ok("an empty 'up to one' slot skips its op and leaves the rest of the card")
 
 
+# ---------------------------------------------------------------------------
+print("\n[19] [Legion]: 'if you've played another card this turn' (822)")
+
+from rl.engine.cost import effective_energy
+from rl.engine.state import F_LEGION, P_FLAGS
+
+HOPE = T.id_of("Noxus Hopeful")
+CAPT = T.id_of("Vanguard Captain")
+GLORY = T.id_of("Trifarian Gloryseeker")
+VANILLA = next(c for c in range(T.n) if T.is_type(c, "Unit")
+               and not T.is_token(c) and not T.residual_text(c)
+               and int(T.energy[c]) <= 2)
+
+
+def legion_board():
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = VANILLA
+    s.runes_ready[:, :] = 9
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    return s
+
+
+def play_out(s, card, loc):
+    """Play a card from hand and settle everything it triggers."""
+    s.hand[0, int(s.n_hand[0])] = card
+    s.n_hand[0] += 1
+    A.apply(s, T, V1, A.Action(A.A_PLAY, int(s.n_hand[0]) - 1))
+    A.apply(s, T, V1, A.Action(A.A_PLAY_AT, loc))
+    for _ in range(12):
+        seat = A.acting_seat(s)
+        if seat < 0:
+            break
+        act = next((a for a in A.legal_actions(s, T, V1, seat)
+                    if a.kind in (A.A_TARGET, A.A_PASS)), None)
+        if act is None:
+            break
+        A.apply(s, T, V1, act)
+
+
+def row_of(s, card):
+    return next(i for i in range(s.n_perms) if int(s.perms[i, P_CARD]) == card)
+
+
+# The COST side reads the counter LIVE, because the card being priced has not
+# been played yet -- so any nonzero count is "another card".
+s = legion_board()
+if effective_energy(s, T, 0, HOPE) != int(T.energy[HOPE]):
+    die("legion", "the first card of a turn has no Legion, so no discount")
+s.cards_played[0] = 1
+if effective_energy(s, T, 0, HOPE) != int(T.energy[HOPE]) - 2:
+    die("legion", "with another card played, Legion should cut 2 energy")
+ok("a Legion cost discount reads the counter live: off first, on afterwards")
+
+# The ABILITY side reads the snapshot, because by resolution the source HAS
+# been counted -- reading live here would fire Legion for the first card of
+# every turn, which is exactly backwards.
+s = legion_board()
+play_out(s, CAPT, base_loc(0))
+cap = row_of(s, CAPT)
+if int(s.perms[cap, P_FLAGS]) & F_LEGION:
+    die("legion", "the first card played must not be flagged")
+tokens = [i for i in range(s.n_perms)
+          if s.perms[i, P_ALIVE] == 1 and T.is_token(int(s.perms[i, P_CARD]))]
+if tokens:
+    die("legion", f"un-Legioned Vanguard Captain made {len(tokens)} tokens")
+ok("as the first card, a Legion ETB resolves and does nothing")
+
+s = legion_board()
+play_out(s, VANILLA, base_loc(0))
+play_out(s, CAPT, base_loc(0))
+if not int(s.perms[row_of(s, CAPT), P_FLAGS]) & F_LEGION:
+    die("legion", "the second card played should carry the snapshot")
+tokens = [i for i in range(s.n_perms)
+          if s.perms[i, P_ALIVE] == 1 and T.is_token(int(s.perms[i, P_CARD]))]
+if len(tokens) != 2:
+    die("legion", f"Legioned Vanguard Captain made {len(tokens)} tokens, want 2")
+ok("as the second card, the same ETB plays both Recruit tokens")
+
+# The snapshot must survive the end of turn: it records what was true when the
+# unit was played, unlike a Stun, which is turn-scoped.
+s = legion_board()
+play_out(s, VANILLA, base_loc(0))
+play_out(s, GLORY, base_loc(0))
+g = row_of(s, GLORY)
+if combat.might(s, T, g) != int(T.might[GLORY]) + 1:
+    die("legion", "a Legioned Gloryseeker should have buffed itself")
+phases.end_turn(s, V1)
+if not int(s.perms[row_of(s, GLORY), P_FLAGS]) & F_LEGION:
+    die("legion", "F_LEGION records a past fact and must outlive the turn")
+ok("the snapshot is not turn-scoped: it records how the unit was played")
+
+# The counter itself IS turn-scoped, or Legion would be permanently on from
+# turn two onward.
+s = legion_board()
+s.cards_played[0] = 3
+phases.end_turn(s, V1)
+if int(s.cards_played[0]):
+    die("legion", "the played-this-turn count must reset at end of turn")
+ok("...but the counter resets, so Legion is off again next turn")
+
+
 print("\n\033[32mall effect tests passed\033[0m")

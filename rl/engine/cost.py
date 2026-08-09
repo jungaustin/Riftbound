@@ -113,10 +113,19 @@ def energy_discounts(state: GameState, table: CardTable, seat: int,
     are a second source and are not implemented yet.
     """
     from rl.engine.combat import static_count
-    from rl.engine.effects import SC_SELF, ST_COST_ENERGY, statics_for
+    from rl.engine.effects import (COND_LEGION, COND_NONE, SC_SELF,
+                                   ST_COST_ENERGY, statics_for)
     out: list[tuple[int, int]] = []
     for st in statics_for(table, card):
         if st.kind != ST_COST_ENERGY or st.scope != SC_SELF:
+            continue
+        if st.cond == COND_LEGION and not state.cards_played[seat]:
+            # 822 -- "another card this turn". LIVE here, deliberately: a cost
+            # is worked out as the card is played, so this card has not been
+            # counted yet and any nonzero count is another card. The op side
+            # reads a snapshot instead, because by then it has been.
+            continue
+        if st.cond not in (COND_NONE, COND_LEGION):
             continue
         # The card is in hand, so it has no location; a self-discount that
         # counted "at my battlefield" would be meaningless and none print it.

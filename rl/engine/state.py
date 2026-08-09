@@ -94,8 +94,18 @@ F_BUFFED = 1 << 3
 # 359.3.f.3 is the general rule: information a trigger references is captured
 # when it triggers.
 F_DIED_ALONE = 1 << 4
+# [Legion] was satisfied when this permanent was PLAYED -- "you've played
+# another card this turn". A snapshot, like F_DIED_ALONE, and for the same
+# reason: the condition is about a moment that has passed. A "[Legion] - When
+# you play me" trigger sits on the Chain through a priority window, and by the
+# time it resolves the turn's play count is not the one the card asked about.
+# Snapshotting also sidesteps the off-by-one that reading the live counter
+# invites, since by then the permanent has itself been counted.
+F_LEGION = 1 << 5
 
 # Statuses that expire during the end-of-turn cleanup (423.1.a.2, 317.2).
+# F_LEGION is deliberately NOT here: it records what was true when the
+# permanent was played and stays true for as long as it is on the board.
 TURN_SCOPED_FLAGS = F_STUNNED | F_NO_COMBAT_DAMAGE   # NOT F_NON_UNIT
 
 # Capacities. Generous enough that overflow means a real bug, small enough that
@@ -205,7 +215,7 @@ class GameState:
         "banished", "n_banished",
         "chain", "n_chain", "chain_targets", "pend_slot", "chain_uid",
         "pend_may", "trig", "n_trig", "pend_order",
-        "points", "burned_out", "no_spells",
+        "points", "burned_out", "no_spells", "cards_played",
         "legend", "champion",
         "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "attacker", "passes",
@@ -290,6 +300,11 @@ class GameState:
         # Lilting Lullaby: "its controller can't play spells this turn".
         # Turn-scoped, cleared in the end-of-turn cleanup.
         self.no_spells = np.zeros(N_SEATS, np.int8)
+        # Cards each seat has PLAYED this turn (349: played means finalized, or
+        # resolved for a unit). [Legion] asks "have you played another card this
+        # turn", and ten cards in the pool ask it. Reset in the Ending Phase
+        # with the other turn-scoped state.
+        self.cards_played = np.zeros(N_SEATS, np.int16)
         self.legend = np.full(N_SEATS, -1, np.int16)
         self.champion = np.full(N_SEATS, -1, np.int16)
 

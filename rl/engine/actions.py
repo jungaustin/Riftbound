@@ -44,6 +44,7 @@ from rl.engine.cardtable import CardTable
 from rl.engine.effects import (TR_ACTIVATED, TR_PLAY_ME, TR_PLAY_SPELL,
                                abilities_for, spec_for)
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
+                             F_LEGION, P_FLAGS,
                              C_DEST, COST_FLOW, COST_NO_ENERGY,
                              COST_PRINTED, DEST_BANISH, DEST_RECYCLE,
                              C_SRC, MAIN,
@@ -642,6 +643,11 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
     for dom in surcharge:
         state.recycle_rune(seat, dom)
     chain.finalize(state, item)
+    # 349 -- the card is PLAYED now. [Legion] asks whether another card was
+    # played this turn, so the count has to move at the same instant the rules
+    # say the card was played, and not at resolution: a countered spell was
+    # still played, and still turns Legion on for what follows.
+    state.cards_played[seat] += 1
     # "When you play a spell" -- 349 makes a card *played* at finalization, not
     # at resolution, so Ravenbloom Student grows the moment the spell is
     # committed to the Chain and keeps the Might even if it is countered.
@@ -830,8 +836,16 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     #
     # 359.2.d -- non-unit Gear enters READY at its controller's base instead.
     is_unit = bool(table.is_type(card, "Unit"))
+    # Counted BEFORE the permanent enters, so the [Legion] snapshot taken by
+    # `add_permanent` asks "another card", not "any card including me". 337.2
+    # gives a unit no finalization step to hang this on, so this is the moment
+    # the card is played.
+    legion = bool(state.cards_played[seat])
+    state.cards_played[seat] += 1
     src = state.add_permanent(card, seat, loc, ready=(fast or not is_unit),
                               is_unit=is_unit)
+    if legion:
+        state.perms[src, P_FLAGS] |= F_LEGION
 
     # 359.2.b -- rules text executes as the permanent enters, so "When you play
     # me" triggers here, after it is on the board. 337.2 already resolved the

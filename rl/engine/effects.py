@@ -132,7 +132,15 @@ T_MY_BASE = -6
 
 # --- conditions, checked at resolution ------------------------------------
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
- COND_ONLY_UNIT_THERE, COND_CONTROL_N_GEAR, COND_DIED_ALONE) = range(6)
+ COND_ONLY_UNIT_THERE, COND_CONTROL_N_GEAR, COND_DIED_ALONE,
+ COND_LEGION) = range(7)
+
+# COND_LEGION is 822's [Legion]: "get the effect if you've played another card
+# this turn". On a STATIC it reads the live counter, because a cost is worked
+# out as the card is played and the card itself has not been counted yet. On an
+# OP it reads the F_LEGION snapshot taken when the source was played, because
+# by resolution the source HAS been counted and a priority window has passed.
+# Same words, two readings, and only one of them is right in each place.
 
 
 class TargetSpec(NamedTuple):
@@ -868,6 +876,9 @@ class Static(NamedTuple):
     # discount, which is why it rides here and not on the total; see
     # `cost.order_discounts` for why that makes the ordering matter.
     floor: int = 0
+    # Gate. A static that does not apply right now contributes nothing at all,
+    # which for a cost discount means the card simply costs its printed price.
+    cond: int = COND_NONE
 
 
 STATICS: dict[str, tuple[Static, ...]] = {
@@ -882,6 +893,19 @@ STATICS: dict[str, tuple[Static, ...]] = {
     # board, which is what makes it the payoff for a token deck.
     "Soul Shepherd": (
         Static(ST_MIGHT, n=1, scope=SC_FRIENDLY_UNITS, scope_token=True),
+    ),
+
+    # [Legion] - I cost {2 energy} less.
+    # (Get the effect if you've played another card this turn.)
+    #
+    # A 4-drop that is a 2-drop whenever it is not the first thing you do. The
+    # condition is read LIVE here rather than off a snapshot, and that is the
+    # whole subtlety of [Legion]: a cost is worked out as the card is played,
+    # so this card has not been counted yet and any nonzero count is "another
+    # card". The op side reads the snapshot instead, because by the time an
+    # ability resolves the source HAS been counted.
+    "Noxus Hopeful": (
+        Static(ST_COST_ENERGY, n=2, scope=SC_SELF, cond=COND_LEGION),
     ),
 
     # --- costs that count a zone -------------------------------------------
@@ -1264,6 +1288,36 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # [Deathknell] - Draw 1.
     "Watchful Sentry": (
         Ability(TR_DEATH, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # --- [Legion]: "get the effect if you've played another card this turn" --
+    # These read the F_LEGION SNAPSHOT taken when the unit was played, not the
+    # live counter. Two things would go wrong live: the unit has itself been
+    # counted by the time its own ETB resolves, and the trigger sits on the
+    # Chain through a priority window in which the count can move again. The
+    # ability still goes on the Chain and still needs a legal target (355.8);
+    # it is a conditional effect, not an optional one, so an un-Legioned copy
+    # resolves and does nothing.
+
+    # [Legion] - When you play me, give a unit +2 Might this turn.
+    "Dangerous Duo": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=2, cond=COND_LEGION),)),
+    ),
+
+    # [Legion] - When you play me, play two 1 Might Recruit unit tokens here.
+    "Vanguard Captain": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_CREATE_TOKEN, target=T_HERE, n=2,
+                        token=RECRUIT_TOKEN, cond=COND_LEGION),)),
+    ),
+
+    # [Legion] - When you play me, buff me.
+    # (If I don't have a buff, I get a +1 Might buff.)
+    "Trifarian Gloryseeker": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_BUFF, target=T_SELF, cond=COND_LEGION),)),
     ),
 
     # When you play this, play a 1 Might Recruit unit token at your base.

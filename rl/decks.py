@@ -44,7 +44,8 @@ from engine.cards import find  # noqa: E402
 
 from rl.config import ABILITY_KEYWORDS, DOMAINS  # noqa: E402
 from rl.engine.cardtable import CardTable, read_decklist  # noqa: E402
-from rl.engine.effects import ABILITIES, SPECS, STATICS  # noqa: E402
+from rl.engine.effects import (ABILITIES, COND_LEGION, SPECS,  # noqa: E402
+                               STATICS)
 
 _DOMAIN_ID = {d.lower(): i for i, d in enumerate(DOMAINS)}
 
@@ -104,6 +105,14 @@ def includable(table: CardTable, cid: int) -> bool:
     return False
 
 
+def _encodes_legion(name: str) -> bool:
+    """Does this card's transcription actually carry the [Legion] gate?"""
+    for ab in ABILITIES.get(name, ()):
+        if any(op.cond == COND_LEGION for op in ab.ops):
+            return True
+    return any(st.cond == COND_LEGION for st in STATICS.get(name, ()))
+
+
 def plays_as_printed(table: CardTable, cid: int) -> bool:
     """Does the engine execute **everything** this card says?
 
@@ -128,6 +137,13 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
         # 808.1 -- [Deathknell] IS the ability, not a property alongside it, so
         # transcribing the ability is what implements the keyword.
         unread -= set(ABILITY_KEYWORDS)
+    # [Legion] is a GATE on an ability or static rather than an ability of its
+    # own, so it is credited only when the transcription actually carries the
+    # gate. Blanket-crediting it the way Deathknell is credited would pass any
+    # card that merely has a spec, including one that transcribed the effect
+    # and quietly dropped the "if you've played another card this turn".
+    if "Legion" in unread and _encodes_legion(name):
+        unread.discard("Legion")
     if unread:
         return False
     # Presence in ABILITIES or STATICS means the same thing presence in SPECS

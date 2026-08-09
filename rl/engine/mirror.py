@@ -31,7 +31,7 @@ SEAT_AXIS = (
     "runes_ready", "runes_spent", "rune_deck", "rune_head", "rune_left",
     "banished", "n_banished",
     "pool_energy", "pool_power", "bf_scored", "points", "burned_out",
-    "legend", "champion", "no_spells",
+    "legend", "champion", "no_spells", "cards_played",
 )
 
 # The value *is* a seat id: flip it, but leave the -1 "nobody" sentinel alone.

@@ -34,7 +34,8 @@ from rl.engine.cardtable import CardTable
 from rl.engine import combat
 from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                COND_FROM_HAND,
-                               COND_NONE, COND_ONLY_UNIT_THERE,
+                               COND_LEGION, COND_NONE,
+                               COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
                                OP_DRAW_CONTROLLER, OP_KILL,
                                OP_CREATE_TOKEN, OP_MOVE_TO,
@@ -63,7 +64,7 @@ from rl.engine import chain
 from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
                              COST_NO_ENERGY, COST_PRINTED,
                              F_BUFFED,
-                             F_DIED_ALONE,
+                             F_DIED_ALONE, F_LEGION,
                              N_BF, N_SEATS, P_ALIVE, P_FLAGS,
                              P_CARD, P_CTRL, P_DMG, P_LOC, P_READY, GameState,
                              base_loc, bf_index, bf_loc,
@@ -560,6 +561,14 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
                      dead_source: int = -1) -> bool:
     if op.cond == COND_NONE:
         return True
+    if op.cond == COND_LEGION:
+        # 822 -- "get the effect if you've played another card this turn",
+        # snapshotted onto the source when it was played. Read live, this would
+        # be wrong twice over: the source has itself been counted by now, and a
+        # "[Legion] - When you play me" trigger sits on the Chain through a
+        # priority window in which the count can move again.
+        return source >= 0 and bool(
+            int(state.perms[source, P_FLAGS]) & F_LEGION)
     if op.cond == COND_DIED_ALONE:
         # Lonely Poro: "If I died alone", where its own reminder defines alone
         # as "no other friendly units here". Past tense, and that decides the
