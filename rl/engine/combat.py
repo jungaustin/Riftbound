@@ -48,8 +48,8 @@ import numpy as np
 from rl.config import Config
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH, SC_SELF,
-                               ST_MIGHT, TR_DEATH, TR_MOVE,
-                               abilities_for, statics_for)
+                               ST_MIGHT, TR_ATTACK_OR_DEFEND, TR_DEATH,
+                               TR_MOVE, abilities_for, statics_for)
 from rl.engine.state import (P_MIGHT_MOD, F_BUFFED, F_DIED_ALONE,
                              F_NON_UNIT, F_NO_COMBAT_DAMAGE,
                              N_BF, N_SEATS, P_ALIVE,
@@ -631,7 +631,7 @@ def run_combat(state: GameState, table: CardTable, cfg: Config,
     version that resolves Combat in one call cannot represent a combat trick.
     """
     log: dict = {"combat_at": bf}
-    open_showdown(state, bf, attacker)
+    open_showdown(state, table, bf, attacker)
     return advance_combat(state, table, cfg, log)
 
 
@@ -684,7 +684,28 @@ def advance_combat(state: GameState, table: CardTable, cfg: Config,
     return log
 
 
-def open_showdown(state: GameState, bf: int, attacker: int) -> None:
+def is_alone(state: GameState, perm: int) -> bool:
+    """740.2.a -- "A unit is alone when there are no other friendly units at the
+    same location."
+
+    The rules define it once and three different clauses use it: Lonely Poro's
+    "died alone", Mask of Foresight's "attacks or defends alone", Wielder of
+    Water's "while I'm attacking or defending alone". It is a LOCATION
+    predicate, not a count of attackers -- an unattacked friendly unit standing
+    beside the attacker is enough to break it.
+    """
+    row = state.perms[perm]
+    seat, loc = int(row[P_CTRL]), int(row[P_LOC])
+    return not any(
+        i != perm and state.perms[i, P_ALIVE] == 1
+        and int(state.perms[i, P_CTRL]) == seat
+        and int(state.perms[i, P_LOC]) == loc
+        and not state.has_flag(i, F_NON_UNIT)
+        for i in range(state.n_perms))
+
+
+def open_showdown(state: GameState, table: CardTable, bf: int,
+                  attacker: int) -> None:
     state.bf_contested[bf] = 1
     state.showdown_bf = bf
     state.showdown_step = SD_PRIORITY
@@ -692,6 +713,30 @@ def open_showdown(state: GameState, bf: int, attacker: int) -> None:
     state.priority = attacker              # 464.2.d: the Attacker gains Focus
     state.focus = attacker
     state.passes = 0
+
+    # "When a friendly unit attacks or defends alone" -- 459 designates every
+    # unit at the battlefield as an attacker or a defender when the Combat
+    # begins, so this is the moment the trigger condition is met. "Alone" is
+    # checked HERE rather than at resolution: it is part of the trigger
+    # condition, so a unit that is not alone never triggers at all, and one
+    # that is keeps the +1 even if a friend walks in during the response
+    # window. Same reading as Lonely Poro's "died alone" (359.3.f.3).
+    from rl.engine.chain import queue as chain_queue, has_trigger
+    loc = bf_loc(bf)
+    for u in range(state.n_perms):
+        if state.perms[u, P_ALIVE] != 1 or int(state.perms[u, P_LOC]) != loc:
+            continue
+        if state.has_flag(u, F_NON_UNIT) or not is_alone(state, u):
+            continue
+        owner = int(state.perms[u, P_CTRL])
+        # The watcher is any permanent its controller has anywhere -- Mask of
+        # Foresight sits at a base and watches a battlefield.
+        for w in range(state.n_perms):
+            if state.perms[w, P_ALIVE] != 1 or int(state.perms[w, P_CTRL]) != owner:
+                continue
+            if has_trigger(table, int(state.perms[w, P_CARD]),
+                           TR_ATTACK_OR_DEFEND):
+                chain_queue(state, TR_ATTACK_OR_DEFEND, w, loc, subj=u)
 
 
 def showdown_responses(state: GameState, table: CardTable, cfg: Config,

@@ -175,8 +175,15 @@ RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 # produces. One flag would have had to become an enum of whole card behaviours,
 # which is the shape that stops composing at exactly four cards.
 C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF, C_UID, C_ABIL, C_SRC, \
-    C_CTX, C_COST, C_DEST = range(11)
-N_CHAIN_COLS = 11
+    C_CTX, C_COST, C_DEST, C_SUBJ = range(12)
+N_CHAIN_COLS = 12
+
+# C_SUBJ is the permanent a trigger fired *for*, which is not the same as
+# C_SRC, the permanent the ability is printed on. Every trigger so far has been
+# about its own source -- "when I die", "when I conquer" -- so the two
+# coincided and one column did both jobs. Mask of Foresight watches from a
+# base while somebody ELSE attacks: the source is the gear and the subject is
+# the unit, and the effect is "give IT +1 Might".
 
 # What a Chain Item pays on finalization.
 COST_PRINTED = 0     # the corner cost, or nothing at all if played from Hidden
@@ -288,7 +295,7 @@ class GameState:
         # yes/no at finalization (383.3.a). -1 when nothing is waiting.
         self.pend_may = -1
         # [trigger kind, source permanent row, captured context int]
-        self.trig = np.full((MAX_TRIGGERS, 3), -1, np.int16)
+        self.trig = np.full((MAX_TRIGGERS, 4), -1, np.int16)
         self.n_trig = 0
         # Seat currently choosing the order to place its simultaneous triggers
         # on the Chain (383.3.d). -1 when nobody is being asked.

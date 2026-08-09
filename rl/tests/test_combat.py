@@ -185,7 +185,7 @@ s.active = 0
 a = put(s, PLAIN[3], 0, bf_loc(0))     # already there, both sides present
 d = put(s, PLAIN[3], 1, bf_loc(0))
 s.bf_ctrl[0] = 1
-combat.open_showdown(s, 0, attacker=0)
+combat.open_showdown(s, T, 0, attacker=0)
 log = {}
 done = combat.resolution_step(s, T, CFG, 0, attacker=0, log=log)   # no damage step
 assert done and log["recalled"] == [a], log
@@ -438,5 +438,74 @@ s.active = 0
 phases.score_holds(s, CFG8)
 assert int(s.points[0]) == 8, "471.1.a.1 -- non-Conquer sources are exempt"
 ok("Hold is exempt and can take the Final Point on its own")
+
+# ---------------------------------------------------------------------------
+print("\n[9] a trigger that fires for a unit other than its own source")
+
+from rl.engine import chain as chain_mod
+from dataclasses import replace as _replace
+from rl.engine.state import C_FINAL, MAIN, P_MIGHT_MOD
+
+# Triggers do not fire under `units_only` -- that is what keeps v0
+# bit-identical -- so this section needs the v1 config.
+CFG_V1 = _replace(Config(), units_only=False)
+
+MASK = T.id_of("Mask of Foresight")
+PLAIN = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c)
+             and not T.residual_text(c) and int(T.might[c]) >= 3)
+
+
+def mask_board(n_friendly, mask_seat=0):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.add_permanent(MASK, mask_seat, base_loc(mask_seat))   # gear, at a BASE
+    rows = [s.add_permanent(PLAIN, 0, bf_loc(0)) for _ in range(n_friendly)]
+    foe = s.add_permanent(PLAIN, 1, bf_loc(0))
+    return s, rows, foe
+
+
+def drain(s):
+    """Place every queued trigger, finalize it, and resolve the chain."""
+    while s.n_trig:
+        chain_mod.place(s, T, CFG_V1, 0)
+    for i in range(int(s.n_chain)):
+        s.chain[i, C_FINAL] = 1
+    while s.n_chain:
+        chain_mod.resolve_top(s, T, CFG_V1)
+
+
+# The gear sits at a base and watches a battlefield, so the ability's SOURCE
+# and its SUBJECT are different permanents -- the first trigger in the pool for
+# which C_SRC could not do both jobs.
+s, rows, _ = mask_board(1)
+combat.open_showdown(s, T, 0, attacker=0)
+drain(s)
+if int(s.perms[rows[0], P_MIGHT_MOD]) != 1:
+    die("mask", f"a lone attacker should get +1, got "
+                f"{int(s.perms[rows[0], P_MIGHT_MOD])}")
+ok("a trigger fires for another permanent, and the effect finds it (T_SUBJECT)")
+
+# 740.2.a -- "alone" is a LOCATION predicate, not a count of attackers. A
+# second friendly unit standing there breaks it for BOTH of them.
+s, rows, _ = mask_board(2)
+combat.open_showdown(s, T, 0, attacker=0)
+drain(s)
+if any(int(s.perms[r, P_MIGHT_MOD]) for r in rows):
+    die("mask", "with two friendly units at the battlefield neither is alone")
+ok("740.2.a -- a second friendly unit there means nobody attacked alone")
+
+# "attacks OR DEFENDS alone": the same gear works on defence, and never for
+# the opponent's units.
+s, rows, foe = mask_board(1, mask_seat=1)
+combat.open_showdown(s, T, 0, attacker=0)
+drain(s)
+if int(s.perms[foe, P_MIGHT_MOD]) != 1:
+    die("mask", "a lone DEFENDER should get +1 too")
+if int(s.perms[rows[0], P_MIGHT_MOD]):
+    die("mask", "the enemy attacker must not be buffed by their opponent's gear")
+ok("...and it reads 'attacks or defends', on the controller's units only")
+
 
 print("\n\033[32mall combat tests passed\033[0m")

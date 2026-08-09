@@ -40,7 +40,7 @@ from rl.engine.cardtable import CardTable
 from rl.engine.cost import plan_flow, plan_payment
 from rl.engine.effects import (SPEED_ACTION, SPEED_REACTION, abilities_for,
                                spec_for)
-from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
+from rl.engine.state import (C_ABIL, C_SUBJ, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
                              C_FINAL, C_COST, C_DEST, C_FROM_HAND, C_SRC,
                              C_UID, COST_PRINTED, DEST_TRASH, DEST_BANISH,
                              DEST_RECYCLE,
@@ -206,7 +206,7 @@ def flow_playable(state: GameState, table: CardTable, cfg: Config,
 def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
          bound_bf: int = -1, abil: int = -1, src: int = -1,
          ctx: int = -1, cost: int = COST_PRINTED,
-         dest: int = DEST_TRASH) -> int:
+         dest: int = DEST_TRASH, subj: int = -1) -> int:
     """Append a Pending Chain Item. Returns its index.
 
     `abil >= 0` makes it a Triggered Ability rather than a card (383.3).
@@ -225,6 +225,7 @@ def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
     row[C_CTX] = ctx
     row[C_COST] = cost
     row[C_DEST] = dest
+    row[C_SUBJ] = subj
     state.chain_uid += 1
     state.chain_targets[i, :] = -1
     state.n_chain = i + 1
@@ -280,7 +281,8 @@ def has_trigger(table: CardTable, card: int, trigger: int) -> bool:
     return any(a.trigger == trigger for a in abilities_for(table, card))
 
 
-def queue(state: GameState, trigger: int, src: int, ctx: int = -1) -> None:
+def queue(state: GameState, trigger: int, src: int, ctx: int = -1,
+          subj: int = -1) -> None:
     """Record that a trigger condition was met. Drained by `flush`.
 
     **Not put on the Chain here, deliberately.** Trigger conditions are met
@@ -297,7 +299,7 @@ def queue(state: GameState, trigger: int, src: int, ctx: int = -1) -> None:
     """
     i = int(state.n_trig)
     assert i < MAX_TRIGGERS, "trigger queue overflow"
-    state.trig[i] = (trigger, src, ctx)
+    state.trig[i] = (trigger, src, ctx, subj)
     state.n_trig = i + 1
 
 
@@ -353,8 +355,8 @@ def place(state: GameState, table: CardTable, cfg: Config, i: int) -> int:
     Always consumes the entry, even when `fire` declines to push anything
     (355.8, no legal targets) -- otherwise the drain loop would spin on it.
     """
-    trigger, src, ctx = (int(x) for x in state.trig[i])
-    added = fire(state, table, cfg, trigger, src, ctx)
+    trigger, src, ctx, subj = (int(x) for x in state.trig[i])
+    added = fire(state, table, cfg, trigger, src, ctx, subj)
     n = int(state.n_trig)
     if i < n - 1:
         state.trig[i:n - 1] = state.trig[i + 1:n]
@@ -364,7 +366,7 @@ def place(state: GameState, table: CardTable, cfg: Config, i: int) -> int:
 
 
 def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,
-         src: int, ctx: int = -1) -> int:
+         src: int, ctx: int = -1, subj: int = -1) -> int:
     """Put every matching Triggered Ability of `src` on the Chain (383.3).
 
     Returns how many were added. Nothing fires while `units_only` is set, which
@@ -398,7 +400,8 @@ def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,
         if ab.n_targets and not rsv.can_be_cast(state, table, ab, ctrl, -1, src,
                                                 card):
             continue
-        push(state, card, ctrl, from_hand=False, abil=k, src=src, ctx=ctx)
+        push(state, card, ctrl, from_hand=False, abil=k, src=src, ctx=ctx,
+             subj=subj)
         n += 1
     return n
 
@@ -525,11 +528,12 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
     src = int(state.chain[item, C_SRC])
     ctx = int(state.chain[item, C_CTX])
     dest = int(state.chain[item, C_DEST])
+    subj = int(state.chain[item, C_SUBJ])
     card, ctrl, from_hand, bound, targets = _pop(state, item)
 
     assert spec is not None, f"no spec for {table.names[card]!r} on the chain"
     log = rsv.resolve(state, table, cfg, spec, ctrl, targets[:spec.n_targets],
-                      bound, from_hand, source=src, ctx=ctx)
+                      bound, from_hand, source=src, ctx=ctx, subj=subj)
     log["card"] = table.names[card]
 
     if abil >= 0:

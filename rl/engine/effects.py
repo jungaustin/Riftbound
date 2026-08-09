@@ -129,6 +129,10 @@ T_OWNER_BASE = -5  # the base of the unit in the op's FIRST slot ("to its base")
 # Gear played from a Facedown Zone sits at a battlefield instead, and Forge of
 # the Future still makes its token at the base either way.
 T_MY_BASE = -6
+# The permanent a trigger fired FOR, as opposed to the one it is printed on.
+# Mask of Foresight watches from a base while another unit attacks: T_SELF is
+# the gear, T_SUBJECT is the attacker, and "give IT +1 Might" means the latter.
+T_SUBJECT = -7
 
 # --- conditions, checked at resolution ------------------------------------
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
@@ -275,9 +279,9 @@ class CardSpec(NamedTuple):
 # -- Lillia's "play a Sprite unit token THERE" means where she came from, and
 # 359.3.f.3 fixes that at trigger time, not at resolution.
 (TR_PLAY_ME, TR_DEATH, TR_MOVE, TR_HOLD, TR_CONQUER,
- TR_PLAY_SPELL, TR_ACTIVATED) = range(7)
+ TR_PLAY_SPELL, TR_ACTIVATED, TR_ATTACK_OR_DEFEND) = range(8)
 TRIGGER_NAMES = ("play_me", "death", "move", "hold", "conquer", "play_spell",
-                 "activated")
+                 "activated", "attack_or_defend")
 
 # TR_ACTIVATED is not a trigger at all -- it is the marker for an ACTIVATED
 # ability (151.1: "Costs followed by a ':' and then an effect"). No event ever
@@ -1283,6 +1287,29 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # "all units here" is untargeted and hits both sides.
     "Enthusiastic Promoter": (
         Ability(TR_HOLD, ops=(Op(OP_BUFF_ALL_AT, target=T_HERE),)),
+    ),
+
+    # When a friendly unit attacks or defends alone, give it +1 Might this turn.
+    #
+    # **The first trigger that fires for a permanent other than its own
+    # source.** Every trigger before this one was about itself -- "when I die",
+    # "when I conquer" -- so C_SRC did both jobs. This gear sits at a base and
+    # watches a battlefield, so the ability's source and its subject are
+    # different permanents: T_SELF is the Mask, T_SUBJECT is the unit that
+    # attacked, and "give IT +1" means the latter.
+    #
+    # A TRIGGER, not a static, and the card is worded to say so. Master Yi -
+    # Wuju Bladesman's "WHILE a friendly unit defends alone, it gets +2" is a
+    # static that evaporates the moment a second unit arrives; this one gives
+    # +1 "this turn", so it is banked at the moment of the attack and survives
+    # reinforcements, the end of the Combat, and the unit walking home.
+    #
+    # 740.2.a defines alone as "no other friendly units at the same location",
+    # checked when the Combat begins -- part of the trigger condition, so a
+    # unit that is not alone never triggers at all.
+    "Mask of Foresight": (
+        Ability(TR_ATTACK_OR_DEFEND,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SUBJECT, n=1),)),
     ),
 
     # [Deathknell] - Draw 1.

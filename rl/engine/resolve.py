@@ -57,7 +57,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                OP_PLAY_UNIT_FROM_TRASH, W_FRIENDLY,
                                OP_RECYCLE_FROM_TRASH,
                                TR_PLAY_ME, T_CTX, T_HERE, T_MY_BASE,
-                               T_OWNER_BASE, T_SELF,
+                               T_OWNER_BASE, T_SELF, T_SUBJECT,
                                CardSpec, Op, pack_trash, unpack_trash,
                                TargetSpec)
 from rl.engine import chain
@@ -606,7 +606,8 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
 
 
 def _sweep(state: GameState, table: CardTable, op: Op, seat: int,
-           still_legal: list[int], source: int, ctx: int) -> list[int]:
+           still_legal: list[int], source: int, ctx: int,
+           subj: int = -1) -> list[int]:
     """Live unit rows a board-wide op reaches, after its scoping clauses.
 
     The mass effects in the pool are rarely as broad as "all units": they say
@@ -622,8 +623,10 @@ def _sweep(state: GameState, table: CardTable, op: Op, seat: int,
     and belongs to the card rather than to the op. Defaulting to battlefields
     would have quietly spared every unit sitting at a base.
     """
-    where = _slot(state, still_legal, op.at, source, ctx) if op.at != -1 else -1
-    spare = (_slot(state, still_legal, op.except_target, source, ctx)
+    where = (_slot(state, still_legal, op.at, source, ctx, seat, subj)
+             if op.at != -1 else -1)
+    spare = (_slot(state, still_legal, op.except_target, source, ctx,
+                   seat, subj)
              if op.except_target != -1 else -1)
     out = []
     for i in range(state.n_perms):
@@ -648,7 +651,7 @@ def _sweep(state: GameState, table: CardTable, op: Op, seat: int,
 
 
 def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
-          ctx: int, seat: int = -1) -> int:
+          ctx: int, seat: int = -1, subj: int = -1) -> int:
     """Decode an op's target index, including the pseudo-slots.
 
     A spell's ops address chosen targets by slot. A unit ability also has to
@@ -664,13 +667,16 @@ def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
         return ctx
     if idx == T_MY_BASE:
         return base_loc(seat) if seat >= 0 else -1
+    if idx == T_SUBJECT:
+        return subj
 
     return still_legal[idx] if 0 <= idx < len(still_legal) else -1
 
 
 def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             seat: int, targets: list[int], bound_bf: int,
-            from_hand: bool, source: int = -1, ctx: int = -1) -> dict:
+            from_hand: bool, source: int = -1, ctx: int = -1,
+            subj: int = -1) -> dict:
     """Apply a finalized card's or ability's ops. Returns a log dict.
 
     Targets are re-checked here, not trusted from finalization: the window
@@ -748,7 +754,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["resolved"].append(op.op)
             continue
 
-        a = _slot(state, still_legal, op.target, source, ctx, seat)
+        a = _slot(state, still_legal, op.target, source, ctx, seat, subj)
         if op.target != -1 and a < 0:
             log["fizzled"].append(op.op)      # this target specifically is gone
             continue
@@ -787,7 +793,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                 # a card moving two units sends each to the right place.
                 dst = base_loc(int(state.perms[a, P_CTRL])) if a >= 0 else -1
             else:
-                dst = _slot(state, still_legal, op.target_b, source, ctx, seat)
+                dst = _slot(state, still_legal, op.target_b, source, ctx, seat, subj)
             if dst < 0:
                 log["fizzled"].append(op.op)
                 continue
@@ -879,7 +885,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             if not can_play_from_trash(state, table, seat, card, op.cost):
                 log["fizzled"].append(op.op)
                 continue
-            dst = _slot(state, still_legal, op.target_b, source, ctx, seat)
+            dst = _slot(state, still_legal, op.target_b, source, ctx, seat, subj)
             # The destination was chosen at finalization and a response window
             # has passed since. If that Battlefield is no longer this seat's,
             # 806.3 no longer permits it -- but the base always does, and the
@@ -996,21 +1002,23 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # `_sweep` narrows it to one location, one side, or everything but
             # an already-chosen unit, which is what Crescent Strike's "1 to
             # each OTHER enemy unit there" needs.
-            for i in _sweep(state, table, op, seat, still_legal, source, ctx):
+            for i in _sweep(state, table, op, seat, still_legal, source, ctx,
+                            subj):
                 if combat.mark_damage(state, table, i, op.n):
                     log.setdefault("killed", []).append(i)
         elif op.op == OP_MODIFY_MIGHT_ALL:
             # "give enemy units -3 Might this turn" -- no count, no choice, so
             # not targets (355.10) and no slot. Each unit it reaches gets the
             # same 143.2.a re-check a single Might change would.
-            for i in _sweep(state, table, op, seat, still_legal, source, ctx):
+            for i in _sweep(state, table, op, seat, still_legal, source, ctx,
+                            subj):
                 if combat.set_might_mod(state, table, i, op.n, op.floor):
                     log.setdefault("killed_by_might", []).append(i)
         elif op.op == OP_READY:
             state.perms[a, P_READY] = 1
             log.setdefault("readied", []).append(a)
         elif op.op == OP_SWAP_LOC:
-            b = _slot(state, still_legal, op.target_b, source, ctx, seat)
+            b = _slot(state, still_legal, op.target_b, source, ctx, seat, subj)
             if b < 0:
                 log["fizzled"].append(op.op)
                 continue
