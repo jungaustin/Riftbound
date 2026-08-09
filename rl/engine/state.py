@@ -222,7 +222,7 @@ class GameState:
         "banished", "n_banished",
         "chain", "n_chain", "chain_targets", "pend_slot", "chain_uid",
         "pend_may", "trig", "n_trig", "pend_order",
-        "points", "burned_out", "no_spells", "cards_played",
+        "points", "burned_out", "no_spells", "cards_played", "xp",
         "legend", "champion",
         "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "attacker", "passes",
@@ -312,6 +312,10 @@ class GameState:
         # turn", and ten cards in the pool ask it. Reset in the Ending Phase
         # with the other turn-scoped state.
         self.cards_played = np.zeros(N_SEATS, np.int16)
+        # Experience. Gained by [Hunt] on a Score and by cards that say so,
+        # spent by "Spend N XP" costs. **Not turn-scoped** -- it accumulates
+        # across the game, which is what makes [Level 11] reachable at all.
+        self.xp = np.zeros(N_SEATS, np.int16)
         self.legend = np.full(N_SEATS, -1, np.int16)
         self.champion = np.full(N_SEATS, -1, np.int16)
 

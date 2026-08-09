@@ -106,14 +106,15 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_DISCARD, OP_KILL_ALL, OP_EXHAUST_ALL, OP_HEAL_AT,
  OP_ADD_ENERGY, OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT,
  OP_BLINK, OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
- OP_PLAY_UNIT_FROM_TRASH, OP_RECYCLE_FROM_TRASH) = range(28)
+ OP_PLAY_UNIT_FROM_TRASH, OP_RECYCLE_FROM_TRASH,
+ OP_GAIN_XP) = range(29)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
             "damage_all", "discard", "kill_all", "exhaust_all", "heal_at",
             "add_energy", "add_power", "buff", "buff_all_at", "blink",
             "trash_to_hand", "play_from_trash",
-            "play_unit_from_trash", "recycle_from_trash")
+            "play_unit_from_trash", "recycle_from_trash", "gain_xp")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -137,7 +138,13 @@ T_SUBJECT = -7
 # --- conditions, checked at resolution ------------------------------------
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
  COND_ONLY_UNIT_THERE, COND_CONTROL_N_GEAR, COND_DIED_ALONE,
- COND_LEGION) = range(7)
+ COND_LEGION, COND_LEVEL) = range(8)
+
+# COND_LEVEL is "[Level N] - while you have N+ XP, get the effect". The
+# threshold rides on the Op or Static as `level`, so one condition covers all
+# of [Level 3], [Level 6] and [Level 11]. Unlike [Legion] this is genuinely
+# continuous -- XP does not reset, and a static gated on it switches on the
+# instant the XP arrives -- so it is read LIVE in both places.
 
 # COND_LEGION is 822's [Legion]: "get the effect if you've played another card
 # this turn". On a STATIC it reads the live counter, because a cost is worked
@@ -227,6 +234,8 @@ class Op(NamedTuple):
     # Stricter than the general floor of 0 in 143.2.b, and part of the effect
     # rather than a rule, which is why it lives on the Op.
     floor: int | None = None
+    # The N in "[Level N]", when `cond` is COND_LEVEL.
+    level: int = 0
     # For OP_CREATE_TOKEN: the token card's name, and whether the created
     # units enter ready. Units normally enter exhausted; "Play a READY
     # 3 Might Sprite" overrides that, which is most of the card's value.
@@ -346,6 +355,11 @@ class Ability(NamedTuple):
     # real death, not a banish (427.2.a), so the card lands in its trash and any
     # [Deathknell] on it fires.
     cost_kill_self: bool = False
+    # "Spend N XP:" -- 204.1.b again, an instruction before the ':'. A player
+    # resource rather than a permanent's, so unlike Exhaust it does not care
+    # which copy activates, and unlike a rune cost it is not refunded by
+    # anything: XP spent is gone.
+    cost_xp: int = 0
     # 337.2 -- a resource-adding ability resolves IMMEDIATELY and never waits
     # on the Chain, so it cannot be responded to. The cards say so themselves:
     # "Abilities that add resources can't be reacted to." Without this an [Add]
@@ -883,6 +897,7 @@ class Static(NamedTuple):
     # Gate. A static that does not apply right now contributes nothing at all,
     # which for a cost discount means the card simply costs its printed price.
     cond: int = COND_NONE
+    level: int = 0            # the N in COND_LEVEL's "[Level N]"
 
 
 STATICS: dict[str, tuple[Static, ...]] = {
@@ -943,6 +958,16 @@ STATICS: dict[str, tuple[Static, ...]] = {
     "Plaza Guardian": (
         Static(ST_COST_ENERGY, n=1, scope=SC_SELF, per_card_type="Gear",
                per_friendly=True, per_same_loc=False),
+    ),
+
+    # [Level 11][>] I have +4 Might. (While you have 11+ XP, get the effect.)
+    #
+    # A static gated on a threshold, and read LIVE rather than snapshotted:
+    # XP never resets, so there is no past moment to capture, and 143.2.a means
+    # the +4 arriving can save a damaged unit exactly as losing it could kill
+    # one. Eleven XP is most of a game away, which is the card.
+    "Targonian Visionary": (
+        Static(ST_MIGHT, n=4, scope=SC_SELF, cond=COND_LEVEL, level=11),
     ),
 
     # Dr. Mundo - Expert wants exactly this shape on the Might side -- "My
@@ -1312,6 +1337,36 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
                 ops=(Op(OP_MODIFY_MIGHT, target=T_SUBJECT, n=1),)),
     ),
 
+    # --- XP ---------------------------------------------------------------
+    # [Hunt] is NOT transcribed on any of these: it is synthesised from the
+    # keyword in `abilities_for`, because its effect is fixed by the keyword
+    # rather than written on the card. Repeating it here would double it.
+
+    # When you play me, gain 1 XP.
+    "Demacian Diplomat": (
+        Ability(TR_PLAY_ME, ops=(Op(OP_GAIN_XP, n=1),)),
+    ),
+
+    # [Hunt] When you play me, gain 2 XP.
+    "Herald of Spring": (
+        Ability(TR_PLAY_ME, ops=(Op(OP_GAIN_XP, n=2),)),
+    ),
+
+    # [Hunt] Spend 2 XP: [Buff] me.
+    # (Give me a +1 Might buff if I don't have one.)
+    #
+    # The XP loop closed: Hunt banks it on a Score, this spends it. 702.3 caps
+    # a unit at one Buff counter, which `OP_BUFF` already enforces -- so the
+    # second activation is legal, costs the XP, and does nothing.
+    "Crowd Favorite": (
+        Ability(TR_ACTIVATED, cost_xp=2,
+                ops=(Op(OP_BUFF, target=T_SELF),)),
+    ),
+    "Enthralling Protector": (
+        Ability(TR_ACTIVATED, cost_xp=2,
+                ops=(Op(OP_BUFF, target=T_SELF),)),
+    ),
+
     # [Deathknell] - Draw 1.
     "Watchful Sentry": (
         Ability(TR_DEATH, ops=(Op(OP_DRAW, n=1),)),
@@ -1460,9 +1515,30 @@ def spec_for(table, card: int) -> CardSpec | None:
     return SPECS.get(table.names[card])
 
 
+# [Hunt N] -- 823: "When I conquer or hold, gain N XP." Unlike [Deathknell],
+# whose effect is whatever the card says, Hunt's effect is fixed by the keyword
+# and identical on every card carrying it. So it is SYNTHESISED from the
+# keyword rather than transcribed twelve times: `keyword_value` already reads
+# the N, and TR_CONQUER/TR_HOLD already exist because Scoring needed them.
+#
+# Two abilities, not one with a shared trigger: 469/470 make Conquer and Hold
+# separate ways to Score, and a card can only take one of them in a turn.
+def _hunt_abilities(table, card: int) -> tuple[Ability, ...]:
+    n = int(table.hunt[card])
+    if n <= 0:
+        return ()
+    return (Ability(TR_CONQUER, ops=(Op(OP_GAIN_XP, n=n),)),
+            Ability(TR_HOLD, ops=(Op(OP_GAIN_XP, n=n),)))
+
+
 def abilities_for(table, card: int) -> tuple[Ability, ...]:
-    """Every triggered ability printed on a card id."""
-    return ABILITIES.get(table.names[card], ())
+    """Every triggered ability printed on a card id.
+
+    Transcribed entries plus the ones synthesised from keywords, so a card with
+    [Hunt] and a written ability gets both without the entry repeating what the
+    keyword already says.
+    """
+    return ABILITIES.get(table.names[card], ()) + _hunt_abilities(table, card)
 
 
 def implemented(table) -> list[int]:

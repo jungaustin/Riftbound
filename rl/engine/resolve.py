@@ -34,7 +34,7 @@ from rl.engine.cardtable import CardTable
 from rl.engine import combat
 from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                COND_FROM_HAND,
-                               COND_LEGION, COND_NONE,
+                               COND_LEGION, COND_LEVEL, COND_NONE,
                                COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
                                OP_DRAW_CONTROLLER, OP_KILL,
@@ -55,7 +55,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                TK_LOCATION, TK_SPELL, TK_TRASH_CARD,
                                OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
                                OP_PLAY_UNIT_FROM_TRASH, W_FRIENDLY,
-                               OP_RECYCLE_FROM_TRASH,
+                               OP_RECYCLE_FROM_TRASH, OP_GAIN_XP,
                                TR_PLAY_ME, T_CTX, T_HERE, T_MY_BASE,
                                T_OWNER_BASE, T_SELF, T_SUBJECT,
                                CardSpec, Op, pack_trash, unpack_trash,
@@ -561,6 +561,12 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
                      dead_source: int = -1) -> bool:
     if op.cond == COND_NONE:
         return True
+    if op.cond == COND_LEVEL:
+        # "[Level N] - while you have N+ XP, get the effect." Continuous and
+        # read live: XP never resets, so unlike [Legion] there is no past
+        # moment to snapshot, and a level gained mid-chain legitimately turns
+        # the effect on.
+        return seat >= 0 and int(state.xp[seat]) >= op.level
     if op.cond == COND_LEGION:
         # 822 -- "get the effect if you've played another card this turn",
         # snapshotted onto the source when it was played. Read live, this would
@@ -904,6 +910,11 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             if chain.has_trigger(table, card, TR_PLAY_ME):
                 chain.queue(state, TR_PLAY_ME, src2, dst)
             log.setdefault("played_from_trash", []).append(table.names[card])
+        elif op.op == OP_GAIN_XP:
+            # A player resource, not a permanent's. It has no cap and does not
+            # reset, which is what makes [Level 11] reachable.
+            state.xp[seat] += op.n
+            log["xp"] = int(state.xp[seat])
         elif op.op == OP_COUNTER:
             # Record the controller BEFORE removing the item -- Lilting
             # Lullaby's second op ("its controller can't play spells this

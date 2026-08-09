@@ -59,6 +59,8 @@ ENGINE_KEYWORDS = {
                  "cost, then banish it (829)",
     "Deflect":   "resolve.deflect_cost -- opponents pay +X Power to choose it "
                  "(809), and an unaffordable surcharge makes it not a target",
+    "Hunt":      "effects.abilities_for -- synthesised as 'when I conquer or "
+                 "hold, gain N XP' on every card carrying it (no per-card entry)",
     "Assault":   "combat.combat_role_bonus -- +X Might while an attacker (807)",
     "Action":    "effects.SPEED_ACTION, via a card's DSL spec",
     "Reaction":  "effects.SPEED_REACTION, via a card's DSL spec",
@@ -68,7 +70,18 @@ ENGINE_KEYWORDS = {
 # the card's own text. There is no separate keyword implementation to check: a
 # card carrying one is played as printed exactly when its ability is
 # transcribed in `effects.ABILITIES`, which `decks.plays_as_printed` tests.
-ABILITY_KEYWORDS = ("Deathknell", "Vision", "Hunt")
+# **Only [Deathknell] qualifies, and the distinction is the whole point.**
+# 808.1 makes it short for "When I die, <the card's own effect>", so the effect
+# is different on every card and transcribing the ability IS implementing the
+# keyword. [Hunt] and [Vision] are the opposite: their effect is FIXED by the
+# keyword ("gain N XP on a Score", "look at the top card"), identical on every
+# card, so one generic implementation covers all of them and a card's own
+# transcription says nothing about whether it exists. Listing those two here
+# forgave them for any card that merely had a spec -- no card had tripped it
+# yet, but the first encoded [Vision] unit would have been counted as fully
+# played while doing nothing. [Hunt] is now implemented generically and lives
+# in ENGINE_KEYWORDS; [Vision] is simply not implemented.
+ABILITY_KEYWORDS = ("Deathknell",)
 
 # In scope, but nothing executes them yet. Named rather than merely absent so
 # the gap is legible: Deathknell alone is 94 deck slots and is a trigger, so it

@@ -24,10 +24,12 @@ from dataclasses import replace
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]))
 
 from rl.config import Config
+from rl.engine import actions as A
 from rl.engine import combat
 from rl.engine.cardtable import full_table
 from rl.engine.cost import card_domains, plan_payment
 from rl.engine.state import (P_ALIVE, P_DMG, P_LOC, GameState, base_loc,
+                             bf_loc,
                              bf_loc)
 
 T = full_table()
@@ -283,5 +285,92 @@ try:
     ok("emptying a trash kills a damaged unit whose Might counted it (143.2.a)")
 finally:
     STATICS["Rhasa the Sunderer"] = (STATICS["Rhasa the Sunderer"][0],)
+
+# ---------------------------------------------------------------------------
+print("\n[7] XP: [Hunt] banks it, [Level N] spends it as a gate")
+
+from rl.engine import chain as chain_mod
+from rl.engine.effects import (COND_LEVEL, TR_CONQUER, TR_HOLD, abilities_for,
+                               ABILITIES)
+from rl.engine.state import C_FINAL, MAIN
+
+CFG_V1 = replace(Config(), units_only=False)
+VIS = T.id_of("Targonian Visionary")
+HORROR = T.id_of("Arachnoid Horror")     # [Hunt 2]
+FAV = T.id_of("Crowd Favorite")          # [Hunt], Spend 2 XP: Buff me
+
+
+def xp_board():
+    s = GameState()
+    s.n_deck[:] = 20
+    s.runes_ready[:, :] = 6
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    return s
+
+
+# [Hunt N] is SYNTHESISED from the keyword, never transcribed: its effect is
+# fixed by the keyword rather than written on the card, so one implementation
+# covers every card carrying it.
+if "Arachnoid Horror" in ABILITIES:
+    die("xp", "[Hunt] must not be transcribed per-card -- it is synthesised")
+abs_ = abilities_for(T, HORROR)
+if {a.trigger for a in abs_} != {TR_CONQUER, TR_HOLD}:
+    die("xp", f"[Hunt] should synthesise a Conquer and a Hold ability: {abs_}")
+ok("[Hunt N] comes off the keyword, on both ways of Scoring (469/470)")
+
+s = xp_board()
+u = s.add_permanent(HORROR, 0, bf_loc(0))
+chain_mod.fire(s, T, CFG_V1, TR_CONQUER, u, bf_loc(0))
+for i in range(int(s.n_chain)):
+    s.chain[i, C_FINAL] = 1
+while s.n_chain:
+    chain_mod.resolve_top(s, T, CFG_V1)
+if int(s.xp[0]) != 2:
+    die("xp", f"[Hunt 2] on a conquer should bank 2 XP, got {int(s.xp[0])}")
+ok("[Hunt 2] banks the keyword's own number, read by keyword_value")
+
+# [Level N] is a threshold, read LIVE -- XP never resets, so unlike [Legion]
+# there is no past moment to snapshot.
+s = xp_board()
+v = s.add_permanent(VIS, 0, base_loc(0))
+printed = int(T.might[VIS])
+for xp, want in ((0, printed), (10, printed), (11, printed + 4),
+                 (99, printed + 4)):
+    s.xp[0] = xp
+    if m(s, v) != want:
+        die("xp", f"[Level 11] at {xp} XP gave {m(s, v)}, wanted {want}")
+ok("[Level 11] switches on at exactly 11 and stays on")
+
+# The gate has to be honoured by the MIGHT path and the COST path alike, or a
+# card is half on. This is the bug the shared `static_applies` exists to stop:
+# the condition was added to Static and only `energy_discounts` consulted it.
+s = xp_board()
+s.xp[0] = 0
+if m(s, s.add_permanent(VIS, 0, base_loc(0))) != printed:
+    die("xp", "an unmet [Level] gate must contribute no Might at all")
+ok("...and an unmet gate contributes nothing, rather than applying anyway")
+
+# "Spend 2 XP:" is a cost (204.1.b), so it gates the ACTIVATION, not the effect.
+s = xp_board()
+f = s.add_permanent(FAV, 0, base_loc(0))
+s.xp[0] = 1
+if A.activatable(s, T, CFG_V1, 0):
+    die("xp", "an unaffordable XP cost must not be offered")
+s.xp[0] = 3
+if f not in A.activatable(s, T, CFG_V1, 0):
+    die("xp", "with 3 XP the ability should be activatable")
+A.apply(s, T, CFG_V1, A.Action(A.A_ACTIVATE, f))
+while s.n_trig:
+    chain_mod.place(s, T, CFG_V1, 0)
+for i in range(int(s.n_chain)):
+    s.chain[i, C_FINAL] = 1
+while s.n_chain:
+    chain_mod.resolve_top(s, T, CFG_V1)
+if int(s.xp[0]) != 1:
+    die("xp", f"the cost should have spent 2 XP, left {int(s.xp[0])}")
+if m(s, f) != int(T.might[FAV]) + 1:
+    die("xp", "the buff should have landed")
+ok("'Spend 2 XP:' gates the activation and is deducted at finalization")
+
 
 print("\n\033[32mall static tests passed\033[0m")

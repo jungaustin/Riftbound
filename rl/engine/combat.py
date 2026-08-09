@@ -47,9 +47,11 @@ import numpy as np
 
 from rl.config import Config
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH, SC_SELF,
-                               ST_MIGHT, TR_ATTACK_OR_DEFEND, TR_DEATH,
-                               TR_MOVE, abilities_for, statics_for)
+from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH,
+                               COND_LEGION, COND_LEVEL, COND_NONE,
+                               SC_SELF, ST_MIGHT, TR_ATTACK_OR_DEFEND,
+                               TR_DEATH, TR_MOVE, abilities_for,
+                               statics_for)
 from rl.engine.state import (P_MIGHT_MOD, F_BUFFED, F_DIED_ALONE,
                              F_NON_UNIT, F_NO_COMBAT_DAMAGE,
                              N_BF, N_SEATS, P_ALIVE,
@@ -103,9 +105,29 @@ def static_might(state: GameState, table: CardTable, perm: int) -> int:
                     continue
                 if not table.is_type(int(row[P_CARD]), "Unit"):
                     continue
+            if not static_applies(state, st, src_seat):
+                continue
             total += st.n * static_count(state, table, st, src_seat,
                                          int(src[P_LOC]), int(src[P_CARD]))
     return total
+
+
+def static_applies(state: GameState, st, src_seat: int) -> bool:
+    """Is this static's gate satisfied for its controller right now?
+
+    Shared by `static_might` and `cost.energy_discounts`, because a gate that
+    only one of them honours is a card that is half on: Master Yi - Unstoppable
+    gates a COST on [Level 3] and Targonian Visionary gates MIGHT on [Level 11],
+    and both must ask the same question. Read live -- XP never resets, so there
+    is no past moment to snapshot the way [Legion] needs.
+    """
+    if st.cond == COND_NONE:
+        return True
+    if st.cond == COND_LEVEL:
+        return int(state.xp[src_seat]) >= st.level
+    if st.cond == COND_LEGION:
+        return bool(state.cards_played[src_seat])
+    return False
 
 
 def static_count(state: GameState, table: CardTable, st, src_seat: int,

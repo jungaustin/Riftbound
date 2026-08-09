@@ -244,6 +244,7 @@ class CardTable:
     shield: np.ndarray        # int16, 0 = no [Shield]
     assault: np.ndarray       # int16, 0 = no [Assault]
     deflect: np.ndarray       # int16, 0 = no [Deflect] (809)
+    hunt: np.ndarray          # int16, 0 = no [Hunt] (823)
     # [Flow] alternate cost (829.1.c): "[Flow] {2 energy}" or
     # "[Flow] {4 energy}{Fury rune}". -1 in `flow_energy` means no Flow.
     flow_energy: np.ndarray   # int16
@@ -356,6 +357,7 @@ def _rows(cards: list[Card]) -> CardTable:
         shield=np.array([keyword_value(c.text, "Shield") for c in cards], np.int16),
         assault=np.array([keyword_value(c.text, "Assault") for c in cards], np.int16),
         deflect=np.array([keyword_value(c.text, "Deflect") for c in cards], np.int16),
+        hunt=np.array([keyword_value(c.text, "Hunt") for c in cards], np.int16),
         flow_energy=np.array([flow_cost(c.text)[0] for c in cards], np.int16),
         flow_power=np.array([flow_cost(c.text)[1] for c in cards], np.int16),
         text_len=np.array([len(body_text(c.text)) for c in cards], np.int16),

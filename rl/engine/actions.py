@@ -133,6 +133,8 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
                 continue
             if ab.cost_exhaust and not row[P_READY]:
                 continue
+            if ab.cost_xp and int(state.xp[seat]) < ab.cost_xp:
+                continue
             if plan_ability_cost(state, table, seat, card,
                                  ab.cost_energy, ab.cost_power) is None:
                 continue
@@ -589,6 +591,9 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
                 src = int(state.chain[item, C_SRC])
                 assert state.perms[src, P_READY], "exhaust cost with no ready source"
                 state.perms[src, P_READY] = 0
+            if spec.cost_xp:
+                assert state.xp[seat] >= spec.cost_xp, "XP cost underflow"
+                state.xp[seat] -= spec.cost_xp
             if spec.cost_kill_self:
                 # 204.1.b -- "Kill this" stands before the ':', so it is a COST
                 # and is paid now, at finalization. The source is therefore
@@ -689,6 +694,9 @@ def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
         if spec.cost_exhaust:
             state.perms[perm, P_READY] = 0
         ctx_loc = int(state.perms[perm, P_LOC])
+        if spec.cost_xp:
+            assert state.xp[seat] >= spec.cost_xp, "XP cost underflow"
+            state.xp[seat] -= spec.cost_xp
         if spec.cost_kill_self:
             combat.destroy(state, table, perm)
         log = rsv.resolve(state, table, cfg, spec, seat, [], -1, False,
