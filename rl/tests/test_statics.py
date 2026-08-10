@@ -373,4 +373,55 @@ if m(s, f) != int(T.might[FAV]) + 1:
 ok("'Spend 2 XP:' gates the activation and is deducted at finalization")
 
 
+# ---------------------------------------------------------------------------
+print("\n[8] statics that grant a KEYWORD")
+
+MOSS = T.id_of("Mosstomper")
+FARRON = T.id_of("Captain Farron")
+VANILLA = [c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c)
+           and not T.residual_text(c) and not list(T.unread_keywords(c))][0]
+
+# One sentence, two statics: "+1 Might AND [Deflect]" is a Might static beside
+# a keyword static, and both are gated on the same level.
+s = GameState()
+s.n_deck[:] = 20
+moss = s.add_permanent(MOSS, 0, bf_loc(0))
+for xp, want_kw in ((0, 0), (2, 0), (3, 1)):
+    s.xp[0] = xp
+    got = combat.perm_kw(s, T, moss, "Deflect")
+    if got != want_kw:
+        die("kwstatic", f"[Level 3] [Deflect] at {xp} XP gave {got}")
+    if m(s, moss) != int(T.might[MOSS]) + (1 if xp >= 3 else 0):
+        die("kwstatic", f"the Might half disagreed with the keyword half at {xp}")
+ok("a level-gated static grants a keyword and Might together, at the threshold")
+
+# "OTHER friendly units HERE" is both narrowings at once. Without them this is
+# a much better card: it would pump Farron himself and reach the whole board.
+s = GameState()
+s.n_deck[:] = 20
+farron = s.add_permanent(FARRON, 0, bf_loc(0))
+here = s.add_permanent(VANILLA, 0, bf_loc(0))
+away = s.add_permanent(VANILLA, 0, bf_loc(1))
+foe = s.add_permanent(VANILLA, 1, bf_loc(0))
+cases = ((farron, 0, "itself -- 'other'"), (here, 1, "a friendly unit here"),
+         (away, 0, "a friendly unit elsewhere"), (foe, 0, "an enemy unit here"))
+for row, want, label in cases:
+    got = combat.perm_kw(s, T, row, "Assault")
+    if got != want:
+        die("kwstatic", f"{label} got Assault {got}, wanted {want}")
+ok("scope_not_self and scope_same_loc narrow it to exactly 'other ... here'")
+
+# It is CONTINUOUS: the grant follows the unit, and dies with its source.
+s.perms[here, P_LOC] = bf_loc(1)
+if combat.perm_kw(s, T, here, "Assault"):
+    die("kwstatic", "walking away from Farron must drop the grant")
+s.perms[here, P_LOC] = bf_loc(0)
+if not combat.perm_kw(s, T, here, "Assault"):
+    die("kwstatic", "walking back must restore it")
+s.perms[farron, P_ALIVE] = 0
+if combat.perm_kw(s, T, here, "Assault"):
+    die("kwstatic", "killing the source must remove the grant instantly")
+ok("...and it is continuous: moving or killing the source changes it at once")
+
+
 print("\n\033[32mall static tests passed\033[0m")

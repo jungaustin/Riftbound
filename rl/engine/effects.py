@@ -937,8 +937,8 @@ SPECS: dict[str, CardSpec] = {
 # check ("if a Unit EVER has damage equalling or exceeding its Might"), a static
 # going away can kill. Killing Soul Shepherd shrinks every token she was pumping
 # and any of them already carrying damage dies with her.
-ST_MIGHT, ST_COST_ENERGY = range(2)
-ST_NAMES = ("might", "cost_energy")
+ST_MIGHT, ST_COST_ENERGY, ST_KEYWORD = range(3)
+ST_NAMES = ("might", "cost_energy", "keyword")
 
 # Who a static applies to.
 SC_SELF, SC_FRIENDLY_UNITS = range(2)
@@ -961,6 +961,14 @@ class Static(NamedTuple):
     n: int = 0
     scope: int = SC_SELF
     scope_token: bool = False        # ...and only token units
+    # Narrowing for SC_FRIENDLY_UNITS. "OTHER friendly units HERE have
+    # [Assault]" (Captain Farron) is both of these; "your token units have
+    # [Tank]" (Lillia) is neither, and reaches the whole board.
+    scope_not_self: bool = False
+    scope_same_loc: bool = False
+    # For ST_KEYWORD: which keyword this grants, and its value. `n` carries the
+    # value the same way it carries a Might amount, so a bare keyword is n=1.
+    keyword: str | None = None
     # Counting clause. `per_same_loc` is "at my battlefield"; `per_friendly`
     # is the "of your units" in the same sentence.
     per_keyword: str | None = None
@@ -1053,6 +1061,44 @@ STATICS: dict[str, tuple[Static, ...]] = {
     # one. Eleven XP is most of a game away, which is the card.
     "Targonian Visionary": (
         Static(ST_MIGHT, n=4, scope=SC_SELF, cond=COND_LEVEL, level=11),
+    ),
+
+    # --- statics that grant a KEYWORD ---------------------------------------
+    # [Hunt 2] [Level 3][>] I have +1 Might and [Deflect].
+    #
+    # Two statics from one sentence, both gated on the same level -- "+1 Might
+    # AND [Deflect]" is a Might static beside a keyword static, not one thing.
+    # [Hunt 2] is absent because `abilities_for` synthesises it.
+    "Mosstomper": (
+        Static(ST_MIGHT, n=1, scope=SC_SELF, cond=COND_LEVEL, level=3),
+        Static(ST_KEYWORD, keyword="Deflect", n=1, scope=SC_SELF,
+               cond=COND_LEVEL, level=3),
+    ),
+
+    # [Hunt 2] [Level 3][>] I have +1 Might and [Ganking].
+    "Gustwalker": (
+        Static(ST_MIGHT, n=1, scope=SC_SELF, cond=COND_LEVEL, level=3),
+        Static(ST_KEYWORD, keyword="Ganking", n=1, scope=SC_SELF,
+               cond=COND_LEVEL, level=3),
+    ),
+
+    # [Hunt 2] [Level 6][>] I have [Deflect] and [Ganking].
+    "Master Yi - Tempered": (
+        Static(ST_KEYWORD, keyword="Deflect", n=1, scope=SC_SELF,
+               cond=COND_LEVEL, level=6),
+        Static(ST_KEYWORD, keyword="Ganking", n=1, scope=SC_SELF,
+               cond=COND_LEVEL, level=6),
+    ),
+
+    # Other friendly units here have [Assault]. (+1 Might while attacking.)
+    #
+    # "OTHER ... HERE" is both narrowings at once: it never pumps Farron
+    # himself, and it reaches only the battlefield he is standing on. Without
+    # `scope_same_loc` this would buff units at the other battlefield and at
+    # base, which is a different and much better card.
+    "Captain Farron": (
+        Static(ST_KEYWORD, keyword="Assault", n=1, scope=SC_FRIENDLY_UNITS,
+               scope_not_self=True, scope_same_loc=True),
     ),
 
     # Dr. Mundo - Expert wants exactly this shape on the Might side -- "My

@@ -49,7 +49,8 @@ from rl.config import Config
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH,
                                COND_LEGION, COND_LEVEL, COND_NONE,
-                               SC_SELF, ST_MIGHT, TR_ATTACK_OR_DEFEND,
+                               SC_SELF, ST_KEYWORD, ST_MIGHT,
+                               TR_ATTACK_OR_DEFEND,
                                TR_DEATH, TR_MOVE, abilities_for,
                                statics_for)
 from rl.engine.state import (GRANT_IDX, P_MIGHT_MOD, F_BUFFED,
@@ -186,11 +187,56 @@ def perm_kw(state: GameState, table: CardTable, perm: int, keyword: str) -> int:
     is 1, so any nonzero result means "has it".
     """
     printed = _printed_kw(table, int(state.perms[perm, P_CARD]), keyword)
+    granted = static_keyword(state, table, perm, keyword)
     idx = GRANT_IDX.get(keyword)
     if idx is None:
-        return printed          # not a keyword anything can grant
-    return (printed + int(state.kw_grant[perm, idx])
+        return printed + granted    # nothing can grant it with an EFFECT
+    return (printed + granted + int(state.kw_grant[perm, idx])
             + int(state.kw_grant_turn[perm, idx]))
+
+
+def static_keyword(state: GameState, table: CardTable, perm: int,
+                   keyword: str) -> int:
+    """Value of `keyword` granted to `perm` by statics on the board right now.
+
+    Derived on every read, exactly like `static_might` and for the same reason:
+    a static is continuous, so "your token units have [Tank]" starts applying
+    the instant Lillia arrives and stops the instant she dies, with nothing on
+    the Chain and no moment at which a cache could be refreshed.
+    """
+    row = state.perms[perm]
+    if row[P_ALIVE] != 1:
+        return 0
+    seat, loc = int(row[P_CTRL]), int(row[P_LOC])
+    card = int(row[P_CARD])
+    is_token = table.is_token(card)
+    total = 0
+    for i in range(state.n_perms):
+        src = state.perms[i]
+        if src[P_ALIVE] != 1:
+            continue
+        for st in statics_for(table, int(src[P_CARD])):
+            if st.kind != ST_KEYWORD or st.keyword != keyword:
+                continue
+            src_seat = int(src[P_CTRL])
+            if not static_applies(state, st, src_seat):
+                continue
+            if st.scope == SC_SELF:
+                if i != perm:
+                    continue
+            else:
+                if src_seat != seat:
+                    continue
+                if st.scope_token and not is_token:
+                    continue
+                if st.scope_not_self and i == perm:
+                    continue
+                if st.scope_same_loc and int(src[P_LOC]) != loc:
+                    continue
+                if not table.is_type(card, "Unit"):
+                    continue
+            total += max(1, st.n)
+    return total
 
 
 def _printed_kw(table: CardTable, card: int, keyword: str) -> int:
