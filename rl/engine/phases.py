@@ -80,7 +80,9 @@ def expire_temporary(state: GameState, table: CardTable) -> list[int]:
         row = state.perms[i]
         if row[P_ALIVE] != 1 or row[P_CTRL] != seat:
             continue
-        if table.has(int(row[P_CARD]), "Temporary"):
+        # Through `perm_kw`, so a unit GIVEN [Temporary] (Shadow's Call,
+        # Fading Memories) expires exactly like one printed with it.
+        if combat.perm_kw(state, table, i, "Temporary"):
             combat._destroy(state, table, i)
             killed.append(i)
     return killed
@@ -267,6 +269,8 @@ def ending(state: GameState) -> None:
         state.perms[:state.n_perms, P_MIGHT_MOD] = 0   # 'this turn' buffs
     state.no_spells[:] = 0          # 'this turn' play restrictions
     state.cards_played[:] = 0       # [Legion] counts within one turn
+    if state.n_perms:
+        state.kw_grant_turn[:state.n_perms] = 0   # "[Assault 3] this turn"
     state.clear_pools()
     state.phase = ENDING
     state.priority = -1

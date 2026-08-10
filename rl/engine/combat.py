@@ -52,7 +52,8 @@ from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH,
                                SC_SELF, ST_MIGHT, TR_ATTACK_OR_DEFEND,
                                TR_DEATH, TR_MOVE, abilities_for,
                                statics_for)
-from rl.engine.state import (P_MIGHT_MOD, F_BUFFED, F_DIED_ALONE,
+from rl.engine.state import (GRANT_IDX, P_MIGHT_MOD, F_BUFFED,
+                             F_DIED_ALONE,
                              F_NON_UNIT, F_NO_COMBAT_DAMAGE,
                              N_BF, N_SEATS, P_ALIVE,
                              P_ARRIVED, P_CARD, P_CTRL, P_DMG, P_FLAGS, P_LOC,
@@ -171,6 +172,38 @@ def static_count(state: GameState, table: CardTable, st, src_seat: int,
     return n
 
 
+def perm_kw(state: GameState, table: CardTable, perm: int, keyword: str) -> int:
+    """A permanent's effective value for `keyword`: printed plus anything
+    granted to it. 0 means it does not have the keyword at all.
+
+    **Never read `table.has` or `table.assault` off a permanent directly** --
+    the same rule `combat.might` states for Might, and for the same reason. A
+    site that reads the printed value ignores every grant, and the failure is
+    silent: the unit simply does not get the [Ganking] it was given.
+
+    Grants ADD to the printed value (807.1.c makes [Assault X] short for an
+    ability, and two abilities both apply). For a valueless keyword the value
+    is 1, so any nonzero result means "has it".
+    """
+    printed = _printed_kw(table, int(state.perms[perm, P_CARD]), keyword)
+    idx = GRANT_IDX.get(keyword)
+    if idx is None:
+        return printed          # not a keyword anything can grant
+    return (printed + int(state.kw_grant[perm, idx])
+            + int(state.kw_grant_turn[perm, idx]))
+
+
+def _printed_kw(table: CardTable, card: int, keyword: str) -> int:
+    """The printed value of a keyword on a card: its number, or 1 if bare."""
+    if keyword == "Assault":
+        return int(table.assault[card])
+    if keyword == "Shield":
+        return int(table.shield[card])
+    if keyword == "Deflect":
+        return int(table.deflect[card])
+    return 1 if table.has(card, keyword) else 0
+
+
 def combat_role_bonus(state: GameState, table: CardTable, perm: int) -> int:
     """[Shield] and [Assault] -- Might that exists only during a Combat.
 
@@ -190,8 +223,8 @@ def combat_role_bonus(state: GameState, table: CardTable, perm: int) -> int:
         return 0
     card = int(row[P_CARD])
     if int(row[P_CTRL]) == int(state.attacker):
-        return int(table.assault[card])
-    return int(table.shield[card])
+        return perm_kw(state, table, perm, "Assault")
+    return perm_kw(state, table, perm, "Shield")
 
 
 def might(state: GameState, table: CardTable, perm: int) -> int:
@@ -405,7 +438,7 @@ def can_move(state: GameState, table: CardTable, cfg: Config,
         return False
     if is_battlefield(src) and is_battlefield(dst_loc):
         return (not cfg.lateral_movement_needs_ganking
-                or table.has(int(row[P_CARD]), "Ganking"))
+                or perm_kw(state, table, perm, "Ganking"))
     return True
 
 
@@ -794,9 +827,9 @@ def _tiers(state: GameState, table: CardTable, idxs) -> list[list[int]]:
     tank, plain, back = [], [], []
     for i in idxs:
         card = int(state.perms[i, P_CARD])
-        if table.has(card, "Tank"):
+        if perm_kw(state, table, i, "Tank"):
             tank.append(i)
-        elif table.has(card, "Backline"):
+        elif perm_kw(state, table, i, "Backline"):
             back.append(i)
         else:
             plain.append(i)

@@ -1772,4 +1772,100 @@ if chain.fire(s, T, V1, TR_PLAY_ME, lonely) or s.n_chain:
 ok("...and with nobody to swap with, it never triggers at all (355.8)")
 
 
+# ---------------------------------------------------------------------------
+print("\n[21] granting a keyword")
+
+VANILLA = [c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c)
+           and not T.residual_text(c) and not list(T.unread_keywords(c))][0]
+
+
+def grant_board():
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = VANILLA
+    s.runes_ready[:, :] = 6
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    return s
+
+
+# [Assault 3] is CONDITIONAL Might (807.1.c), not a +3 modifier: it exists only
+# while the unit is an attacker, so a granted Assault does nothing out of
+# combat and nothing on defence.
+s = grant_board()
+atk = s.add_permanent(VANILLA, 0, bf_loc(0))
+dfn = s.add_permanent(VANILLA, 1, bf_loc(0))
+base = combat.might(s, T, atk)
+resolve.resolve(s, T, V1, SPECS["Cleave"], 0, [atk], -1, True)
+if combat.might(s, T, atk) != base:
+    die("grant", "[Assault] must not raise Might outside a Combat")
+combat.open_showdown(s, T, 0, attacker=0)
+if combat.might(s, T, atk) != base + 3:
+    die("grant", f"a granted [Assault 3] should apply while attacking, "
+                 f"got {combat.might(s, T, atk)}")
+if combat.might(s, T, dfn) != base:
+    die("grant", "the defender must be untouched")
+ok("a granted [Assault 3] is conditional Might, live only while attacking")
+
+# Two grants from one card, and [Tank] changes damage ORDER rather than Might.
+s = grant_board()
+atk = s.add_permanent(VANILLA, 0, bf_loc(0))
+dfn = s.add_permanent(VANILLA, 1, bf_loc(0))
+other = s.add_permanent(VANILLA, 1, bf_loc(0))
+resolve.resolve(s, T, V1, SPECS["Block"], 1, [dfn], -1, True)
+combat.open_showdown(s, T, 0, attacker=0)
+if combat.might(s, T, dfn) != base + 3:
+    die("grant", "[Shield 3] should apply while defending")
+tiers = combat._tiers(s, T, [other, dfn])
+if tiers[0] != [dfn]:
+    die("grant", f"a granted [Tank] must be assigned damage first: {tiers}")
+ok("one card grants two keywords, and [Tank] reorders damage assignment")
+
+# **The grant is not always 'this turn'.** [Temporary] kills at the start of
+# its controller's next Beginning Phase, so a turn-scoped grant would expire
+# before it ever fired and the card would have no drawback at all.
+s = grant_board()
+u = s.add_permanent(VANILLA, 0, bf_loc(0))
+if resolve.legal_targets(s, T, SPECS["Shadow's Call"], 0, 0, [], -1) != [u]:
+    die("grant", "a unit without [Temporary] should be a legal choice")
+resolve.resolve(s, T, V1, SPECS["Shadow's Call"], 0, [u], -1, True)
+if resolve.legal_targets(s, T, SPECS["Shadow's Call"], 0, 0, [], -1):
+    die("grant", "'without [Temporary]' must exclude a unit already given it")
+ok("lacks_keyword reads the GRANTED value, not just the printed one")
+
+phases.end_turn(s, V1)
+phases.start_turn(s, T, V1)
+if s.perms[u, P_ALIVE] != 1:
+    die("grant", "[Temporary] kills on its CONTROLLER's Beginning Phase, and "
+                 "this was the opponent's")
+phases.end_turn(s, V1)
+phases.start_turn(s, T, V1)
+if s.perms[u, P_ALIVE] == 1:
+    die("grant", "...but it must die at the start of its own controller's turn")
+ok("a granted [Temporary] survives the opponent's turn and dies on its own")
+
+# A turn-scoped grant really does expire.
+s = grant_board()
+u = s.add_permanent(VANILLA, 0, bf_loc(0))
+resolve.resolve(s, T, V1, SPECS["Cleave"], 0, [u], -1, True)
+phases.end_turn(s, V1)
+if combat.perm_kw(s, T, u, "Assault"):
+    die("grant", "'this turn' grants must clear in the end-of-turn cleanup")
+ok("...while a 'this turn' grant clears with the turn")
+
+# Grants are stored PARALLEL to `perms`, and compaction renumbers rows. A grant
+# left behind would silently transfer to whatever unit landed on that index.
+s = grant_board()
+dead = s.add_permanent(VANILLA, 0, bf_loc(0))
+keep = s.add_permanent(VANILLA, 0, bf_loc(0))
+resolve.resolve(s, T, V1, SPECS["Shadow's Call"], 0, [keep], -1, True)
+s.perms[dead, P_ALIVE] = 0
+s.compact_permanents()
+moved = next(i for i in range(s.n_perms) if s.perms[i, P_ALIVE] == 1)
+if not combat.perm_kw(s, T, moved, "Temporary"):
+    die("grant", "compaction dropped the grant from the row it moved")
+if s.n_perms > 1 and combat.perm_kw(s, T, 1, "Temporary"):
+    die("grant", "compaction left a stale grant behind")
+ok("compaction moves grants with their rows instead of stranding them")
+
+
 print("\n\033[32mall effect tests passed\033[0m")

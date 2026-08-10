@@ -107,14 +107,15 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_ADD_ENERGY, OP_ADD_POWER, OP_BUFF, OP_BUFF_ALL_AT,
  OP_BLINK, OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
  OP_PLAY_UNIT_FROM_TRASH, OP_RECYCLE_FROM_TRASH,
- OP_GAIN_XP) = range(29)
+ OP_GAIN_XP, OP_GRANT_KEYWORD) = range(30)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
             "damage_all", "discard", "kill_all", "exhaust_all", "heal_at",
             "add_energy", "add_power", "buff", "buff_all_at", "blink",
             "trash_to_hand", "play_from_trash",
-            "play_unit_from_trash", "recycle_from_trash", "gain_xp")
+            "play_unit_from_trash", "recycle_from_trash", "gain_xp",
+            "grant_keyword")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -206,6 +207,10 @@ class TargetSpec(NamedTuple):
     card_type: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     has_keyword: str | None = None
+    # "a friendly unit WITHOUT [Temporary]" (Shadow's Call). Read through
+    # `combat.perm_kw`, so a unit that was GIVEN the keyword is excluded too --
+    # otherwise the card would happily double up on a unit already dying.
+    lacks_keyword: str | None = None
     # The slot names a card that will be PLAYED, not merely moved, so it must
     # be a card the engine can actually play: it needs a DSL spec, and its
     # controller must be able to pay whatever this play still costs. Same
@@ -241,6 +246,12 @@ class Op(NamedTuple):
     # -- so the number is whatever that unit is worth at resolution, statics
     # and buffs included, which is why it cannot be baked into `n`.
     n_from_might: int = -1
+    # For OP_GRANT_KEYWORD: which keyword, and whether the grant expires. The
+    # pool grants both ways -- Cleave's "[Assault 3] this turn" against Shadow's
+    # Call's [Temporary], which lasts until the unit leaves. `n` carries the
+    # value, so a bare keyword is n=1.
+    keyword: str | None = None
+    grant_this_turn: bool = True
     # For OP_CREATE_TOKEN: the token card's name, and whether the created
     # units enter ready. Units normally enter exhausted; "Play a READY
     # 3 Might Sprite" overrides that, which is most of the card's value.
@@ -498,6 +509,49 @@ SPECS: dict[str, CardSpec] = {
                  TargetSpec(who=W_ENEMY, optional=True)),
         ops=(Op(OP_MOVE_TO, target=1, target_b=0),
              Op(OP_MODIFY_MIGHT_ALL, n=-2, at=0, who=W_ENEMY)),
+    ),
+
+    # --- granting a keyword ------------------------------------------------
+    # [Action] Give a unit [Assault 3] this turn. (+3 Might while attacking.)
+    #
+    # The value is the keyword's, not a Might modifier: [Assault 3] is
+    # conditional Might that exists only while the unit is an attacker
+    # (807.1.c), so granting it is not the same as +3 Might and a unit that
+    # never attacks gets nothing.
+    "Cleave": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_GRANT_KEYWORD, target=0, keyword="Assault", n=3),),
+    ),
+
+    # [Hidden] [Action] Give a unit [Shield 3] and [Tank] this turn.
+    #
+    # Two grants, one card -- and the pairing is the point: [Shield 3] makes it
+    # survive and [Tank] makes it the one that has to be dealt with, so the
+    # damage lands where the Shield is.
+    "Block": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_GRANT_KEYWORD, target=0, keyword="Shield", n=3),
+             Op(OP_GRANT_KEYWORD, target=0, keyword="Tank", n=1)),
+    ),
+
+    # Choose a friendly unit without [Temporary]. Give it [Temporary]. Draw 2.
+    #
+    # **The grant is NOT "this turn".** [Temporary] kills the unit at the start
+    # of its controller's next Beginning Phase, so a grant that expired with
+    # the turn would never fire at all -- the card would be a two-card draw
+    # with no cost. `grant_this_turn=False` is what makes the drawback real.
+    #
+    # "Without [Temporary]" is a restriction rather than a condition, and it
+    # reads the granted value too: a unit already given [Temporary] by another
+    # copy is not a legal choice.
+    "Shadow's Call": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(who=W_FRIENDLY, lacks_keyword="Temporary"),),
+        ops=(Op(OP_GRANT_KEYWORD, target=0, keyword="Temporary", n=1,
+                grant_this_turn=False),
+             Op(OP_DRAW, n=2)),
     ),
 
     # [Reaction] Kill a friendly unit to give +Might equal to its Might to
@@ -1417,6 +1471,13 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
                 targets=(TargetSpec(who=W_FRIENDLY, not_self=True,
                                     locality=LOC_FREE),),
                 ops=(Op(OP_SWAP_LOC, target=T_SELF, target_b=0),)),
+    ),
+
+    # When you play me, give a unit [Ganking] this turn.
+    "Gem Jammer": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY),),
+                ops=(Op(OP_GRANT_KEYWORD, target=0, keyword="Ganking", n=1),)),
     ),
 
     # [Deathknell] - Draw 1.

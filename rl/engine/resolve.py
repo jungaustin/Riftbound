@@ -56,6 +56,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
                                OP_PLAY_UNIT_FROM_TRASH, W_FRIENDLY,
                                OP_RECYCLE_FROM_TRASH, OP_GAIN_XP,
+                               OP_GRANT_KEYWORD,
                                TR_PLAY_ME, T_CTX, T_HERE, T_MY_BASE,
                                T_OWNER_BASE, T_SELF, T_SUBJECT,
                                CardSpec, Op, pack_trash, unpack_trash,
@@ -65,7 +66,8 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
                              COST_NO_ENERGY, COST_PRINTED,
                              F_BUFFED,
                              F_DIED_ALONE, F_LEGION,
-                             N_BF, N_SEATS, P_ALIVE, P_FLAGS,
+                             GRANT_IDX, N_BF, N_SEATS, P_ALIVE,
+                             P_FLAGS,
                              P_CARD, P_CTRL, P_DMG, P_LOC, P_READY, GameState,
                              base_loc, bf_index, bf_loc,
                              is_battlefield)
@@ -99,7 +101,7 @@ def deflect_cost(state: GameState, table: CardTable, seat: int,
             continue
         if state.perms[p, P_ALIVE] != 1 or int(state.perms[p, P_CTRL]) == seat:
             continue
-        total += int(table.deflect[int(state.perms[p, P_CARD])])
+        total += combat.perm_kw(state, table, p, "Deflect")
     return total
 
 
@@ -152,6 +154,9 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
     if spec.who == W_ENEMY and ctrl == seat:
         return False
 
+    if spec.lacks_keyword and combat.perm_kw(state, table, perm,
+                                            spec.lacks_keyword):
+        return False
     if spec.at_battlefield and not is_battlefield(loc):
         return False
     # "a unit at a base" -- unqualified, so EITHER base. `who` narrows it to
@@ -497,7 +502,7 @@ def legal_targets(state: GameState, table: CardTable, spec: CardSpec, slot: int,
                          parent=spec)
             # 809 -- an unaffordable Deflect surcharge makes it not a choice.
             and _affordable_with(state, table, card, seat, chosen,
-                                 int(table.deflect[int(state.perms[i, P_CARD])])
+                                 combat.perm_kw(state, table, i, "Deflect")
                                  if int(state.perms[i, P_CTRL]) != seat else 0,
                                  spec)]
 
@@ -606,7 +611,7 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
                 and table.is_type(int(state.perms[i, P_CARD]), "Gear"))
         return n >= int(op.floor or 0)
     if op.cond == COND_ANY_TARGET_TEMPORARY:
-        return any(table.has(int(state.perms[t, P_CARD]), "Temporary")
+        return any(combat.perm_kw(state, table, t, "Temporary")
                    for t in targets if t >= 0)
     raise ValueError(f"unknown condition {op.cond}")
 
@@ -919,6 +924,18 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             if chain.has_trigger(table, card, TR_PLAY_ME):
                 chain.queue(state, TR_PLAY_ME, src2, dst)
             log.setdefault("played_from_trash", []).append(table.names[card])
+        elif op.op == OP_GRANT_KEYWORD:
+            # 143.2.a again: granting [Shield 3] can only ever help, but
+            # granting [Temporary] schedules a death and granting nothing at
+            # all is still a legal resolution. The Might-relevant keywords go
+            # through `combat.might` on the next read, so no re-check is owed
+            # here -- Assault and Shield only apply during a Combat, and
+            # `combat_role_bonus` is derived rather than stored.
+            idx = GRANT_IDX.get(op.keyword)
+            assert idx is not None, f"{op.keyword!r} is not grantable"
+            arr = state.kw_grant_turn if op.grant_this_turn else state.kw_grant
+            arr[a, idx] += max(1, amount)
+            log.setdefault("granted", []).append((a, op.keyword))
         elif op.op == OP_GAIN_XP:
             # A player resource, not a permanent's. It has no cap and does not
             # reset, which is what makes [Level 11] reachable.

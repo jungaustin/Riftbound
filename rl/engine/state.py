@@ -103,6 +103,19 @@ F_DIED_ALONE = 1 << 4
 # invites, since by then the permanent has itself been counted.
 F_LEGION = 1 << 5
 
+# Keywords an effect can GRANT to a permanent. Values, not bits: [Assault 3]
+# and [Assault 2] are different grants, and 807.1.b.2 calls the number the
+# Assault Value. A valueless keyword grants 1.
+#
+# 807.1.c makes [Assault X] "functionally short for 'while I am an attacker, I
+# have +X Might'", so a granted instance is an additional ability rather than a
+# replacement and the values ADD. Nothing in the pool currently stacks one onto
+# a printed instance, so this is a reading rather than an observed rule.
+GRANTABLE = ("Assault", "Shield", "Deflect", "Ganking", "Tank", "Backline",
+             "Temporary")
+GRANT_IDX = {k: i for i, k in enumerate(GRANTABLE)}
+N_GRANTABLE = len(GRANTABLE)
+
 # Statuses that expire during the end-of-turn cleanup (423.1.a.2, 317.2).
 # F_LEGION is deliberately NOT here: it records what was true when the
 # permanent was played and stays true for as long as it is on the board.
@@ -223,6 +236,7 @@ class GameState:
         "chain", "n_chain", "chain_targets", "pend_slot", "chain_uid",
         "pend_may", "trig", "n_trig", "pend_order",
         "points", "burned_out", "no_spells", "cards_played", "xp",
+        "kw_grant", "kw_grant_turn",
         "legend", "champion",
         "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "attacker", "passes",
@@ -316,6 +330,16 @@ class GameState:
         # spent by "Spend N XP" costs. **Not turn-scoped** -- it accumulates
         # across the game, which is what makes [Level 11] reachable at all.
         self.xp = np.zeros(N_SEATS, np.int16)
+        # Keywords granted to a permanent, indexed by GRANT_IDX. Two arrays
+        # because the pool grants both ways: Shadow's Call's [Temporary] lasts
+        # until the unit leaves, while Cleave's [Assault 3] is "this turn".
+        #
+        # **Parallel to `perms`, so anything that moves a row must move these
+        # too.** `compact_permanents` renumbers rows at end of turn, and a
+        # grant array left behind would hand one unit's [Assault 3] to whatever
+        # unit landed on its index -- silently, and only on long turns.
+        self.kw_grant = np.zeros((MAX_PERMS, N_GRANTABLE), np.int16)
+        self.kw_grant_turn = np.zeros((MAX_PERMS, N_GRANTABLE), np.int16)
         self.legend = np.full(N_SEATS, -1, np.int16)
         self.champion = np.full(N_SEATS, -1, np.int16)
 
@@ -473,8 +497,15 @@ class GameState:
             if self.perms[i, P_ALIVE] == 1:
                 if k != i:
                     self.perms[k] = self.perms[i]
+                    # Moved with the row, not left behind. See the note on
+                    # `kw_grant`: these are parallel arrays and a row index is
+                    # the only thing tying them together.
+                    self.kw_grant[k] = self.kw_grant[i]
+                    self.kw_grant_turn[k] = self.kw_grant_turn[i]
                 k += 1
         self.perms[k:self.n_perms] = 0
+        self.kw_grant[k:self.n_perms] = 0
+        self.kw_grant_turn[k:self.n_perms] = 0
         self.n_perms = k
 
     def add_permanent(self, card: int, ctrl: int, loc: int,
@@ -494,6 +525,9 @@ class GameState:
         row[P_ARRIVED] = self.turn
         row[P_FLAGS] = 0 if is_unit else F_NON_UNIT
         row[P_MIGHT_MOD] = 0
+        # A reused row must not inherit the last occupant's grants.
+        self.kw_grant[i] = 0
+        self.kw_grant_turn[i] = 0
         self.n_perms = i + 1
         return i
 

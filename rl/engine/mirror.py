@@ -48,6 +48,9 @@ UNCHANGED = (
     # order (it rewrites P_CTRL in place rather than reordering), so the
     # indices stay valid. `pend_slot` is a slot number on a card, not a seat.
     "chain_targets", "pend_slot",
+    # Parallel to `perms` by ROW, and mirroring rewrites P_CTRL in place
+    # rather than reordering rows, so the indices stay valid untouched.
+    "kw_grant", "kw_grant_turn",
     # `fd_ply` and `ply` are turn counters, and `pend_hide` is a hand index
     # in the acting seat's own hand -- none of them names a seat.
     "fd_ply", "ply", "pend_hide", "chain_uid",
