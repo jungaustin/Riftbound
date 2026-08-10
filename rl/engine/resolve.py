@@ -790,6 +790,12 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                                         is_unit=bool(table.is_type(card, "Unit")))
                     for _ in range(op.n)]
             log["tokens"] = made
+            # 187 -- a token is PLAYED, so "when you play a token unit" sees it.
+            # Missing this would have made Lillia blind to the token deck she
+            # exists to reward.
+            if table.is_type(card, "Unit"):
+                for _ in made:
+                    chain.fire_play_unit(state, table, seat, card)
             # No cleanup here: 321 forbids one while Chain Items are resolving.
             # Arriving units stage a Combat by presence (461); it is initiated
             # by the cleanup the action layer runs once the Chain empties.

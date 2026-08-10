@@ -938,6 +938,10 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
                               is_unit=is_unit)
     if legion:
         state.perms[src, P_FLAGS] |= F_LEGION
+    # "When you play a unit" watchers -- Lillia. Queued after the permanent is
+    # on the board, so a watcher that is itself the unit being played sees a
+    # consistent board.
+    chain.fire_play_unit(state, table, seat, card)
 
     # 359.2.b -- rules text executes as the permanent enters, so "When you play
     # me" triggers here, after it is on the board. 337.2 already resolved the

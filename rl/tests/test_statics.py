@@ -26,6 +26,8 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2]
 from rl.config import Config
 from rl.engine import actions as A
 from rl.engine import combat
+from rl.engine import resolve
+from rl.engine.effects import SPECS
 from rl.engine.cardtable import full_table
 from rl.engine.cost import card_domains, plan_payment
 from rl.engine.state import (P_ALIVE, P_DMG, P_LOC, GameState, base_loc,
@@ -425,3 +427,66 @@ ok("...and it is continuous: moving or killing the source changes it at once")
 
 
 print("\n\033[32mall static tests passed\033[0m")
+
+# ---------------------------------------------------------------------------
+print("\n[9] Lillia - Protector of Dreams: a watcher AND a static")
+
+LIL = T.id_of("Lillia - Protector of Dreams")
+SPRITE_TOK = T.id_of("Sprite (274) // Buff")
+REAL = [c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c)
+        and not T.residual_text(c) and not list(T.unread_keywords(c))][0]
+
+
+def lil_board():
+    s = GameState()
+    s.n_deck[:] = 20
+    s.runes_ready[:, :] = 8
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    return s, s.add_permanent(LIL, 0, bf_loc(0))
+
+
+def lil_drain(s):
+    while s.n_trig:
+        chain_mod.place(s, T, CFG_V1, 0)
+    for i in range(int(s.n_chain)):
+        s.chain[i, C_FINAL] = 1
+    while s.n_chain:
+        chain_mod.resolve_top(s, T, CFG_V1)
+
+
+# `scope_token` is the whole restriction: without it she hands [Tank] to every
+# unit you control, which is a different card.
+s, lil = lil_board()
+tok = s.add_permanent(SPRITE_TOK, 0, bf_loc(0))
+real = s.add_permanent(REAL, 0, bf_loc(0))
+foe = s.add_permanent(SPRITE_TOK, 1, bf_loc(0))
+if not combat.perm_kw(s, T, tok, "Tank"):
+    die("lillia", "your token units should have [Tank]")
+if combat.perm_kw(s, T, real, "Tank") or combat.perm_kw(s, T, foe, "Tank"):
+    die("lillia", "'your TOKEN units' excludes real units and the opponent's")
+ok("the static reaches your token units only")
+
+# The trigger is a WATCHER on another permanent being played, not an ETB.
+s, lil = lil_board()
+_base = m(s, lil)
+chain_mod.fire_play_unit(s, T, 0, SPRITE_TOK)
+lil_drain(s)
+if m(s, lil) != _base + 1:
+    die("lillia", f"playing a token should give +1, got {m(s, lil)}")
+chain_mod.fire_play_unit(s, T, 0, REAL)
+lil_drain(s)
+if m(s, lil) != _base + 1:
+    die("lillia", "a NON-token unit must not trigger it")
+ok("the watcher fires on token units and ignores real ones")
+
+# **187 -- a token is PLAYED.** A watcher wired only to hand plays would be
+# blind to the token deck it exists to reward, so the effect path fires it too.
+s, lil = lil_board()
+_base = m(s, lil)
+resolve.resolve(s, T, CFG_V1, SPECS["Sprite Burst"], 0, [bf_loc(0)], -1, True)
+lil_drain(s)
+if m(s, lil) != _base + 2:
+    die("lillia", f"two tokens from one spell should trigger twice, "
+                  f"got {m(s, lil) - _base}")
+ok("tokens made by an EFFECT count as played, and each one triggers")
+

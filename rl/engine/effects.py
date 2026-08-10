@@ -304,9 +304,10 @@ class CardSpec(NamedTuple):
 # -- Lillia's "play a Sprite unit token THERE" means where she came from, and
 # 359.3.f.3 fixes that at trigger time, not at resolution.
 (TR_PLAY_ME, TR_DEATH, TR_MOVE, TR_HOLD, TR_CONQUER,
- TR_PLAY_SPELL, TR_ACTIVATED, TR_ATTACK_OR_DEFEND) = range(8)
+ TR_PLAY_SPELL, TR_ACTIVATED, TR_ATTACK_OR_DEFEND,
+ TR_PLAY_UNIT) = range(9)
 TRIGGER_NAMES = ("play_me", "death", "move", "hold", "conquer", "play_spell",
-                 "activated", "attack_or_defend")
+                 "activated", "attack_or_defend", "play_unit")
 
 # TR_ACTIVATED is not a trigger at all -- it is the marker for an ACTIVATED
 # ability (151.1: "Costs followed by a ':' and then an effect"). No event ever
@@ -382,6 +383,10 @@ class Ability(NamedTuple):
     # would open a priority window in which the opponent could answer the mana
     # before it existed, which is the opposite of the rule.
     immediate: bool = False
+    # For TR_PLAY_UNIT: fire only when the unit played was a TOKEN. Lillia
+    # grows on "a token unit"; a watcher for any unit would be a different and
+    # much stronger card, and no rules text distinguishes them for free.
+    subject_token: bool = False
 
     @property
     def n_targets(self) -> int:
@@ -1063,6 +1068,14 @@ STATICS: dict[str, tuple[Static, ...]] = {
         Static(ST_MIGHT, n=4, scope=SC_SELF, cond=COND_LEVEL, level=11),
     ),
 
+    # The other half of Lillia - Protector of Dreams. `scope_token` is what
+    # makes it "your TOKEN units": without it she hands [Tank] to every unit
+    # you control, which is a different card.
+    "Lillia - Protector of Dreams": (
+        Static(ST_KEYWORD, keyword="Tank", n=1, scope=SC_FRIENDLY_UNITS,
+               scope_token=True),
+    ),
+
     # --- statics that grant a KEYWORD ---------------------------------------
     # [Hunt 2] [Level 3][>] I have +1 Might and [Deflect].
     #
@@ -1529,6 +1542,20 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # [Deathknell] - Draw 1.
     "Watchful Sentry": (
         Ability(TR_DEATH, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # When you play a token unit, give me +1 Might this turn.
+    # Your token units have [Tank].
+    #
+    # Both halves, and they are different mechanisms: the first is a TRIGGER
+    # that banks +1 for the turn each time a token arrives, the second is a
+    # continuous STATIC. The trigger watches another permanent being played, so
+    # it is a watcher like Ravenbloom Student's "when you play a spell" rather
+    # than an ETB -- and "give ME" means the source, not the token, so it needs
+    # no subject.
+    "Lillia - Protector of Dreams": (
+        Ability(TR_PLAY_UNIT, subject_token=True,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=1),)),
     ),
 
     # --- [Legion]: "get the effect if you've played another card this turn" --

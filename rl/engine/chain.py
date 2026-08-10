@@ -38,7 +38,8 @@ from rl.config import Config
 from rl.engine import resolve as rsv
 from rl.engine.cardtable import CardTable
 from rl.engine.cost import plan_flow, plan_payment
-from rl.engine.effects import (SPEED_ACTION, SPEED_REACTION, abilities_for,
+from rl.engine.effects import (TR_PLAY_UNIT,
+                               SPEED_ACTION, SPEED_REACTION, abilities_for,
                                spec_for)
 from rl.engine.state import (C_ABIL, C_SUBJ, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
                              C_FINAL, C_COST, C_DEST, C_FROM_HAND, C_SRC,
@@ -46,7 +47,8 @@ from rl.engine.state import (C_ABIL, C_SUBJ, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
                              DEST_RECYCLE,
                              MAIN, MAX_CHAIN, MAX_TARGETS, MAX_TRIGGERS,
                              N_BF, N_SEATS,
-                             P_CARD, P_CTRL, GameState)
+                             P_ALIVE, P_CARD, P_CTRL, P_LOC,
+                             GameState)
 
 
 def speed_ok(state: GameState, cfg: Config, seat: int, speed: int) -> bool:
@@ -301,6 +303,27 @@ def queue(state: GameState, trigger: int, src: int, ctx: int = -1,
     assert i < MAX_TRIGGERS, "trigger queue overflow"
     state.trig[i] = (trigger, src, ctx, subj)
     state.n_trig = i + 1
+
+
+def fire_play_unit(state: GameState, table: CardTable, seat: int,
+                   card: int) -> None:
+    """Queue "when you play a unit" watchers for `seat` (Lillia).
+
+    Called from BOTH places a unit can be played -- from hand in
+    `actions._resolve_play`, and as a token by `OP_CREATE_TOKEN`. A token is
+    played, not conjured (187), so a watcher that only saw hand plays would
+    miss the entire token deck it exists to reward.
+    """
+    is_token = table.is_token(card)
+    for w in range(state.n_perms):
+        if state.perms[w, P_CTRL] != seat or state.perms[w, P_ALIVE] != 1:
+            continue
+        for ab in abilities_for(table, int(state.perms[w, P_CARD])):
+            if ab.trigger != TR_PLAY_UNIT:
+                continue
+            if ab.subject_token and not is_token:
+                continue
+            queue(state, TR_PLAY_UNIT, w, int(state.perms[w, P_LOC]))
 
 
 def trig_controller(state: GameState, i: int) -> int:
