@@ -1702,4 +1702,74 @@ if int(s.cards_played[0]):
 ok("...but the counter resets, so Legion is off again next turn")
 
 
+# ---------------------------------------------------------------------------
+print("\n[20] an amount read off another target, and a self-swap")
+
+PLAINS = [c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c)
+          and not T.residual_text(c)]
+BIGGEST = max(PLAINS, key=lambda c: int(T.might[c]))
+SMALLEST = min(PLAINS, key=lambda c: int(T.might[c]))
+TIDE = T.id_of("Tideturner")
+
+
+def two_friendly(a, b, loc_a=None, loc_b=None):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = SMALLEST
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    ra = s.add_permanent(a, 0, bf_loc(0) if loc_a is None else loc_a)
+    rb = s.add_permanent(b, 0, bf_loc(0) if loc_b is None else loc_b)
+    return s, ra, rb
+
+
+# "ANOTHER friendly unit" means a different unit, not a different location --
+# the two are usually standing together, which is the whole point of the card.
+s, sac, tgt = two_friendly(BIGGEST, SMALLEST)
+if rsv.legal_targets(s, T, SPECS["Deathgrip"], 1, 0, [sac], -1) != [tgt]:
+    die("amount", "'another friendly unit' must reach the one standing beside it")
+ok("'another' excludes only the unit already chosen, not its whole location")
+
+# The amount is read at RESOLUTION, off the sacrifice's current Might.
+rsv.resolve(s, T, V1, SPECS["Deathgrip"], 0, [sac, tgt], -1, True)
+want = int(T.might[SMALLEST]) + int(T.might[BIGGEST])
+if combat.might(s, T, tgt) != want:
+    die("amount", f"target should be {want}, got {combat.might(s, T, tgt)}")
+if s.perms[sac, P_ALIVE]:
+    die("amount", "the sacrificed unit should be dead")
+ok("'+Might equal to its Might' reads the sacrifice, and the sacrifice dies")
+
+# ...and it reads the CURRENT Might, so a buff on the sacrifice carries over.
+# A printed-value implementation passes the case above and fails this one.
+s, sac, tgt = two_friendly(BIGGEST, SMALLEST)
+combat.set_might_mod(s, T, sac, 3)
+rsv.resolve(s, T, V1, SPECS["Deathgrip"], 0, [sac, tgt], -1, True)
+gained = combat.might(s, T, tgt) - int(T.might[SMALLEST])
+if gained != int(T.might[BIGGEST]) + 3:
+    die("amount", f"a +3 on the sacrifice should carry: gained {gained}")
+ok("...current Might, not printed -- a buffed sacrifice is worth more")
+
+# Tideturner swaps with a friendly unit and never with itself: "a friendly
+# unit" would otherwise include the source, and a self-swap is a legal-looking
+# no-op that still burns the trigger.
+s, tide, other = two_friendly(TIDE, SMALLEST, loc_a=base_loc(0))
+ab = ABILITIES["Tideturner"][0]
+got = rsv.legal_targets(s, T, ab, 0, 0, [], -1, source=tide)
+if got != [other]:
+    die("swap", f"Tideturner offered {got}, wanted only the other unit")
+rsv.resolve(s, T, V1, ab, 0, [other], -1, False, source=tide)
+if int(s.perms[tide, P_LOC]) != bf_loc(0) or int(s.perms[other, P_LOC]) != base_loc(0):
+    die("swap", "the two units should have traded places")
+ok("not_self keeps a swap from targeting its own source")
+
+# 355.8 -- alone on the board there is nothing to trade with, so the ability
+# never reaches the Chain rather than resolving into nothing.
+s = GameState()
+s.n_deck[:] = 20
+s.phase, s.active, s.priority = MAIN, 0, 0
+lonely = s.add_permanent(TIDE, 0, base_loc(0))
+if chain.fire(s, T, V1, TR_PLAY_ME, lonely) or s.n_chain:
+    die("swap", "with no other friendly unit the trigger must not fire")
+ok("...and with nobody to swap with, it never triggers at all (355.8)")
+
+
 print("\n\033[32mall effect tests passed\033[0m")

@@ -765,6 +765,15 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             log["fizzled"].append(op.op)      # this target specifically is gone
             continue
 
+        # "+Might equal to its Might" -- read off another slot at RESOLUTION,
+        # so it counts buffs and statics rather than the printed number, and it
+        # must be read before any op in this same card kills that unit.
+        amount = op.n
+        if op.n_from_might >= 0:
+            ref = _slot(state, still_legal, op.n_from_might, source, ctx, seat,
+                        subj)
+            amount = (combat.might(state, table, ref)
+                      if ref >= 0 and state.perms[ref, P_ALIVE] == 1 else 0)
         if op.op == OP_CREATE_TOKEN:
             # 811.1.d.3 -- a hidden spell that plays a unit must play it at
             # that battlefield. That is enforced by the slot's LOC_BOUND
@@ -940,7 +949,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
         elif op.op == OP_MODIFY_MIGHT:
             # May kill, but only by meeting damage already marked (143.2.a).
             # Never by reduction alone -- lethal damage must be non-zero.
-            if combat.set_might_mod(state, table, a, op.n, op.floor):
+            if combat.set_might_mod(state, table, a, amount, op.floor):
                 log.setdefault("killed_by_might", []).append(a)
         elif op.op == OP_STUN:
             # `stun` returns False on a redundant stun (423.1.a.1), which

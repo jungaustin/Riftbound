@@ -236,6 +236,11 @@ class Op(NamedTuple):
     floor: int | None = None
     # The N in "[Level N]", when `cond` is COND_LEVEL.
     level: int = 0
+    # Read the amount off a TARGET's current Might instead of `n`. Deathgrip
+    # gives "+Might equal to its Might", where "its" is the unit being killed
+    # -- so the number is whatever that unit is worth at resolution, statics
+    # and buffs included, which is why it cannot be baked into `n`.
+    n_from_might: int = -1
     # For OP_CREATE_TOKEN: the token card's name, and whether the created
     # units enter ready. Units normally enter exhausted; "Play a READY
     # 3 Might Sprite" overrides that, which is most of the card's value.
@@ -493,6 +498,32 @@ SPECS: dict[str, CardSpec] = {
                  TargetSpec(who=W_ENEMY, optional=True)),
         ops=(Op(OP_MOVE_TO, target=1, target_b=0),
              Op(OP_MODIFY_MIGHT_ALL, n=-2, at=0, who=W_ENEMY)),
+    ),
+
+    # [Reaction] Kill a friendly unit to give +Might equal to its Might to
+    # another friendly unit this turn. Draw 1.
+    #
+    # **The amount is read at resolution, not printed.** "Equal to its Might"
+    # means whatever the sacrificed unit is worth when the spell resolves --
+    # buffs, statics and this-turn modifiers included -- so `n_from_might`
+    # points at the slot instead of `n` carrying a number. Feeding a Soul
+    # Shepherd token is worth more than the token's printed Might, and that is
+    # the card.
+    #
+    # Order matters and is the reverse of the sentence: the Might has to be
+    # read BEFORE the kill, because a dead unit's Might is not a number any
+    # more. The ops run in list order, so the buff is written first.
+    "Deathgrip": CardSpec(
+        speed=SPEED_REACTION,
+        # "ANOTHER friendly unit" is a different UNIT, not a different
+        # location -- the two units are usually standing together, which is
+        # the whole point. `legal_targets` already excludes rows an earlier
+        # slot took, so no relation is needed to say "another".
+        targets=(TargetSpec(who=W_FRIENDLY),
+                 TargetSpec(who=W_FRIENDLY)),
+        ops=(Op(OP_MODIFY_MIGHT, target=1, n_from_might=0),
+             Op(OP_KILL, target=0),
+             Op(OP_DRAW, n=1)),
     ),
 
     # [Reaction] Counter a spell.  The plain one, with no rider at all.
@@ -1365,6 +1396,27 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     "Enthralling Protector": (
         Ability(TR_ACTIVATED, cost_xp=2,
                 ops=(Op(OP_BUFF, target=T_SELF),)),
+    ),
+
+    # [Hidden] When you play me, you may choose a friendly unit. Move me to
+    # its location and it to my original location.
+    #
+    # A swap, which `OP_SWAP_LOC` already does -- the interesting half is the
+    # "you may". 383.3.a puts a "you may" that OPENS an effect at finalization,
+    # so it is `optional` on the Ability and not an optional slot: declining
+    # removes the trigger from the Chain entirely and it counts as never having
+    # triggered (383.3.a.2), rather than resolving into nothing. The slot
+    # itself is required, so 355.8 stops the ability firing at all when there
+    # is no other friendly unit to trade places with.
+    #
+    # `not_self` matters here in a way it usually does not: without it "a
+    # friendly unit" includes Tideturner, and swapping a unit with itself is a
+    # legal-looking no-op that would still burn the trigger.
+    "Tideturner": (
+        Ability(TR_PLAY_ME, optional=True,
+                targets=(TargetSpec(who=W_FRIENDLY, not_self=True,
+                                    locality=LOC_FREE),),
+                ops=(Op(OP_SWAP_LOC, target=T_SELF, target_b=0),)),
     ),
 
     # [Deathknell] - Draw 1.
