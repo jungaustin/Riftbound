@@ -63,7 +63,12 @@ def _token_names() -> set[str]:
 
 _TOKEN_NAMES = None
 
-_BRACKET = re.compile(r"\[([A-Za-z ]+)\]")
+# Keyword brackets, INCLUDING a value: "[Assault 2]" as well as "[Ambush]".
+# The value was not matched, so a card whose whole text is a valued
+# keyword kept a non-empty residual and was reported as having printed
+# behaviour the DSL had to express -- under-counting coverage on 8 cards
+# whose keywords are all implemented.
+_BRACKET = re.compile(r"\[([A-Za-z][A-Za-z ]*?)\s*\d*\]")
 _REMINDER = re.compile(r"\([^)]*\)")
 
 _KW_BIT = {kw: i for i, kw in enumerate(ALL_KEYWORDS)}

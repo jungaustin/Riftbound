@@ -135,7 +135,12 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
         _fail("declaration units set with no destination")
 
     if state.pend_play >= 0:
-        if state.pend_play >= state.n_hand[state.active]:
+        # Indexed into the ANNOUNCER's hand, not the turn player's -- an
+        # [Ambush] unit is announced in a response window on the opponent's
+        # turn (822.1.b), and the two hands are different lengths.
+        if state.pend_play_seat < 0:
+            _fail("pending play with no announcing seat recorded")
+        if state.pend_play >= state.n_hand[state.pend_play_seat]:
             _fail("pending play points past the end of the hand")
         if state.declaring:
             _fail("a play and a move declaration are open at the same time")

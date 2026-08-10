@@ -84,7 +84,8 @@ PASS = Action(A_PASS)
 # ---------------------------------------------------------------------------
 
 def play_destinations(state: GameState, table: CardTable, cfg: Config,
-                      seat: int, card: int) -> list[int]:
+                      seat: int, card: int,
+                      ambush_only: bool = False) -> list[int]:
     """Locations a permanent may be played to.
 
     **A Unit may only be played to its controller's base or a Battlefield they
@@ -111,8 +112,53 @@ def play_destinations(state: GameState, table: CardTable, cfg: Config,
     """
     if not table.is_type(card, "Unit"):
         return [base_loc(seat)]
-    return ([base_loc(seat)]
-            + [bf_loc(i) for i in range(N_BF) if int(state.bf_ctrl[i]) == seat])
+    # 822.1.b/c -- [Ambush] "adds options to locations that are valid for a
+    # Unit to be played to". A battlefield where you CONTROL UNITS, which is a
+    # strictly wider set than one you control: a contested battlefield with a
+    # unit of yours on it qualifies, and that is the whole card. Reinforcing a
+    # fight you are losing is exactly what the keyword is for.
+    ambush = [bf_loc(i) for i in range(N_BF)
+              if table.has(card, "Ambush")
+              and state.units_at(bf_loc(i), seat).size]
+    if ambush_only:
+        # The Reaction half of 822.1.b is conditional: "I have [Reaction] as
+        # long as I'm being played to a battlefield where you control Units."
+        # So a unit played in a response window may ONLY go to an Ambush
+        # destination -- it has no timing permission to reach its own base.
+        return ambush
+    own = [bf_loc(i) for i in range(N_BF) if int(state.bf_ctrl[i]) == seat]
+    return [base_loc(seat)] + sorted(set(own + ambush))
+
+
+def _main_open(state: GameState, seat: int) -> bool:
+    """Is this the ordinary main-phase window a unit is normally played in?"""
+    return (state.phase == MAIN and seat == state.active
+            and state.n_chain == 0 and state.showdown_bf < 0)
+
+
+def ambush_playable(state: GameState, table: CardTable, cfg: Config,
+                    seat: int) -> list[int]:
+    """Hand indices of [Ambush] units playable into the current window.
+
+    Affordability and a legal destination are both required: 822.1.b grants
+    Reaction speed only "as long as I'm being played to a battlefield where you
+    control Units", so with no such battlefield there is no permission and the
+    card is simply not offered.
+    """
+    if cfg.units_only:
+        return []
+    out = []
+    for i in _hand_choices(state, seat):
+        card = int(state.hand[seat, i])
+        if not table.has(card, "Ambush") or not table.is_type(card, "Unit"):
+            continue
+        if not play_destinations(state, table, cfg, seat, card,
+                                 ambush_only=True):
+            continue
+        if plan_payment(state, table, seat, card) is None:
+            continue
+        out.append(i)
+    return out
 
 
 def activatable(state: GameState, table: CardTable, cfg: Config,
@@ -219,10 +265,14 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
 
     # --- mid-decision: a factored choice is open -------------------------
     if state.pend_play >= 0:
-        if seat != state.active:
+        # Normally only the turn player places a unit -- but an [Ambush] unit
+        # is played in a response window, which can be the opponent's turn, so
+        # the placer is whoever holds priority for that play.
+        if seat != int(state.pend_play_seat):
             return []
         card = int(state.hand[seat, state.pend_play])
-        dsts = play_destinations(state, table, cfg, seat, card)
+        dsts = play_destinations(state, table, cfg, seat, card,
+                                 ambush_only=not _main_open(state, seat))
         out = [Action(A_PLAY_AT, loc) for loc in dsts]
         # 805.2 -- [Accelerate] is an Optional Additional Cost paid *as* the
         # unit is played, so it belongs to this decision rather than a later
@@ -256,6 +306,11 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         return ([PASS]
                 + [Action(A_PLAY, i) for i in
                    chain.playable_hand_indices(state, table, cfg, seat)]
+                # 822.1.b -- an [Ambush] unit has [Reaction] while it is being
+                # played to a battlefield where you control units, so it is
+                # offered in the same windows a Reaction spell is.
+                + [Action(A_PLAY, i) for i in
+                   ambush_playable(state, table, cfg, seat)]
                 # 811.6 -- a facedown card has [Reaction], so it may be played
                 # into any window, including on the opponent's turn.
                 + [Action(A_PLAY_HIDDEN, i) for i in
@@ -414,6 +469,7 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
         card = int(state.hand[seat, action.arg])  # the opponent's turn too
         if table.is_type(card, "Unit") or table.is_type(card, "Gear"):
             state.pend_play = action.arg
+            state.pend_play_seat = seat
             return {}
         return _play_spell(state, table, cfg, seat, action.arg)
 
@@ -448,11 +504,14 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
         return _play_from_hidden(state, table, cfg, int(state.priority),
                                  action.arg)
 
-    if k == A_PLAY_AT:
-        return _resolve_play(state, table, cfg, seat, action.arg)
-
-    if k == A_PLAY_AT_FAST:
-        return _resolve_play(state, table, cfg, seat, action.arg, fast=True)
+    # **The placer is not always the turn player.** An [Ambush] unit is played
+    # in a response window, which may be the opponent's turn, so the seat that
+    # announced the play is the one holding priority for it -- reading
+    # `state.active` here paid for the card out of the wrong hand and then
+    # sliced an empty array.
+    if k in (A_PLAY_AT, A_PLAY_AT_FAST):
+        return _resolve_play(state, table, cfg, int(state.pend_play_seat),
+                             action.arg, fast=(k == A_PLAY_AT_FAST))
 
     if k == A_DECLARE:
         combat.declare_move(state, action.arg)
@@ -835,6 +894,7 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     state.hand[seat, n - 1] = -1
     state.n_hand[seat] = n - 1
     state.pend_play = -1
+    state.pend_play_seat = -1
 
     # 359.2.c -- units enter exhausted, unless [Accelerate] was paid. 805.6 is
     # precise that this is a REPLACEMENT: the unit "does not enter exhausted and

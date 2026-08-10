@@ -240,7 +240,8 @@ class GameState:
         "legend", "champion",
         "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "attacker", "passes",
-        "decl_dst", "decl_mask", "pend_play", "pend_hide",
+        "decl_dst", "decl_mask", "pend_play", "pend_play_seat",
+        "pend_hide",
         "winner", "truncated",
         "rng",
     )
@@ -361,6 +362,12 @@ class GameState:
         # Hand index of a card whose location choice is still open, or -1. The
         # second factored decision point; target selection joins these later.
         self.pend_play = -1
+        # **Whose hand `pend_play` indexes.** It used to be implicitly the turn
+        # player, which held while only the turn player could announce a unit.
+        # [Ambush] broke that: 822.1.b gives a unit [Reaction] speed, so it is
+        # announced in a response window that may be the opponent's turn, and a
+        # bare index is then ambiguous between two hands of different lengths.
+        self.pend_play_seat = -1
         # Hand index of a card whose Hide destination is still open, or -1.
         self.pend_hide = -1
 

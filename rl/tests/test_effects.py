@@ -1868,4 +1868,69 @@ if s.n_perms > 1 and combat.perm_kw(s, T, 1, "Temporary"):
 ok("compaction moves grants with their rows instead of stranding them")
 
 
+# ---------------------------------------------------------------------------
+print("\n[22] [Ambush]: an extra destination, and conditional Reaction speed")
+
+from rl.engine import chain as chain_mod
+
+AMB = T.id_of("Soulspinner")            # [Ambush] and nothing else
+PLAINU = [c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c)
+          and not T.residual_text(c) and not list(T.unread_keywords(c))
+          and c != AMB][0]
+
+
+def amb_board(units_at_bf0=True, bf0_ctrl=-1):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAINU
+    s.runes_ready[:, :] = 8
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.bf_ctrl[0] = bf0_ctrl
+    if units_at_bf0:
+        s.add_permanent(PLAINU, 0, bf_loc(0))
+    s.hand[0, 0] = AMB
+    s.n_hand[0] = 1
+    return s
+
+
+# 822.1.b -- "a battlefield where you CONTROL UNITS" is wider than "a
+# battlefield you control": a CONTESTED battlefield with a unit of yours on it
+# qualifies, and reinforcing a fight you are losing is the whole keyword.
+s = amb_board(bf0_ctrl=-1)
+got = A.play_destinations(s, T, V1, 0, AMB)
+if bf_loc(0) not in got:
+    die("ambush", f"[Ambush] should reach an uncontrolled battlefield where "
+                  f"you have units: {got}")
+if A.play_destinations(s, T, V1, 0, PLAINU) != [base_loc(0)]:
+    die("ambush", "a unit WITHOUT [Ambush] must still be base-only here")
+ok("[Ambush] adds a battlefield you have units on, controlled or not (806.3)")
+
+# No units there, no permission -- the keyword grants nothing on its own.
+s = amb_board(units_at_bf0=False)
+if A.play_destinations(s, T, V1, 0, AMB) != [base_loc(0)]:
+    die("ambush", "with no units at any battlefield [Ambush] adds nothing")
+if A.ambush_playable(s, T, V1, 0):
+    die("ambush", "...and with no destination there is no Reaction speed")
+ok("with no units at a battlefield it grants neither a place nor the speed")
+
+# The Reaction half, on the OPPONENT's turn, inside a window.
+s = amb_board()
+s.active, s.priority = 1, 0
+chain_mod.push(s, T.id_of("Stupefy"), 1)
+chain_mod.finalize(s, 0)
+plays = [a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY]
+if not plays:
+    die("ambush", "an [Ambush] unit should be playable into a response window")
+A.apply(s, T, V1, plays[0])
+dsts = [a.arg for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY_AT]
+if dsts != [bf_loc(0)]:
+    die("ambush", f"in a window the ONLY legal destination is the Ambush one, "
+                  f"not the base: {dsts}")
+A.apply(s, T, V1, A.Action(A.A_PLAY_AT, dsts[0]))
+row = next(i for i in range(s.n_perms) if int(s.perms[i, P_CARD]) == AMB)
+if int(s.perms[row, P_LOC]) != bf_loc(0) or int(s.n_hand[0]) != 0:
+    die("ambush", "the unit should have left the hand and landed there")
+ok("822.1.b's Reaction is CONDITIONAL: in a window, only Ambush spots are legal")
+
+
 print("\n\033[32mall effect tests passed\033[0m")

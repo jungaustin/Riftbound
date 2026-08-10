@@ -61,6 +61,9 @@ ENGINE_KEYWORDS = {
                  "(809), and an unaffordable surcharge makes it not a target",
     "Hunt":      "effects.abilities_for -- synthesised as 'when I conquer or "
                  "hold, gain N XP' on every card carrying it (no per-card entry)",
+    "Ambush":    "actions.play_destinations adds battlefields where you "
+                 "control units, and actions.ambush_playable gives the "
+                 "conditional [Reaction] speed that goes with them (822.1.b)",
     "Assault":   "combat.combat_role_bonus -- +X Might while an attacker (807)",
     "Action":    "effects.SPEED_ACTION, via a card's DSL spec",
     "Reaction":  "effects.SPEED_REACTION, via a card's DSL spec",
