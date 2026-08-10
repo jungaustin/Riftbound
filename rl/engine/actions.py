@@ -54,6 +54,8 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
                              is_battlefield)
 
 # Action kinds. Wire format -- append only, never reorder.
+# A_CANCEL is retained for wire-format stability (the enum is append-only
+# and must never renumber) but is no longer offered -- see `legal_actions`.
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
  A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN,
  A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST, A_ORDER, A_ACTIVATE,
@@ -310,7 +312,25 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
                combat.movable_units(state, table, cfg, state.decl_dst)]
         if state.decl_mask:
             out.append(Action(A_COMMIT))
-        out.append(Action(A_CANCEL))
+        # **A_CANCEL is deliberately NOT offered.** `decl_dst`/`decl_mask` are a
+        # scratchpad for a half-built Move, not game state, so DECLARE -> ADD ->
+        # CANCEL wrote to it and erased it: a bit-identical state reached in
+        # three actions, for free, any number of times. A trained policy that
+        # mildly preferred those actions did exactly that -- 430 decisions per
+        # turn, episodes of 500+ decisions across 3.5 turns, and a third of
+        # them truncated. ~50,000 fuzz games never found it because a random
+        # agent eventually rolls COMMIT or END_TURN and escapes.
+        #
+        # There is no such thing as cancelling a declaration in the rules
+        # anyway: you either moved units or you did not. Picking some up and
+        # putting them back is thinking, not a game action, and it should not
+        # have been in the action space. Committing to a destination once you
+        # name one is the real decision.
+        #
+        # This branch cannot be empty: `move_destinations` only offers a
+        # destination that has a movable unit, so there is always an ADD, and
+        # after one ADD there is always a COMMIT.
+        assert out, "a declaration with no way out would deadlock the turn"
         return out
 
     # --- Closed State: a Chain exists, so both players get priority -------

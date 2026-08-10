@@ -69,9 +69,16 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, N_BF,
 # and an unchanged golden would have meant no one was being asked.
 #     before: (12345, 3) -> (1, 5, 77, [2, 3])
 #             (12345, 8) -> (1, 10, 170, [7, 8])
+#
+# And again when A_CANCEL stopped being offered. The step counts fell hardest
+# -- 83 -> 33 at victory 3 -- which is the measurement of how much of a random
+# agent's action budget was going into declare/cancel round trips that changed
+# nothing.
+#     before: (12345, 3) -> (1, 5, 83, [0, 3])
+#             (12345, 8) -> (1, 10, 154, [5, 8])
 GOLDEN: dict[tuple[int, int], tuple] = {
-    (12345, 3): (1, 5, 83, [0, 3]),
-    (12345, 8): (1, 10, 154, [5, 8]),
+    (12345, 3): (1, 4, 33, [1, 3]),
+    (12345, 8): (1, 9, 109, [6, 8]),
 }
 
 
