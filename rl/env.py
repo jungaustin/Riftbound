@@ -135,7 +135,12 @@ class RiftboundEnv:
         self._advance()
 
         s = self.state
-        done = A.is_terminal(s)
+        # A loop inside one turn never advances the turn, so `turn_cap` cannot
+        # see it. Truncating here makes a livelock cost one episode instead of
+        # an entire run, and marks it the same way a too-long game is marked.
+        if self.steps > self.cfg.decision_cap and not A.is_terminal(s):
+            s.truncated = True
+        done = A.is_terminal(s) or bool(s.truncated)
         return StepResult(
             obs=self._obs,
             rewards=A.outcome(s) if done else (0.0, 0.0),

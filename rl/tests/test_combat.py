@@ -451,18 +451,19 @@ from rl.engine.state import C_FINAL, MAIN, P_MIGHT_MOD
 CFG_V1 = _replace(Config(), units_only=False)
 
 MASK = T.id_of("Mask of Foresight")
-PLAIN = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c)
-             and not T.residual_text(c) and int(T.might[c]) >= 3)
+MASK_UNIT = next(c for c in range(T.n) if T.is_type(c, "Unit")
+                 and not T.is_token(c) and not T.residual_text(c)
+                 and int(T.might[c]) >= 3)
 
 
 def mask_board(n_friendly, mask_seat=0):
     s = GameState()
     s.n_deck[:] = 20
-    s.deck[:, :20] = PLAIN
+    s.deck[:, :20] = MASK_UNIT
     s.phase, s.active, s.priority = MAIN, 0, 0
     s.add_permanent(MASK, mask_seat, base_loc(mask_seat))   # gear, at a BASE
-    rows = [s.add_permanent(PLAIN, 0, bf_loc(0)) for _ in range(n_friendly)]
-    foe = s.add_permanent(PLAIN, 1, bf_loc(0))
+    rows = [s.add_permanent(MASK_UNIT, 0, bf_loc(0)) for _ in range(n_friendly)]
+    foe = s.add_permanent(MASK_UNIT, 1, bf_loc(0))
     return s, rows, foe
 
 
@@ -506,6 +507,40 @@ if int(s.perms[foe, P_MIGHT_MOD]) != 1:
 if int(s.perms[rows[0], P_MIGHT_MOD]):
     die("mask", "the enemy attacker must not be buffed by their opponent's gear")
 ok("...and it reads 'attacks or defends', on the controller's units only")
+
+
+# ---------------------------------------------------------------------------
+print("\n[10] killing a corpse mints a card")
+
+# A pseudo-slot is not a target, so 359.3.e never re-checks it: the unit a
+# trigger fired FOR can die during the priority window before the ability
+# resolves. `_destroy` then ran a second time on the same row and appended its
+# card to the trash again -- a card created from nothing.
+#
+# Caught by the per-seat card-conservation gate at victory 8, on a real deck.
+# Victory 3 never reached it: the games are too short.
+s = fresh()
+u = s.add_permanent(MASK_UNIT, 0, bf_loc(0))
+combat._destroy(s, T, u)
+if int(s.n_trash[0]) != 1:
+    die("corpse", "a first death puts exactly one card in the trash")
+combat._destroy(s, T, u)
+if int(s.n_trash[0]) != 1:
+    die("corpse", f"destroying an already-dead permanent must do nothing, "
+                  f"trash is now {int(s.n_trash[0])}")
+ok("_destroy is idempotent: a corpse cannot die twice into the trash")
+
+# The same guard on the Might path, which is how it was actually reached: a
+# buff aimed at a dead subject reported a kill and re-destroyed it.
+s = fresh()
+u = s.add_permanent(MASK_UNIT, 0, bf_loc(0))
+s.perms[u, P_DMG] = 99
+combat._destroy(s, T, u)
+if combat.set_might_mod(s, T, u, 1):
+    die("corpse", "modifying a dead permanent's Might must not report a kill")
+if int(s.n_trash[0]) != 1:
+    die("corpse", "...and must not trash its card a second time")
+ok("a Might change on a dead permanent is a no-op, not a second death")
 
 
 print("\n\033[32mall combat tests passed\033[0m")

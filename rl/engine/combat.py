@@ -348,6 +348,13 @@ def set_might_mod(state: GameState, table: CardTable, perm: int, delta: int,
     # The printed floor is on EFFECTIVE Might, so statics count toward it:
     # Stupefy's "to a minimum of 1 Might" on a Sprite that Soul Shepherd has
     # pumped to 4 leaves it at 1, not at 0.
+    # A permanent that has left the board has no Might to modify. The subject
+    # of a trigger can die in the priority window before the ability resolves
+    # (T_SUBJECT is a pseudo-slot, so nothing re-checks it the way 359.3.e
+    # re-checks a target), and buffing a corpse then reported a "kill" that
+    # destroyed it a second time.
+    if row[P_ALIVE] != 1:
+        return False
     base = int(table.might[int(row[P_CARD])]) + static_might(state, table, perm)
     new = int(row[P_MIGHT_MOD]) + delta
     if floor is not None:
@@ -432,6 +439,14 @@ def _destroy(state: GameState, table: CardTable, perm: int,
     """
     from rl.engine.chain import queue as chain_queue   # cycle: chain -> resolve -> combat
     row = state.perms[perm]
+    # **Idempotent, because "kill it" can reach a corpse.** A pseudo-slot like
+    # T_SUBJECT is not a target, so 359.3.e never re-checks it, and the unit a
+    # trigger fired for can die during the priority window before the ability
+    # resolves. Without this guard the second destroy queued a second
+    # Deathknell and appended the card to the trash AGAIN -- a card minted from
+    # nothing, which the per-seat conservation gate caught at victory 8.
+    if row[P_ALIVE] != 1:
+        return
     if any(a.trigger == TR_DEATH for a in abilities_for(table, int(row[P_CARD]))):
         loc, ctrl = int(row[P_LOC]), int(row[P_CTRL])
         others = [i for i in range(state.n_perms)

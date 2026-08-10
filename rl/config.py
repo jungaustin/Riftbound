@@ -120,6 +120,16 @@ class Config:
     # there rather than gating the finish.
     victory_score: int = 5            # anneal 5 -> 8
     turn_cap: int = 30                # truncate -> reward 0
+    # **A turn cap cannot catch a loop INSIDE one turn.** A livelocked priority
+    # window never advances the turn, so `turn_cap` never fires and the episode
+    # runs forever -- which is what dragged a mirror-match run's mean episode
+    # from ~36 decisions to over 200 and starved it of finished games.
+    #
+    # Sized from measurement, not taste: across 4,000 real-deck games at
+    # victory 3 the longest legal game took 352 decisions, and 1,500 at victory
+    # 8 stayed under it. 1500 is >4x that ceiling, so a game reaching it is not
+    # a long game.
+    decision_cap: int = 1500
 
     # --- action space ------------------------------------------------------
     max_actions: int = 64             # assert on overflow, log the distribution
