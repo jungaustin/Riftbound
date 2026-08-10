@@ -17,14 +17,15 @@ import numpy as np
 from rl.config import DOMAINS, Config
 from rl.engine import actions as A
 from rl.engine import invariants, phases
+# Setup constants and the Mulligan live in `phases`: `actions` needs them
+# and `game` imports `actions`, so keeping them here made a real import
+# cycle that only worked by luck of import order. Re-exported so the
+# existing call sites keep working.
+from rl.engine.phases import (MULLIGAN_MAX, STARTING_HAND,  # noqa: F401
+                              mulligan)
 from rl.engine.cardtable import CardTable
 from rl.engine.state import MAX_DECK, N_DOMAINS, N_SEATS, RUNE_RING, GameState
 
-# 116 -- "Players each draw 4." This was 5, which is a Magic reflex rather than
-# a Riftbound rule, and it made every opening hand 25% larger than the real one.
-STARTING_HAND = 4
-# 117.1 -- "A player may choose up to two cards in their hand."
-MULLIGAN_MAX = 2
 
 
 def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
@@ -64,51 +65,25 @@ def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
         phases.draw(s, STARTING_HAND)
     s.active = 0
 
-    # 117 -- the Mulligan happens in turn order, before the first turn begins.
-    # `mulligan_choices` is empty by default, which is the legal "choose zero"
-    # and keeps `new_game` deterministic for the fuzz and the goldens.
+    # 117 -- the Mulligan happens in turn order, before the first turn begins,
+    # and it is a real DECISION: "up to two" is a choice about a quarter of the
+    # opening hand. So `new_game` stops here and hands the first decision to
+    # the First Player; `actions._finish_mulligan` starts the turn once both
+    # players are done (118).
+    #
+    # `mulligan_choices` short-circuits that for tests and for any caller that
+    # wants a ready-to-play state.
+    if mulligan_choices is None:
+        s.pend_mull = 0
+        return s
     for seat in range(N_SEATS):
-        keep = () if mulligan_choices is None else mulligan_choices[seat]
+        keep = mulligan_choices[seat]
         if keep:
             mulligan(s, seat, keep)
-
     phases.start_turn(s, table, cfg)
     return s
 
 
-def mulligan(state: GameState, seat: int, indices) -> list[int]:
-    """117 -- set aside up to two cards, draw that many, then Recycle them.
-
-    **The order is set-aside -> draw -> recycle, and it is not cosmetic.**
-    117.2 draws before 117.3 recycles, so the cards going to the bottom cannot
-    be among the ones drawn to replace them. Recycling first would let a player
-    redraw the exact card they just put back -- vanishingly unlikely with a full
-    deck, certain with a nearly empty one, and wrong either way.
-
-    Returns the card ids that were recycled.
-    """
-    idxs = sorted(set(int(i) for i in indices), reverse=True)
-    assert len(idxs) <= MULLIGAN_MAX, (
-        f"117.1 allows up to {MULLIGAN_MAX} cards, got {len(idxs)}")
-    assert all(0 <= i < int(state.n_hand[seat]) for i in idxs), \
-        "mulligan index outside the hand"
-
-    # Set aside: out of the hand, but NOT yet into the deck.
-    aside = []
-    for i in idxs:
-        n = int(state.n_hand[seat])
-        aside.append(int(state.hand[seat, i]))
-        state.hand[seat, i:n - 1] = state.hand[seat, i + 1:n]
-        state.hand[seat, n - 1] = -1
-        state.n_hand[seat] = n - 1
-
-    prev, state.active = int(state.active), seat
-    phases.draw(state, len(aside))
-    state.active = prev
-
-    for card in aside:
-        state.recycle_card(seat, card)
-    return aside
 
 
 def random_agent(rng: np.random.Generator):

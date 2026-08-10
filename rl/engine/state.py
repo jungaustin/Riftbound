@@ -241,7 +241,7 @@ class GameState:
         "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "attacker", "passes",
         "decl_dst", "decl_mask", "pend_play", "pend_play_seat",
-        "pend_hide",
+        "pend_hide", "pend_mull", "mull_mask",
         "winner", "truncated",
         "rng",
     )
@@ -370,6 +370,12 @@ class GameState:
         self.pend_play_seat = -1
         # Hand index of a card whose Hide destination is still open, or -1.
         self.pend_hide = -1
+        # 117 -- the seat performing its Mulligan, or -1 once both are done.
+        # A bitmask of hand indices rather than a list, exactly like
+        # `decl_mask`: the choice is a SET of up to two cards, and a mask makes
+        # "already chosen" a test rather than a scan.
+        self.pend_mull = -1
+        self.mull_mask = 0
 
         self.winner = -1
         self.truncated = False

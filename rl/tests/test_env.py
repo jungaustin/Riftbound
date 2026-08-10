@@ -362,3 +362,33 @@ else:
     die("mulligan", f"117.1 caps the choice at {MULLIGAN_MAX}")
 ok(f"'up to two' includes zero and refuses {MULLIGAN_MAX + 1}")
 
+# --- the Mulligan as a DECISION, not a skipped step -------------------------
+_s = new_game(T, CFG, _decks, _runes, _bfs, seed=5)
+if A.acting_seat(_s) != 0 or int(_s.pend_mull) != 0:
+    die("mulligan", "117 is the first decision of the game, and it is the "
+                    "First Player's")
+_kinds = {a.kind for a in A.legal_actions(_s, T, CFG, 0)}
+if A.A_MULLIGAN not in _kinds or A.A_MULLIGAN_DONE not in _kinds:
+    die("mulligan", "both choosing a card and stopping must be offered")
+ok("117 -- the Mulligan is the game's first decision point, in turn order")
+
+_deck_before = int(_s.n_deck[0])
+A.apply(_s, T, CFG, A.Action(A.A_MULLIGAN, 0))
+A.apply(_s, T, CFG, A.Action(A.A_MULLIGAN, 1))
+if [a for a in A.legal_actions(_s, T, CFG, 0) if a.kind == A.A_MULLIGAN]:
+    die("mulligan", "117.1 caps the choice at two, so a third must not be offered")
+A.apply(_s, T, CFG, A.Action(A.A_MULLIGAN_DONE))
+if int(_s.pend_mull) != 1:
+    die("mulligan", "turn order: the second player mulligans next")
+if int(_s.n_deck[0]) != _deck_before + 2 or int(_s.n_hand[0]) != STARTING_HAND:
+    die("mulligan", "two cards to the bottom, two drawn to replace them")
+ok("choosing two is capped, performed, and passes to the next seat")
+
+# "Up to two" includes zero, and the game begins once both are done (118).
+A.apply(_s, T, CFG, A.Action(A.A_MULLIGAN_DONE))
+if int(_s.pend_mull) != -1 or int(_s.active) != 0:
+    die("mulligan", "118 -- after both Mulligans the First Player takes a turn")
+if A.acting_seat(_s) != 0 or not A.legal_actions(_s, T, CFG, 0):
+    die("mulligan", "the game should be underway with real actions available")
+ok("declining is legal, and the First Player's turn begins after both (118)")
+

@@ -57,12 +57,13 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
  A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN,
  A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST, A_ORDER, A_ACTIVATE,
- A_PLAY_FLOW) = range(19)
+ A_PLAY_FLOW, A_MULLIGAN, A_MULLIGAN_DONE) = range(21)
 
 KIND_NAMES = ("pass", "end_turn", "play", "play_at", "declare", "add",
               "commit", "cancel", "retreat", "target", "hide", "hide_at",
               "play_hidden", "accept", "decline", "play_at_fast",
-              "order", "activate", "play_flow")
+              "order", "activate", "play_flow", "mulligan",
+              "mulligan_done")
 
 
 class Action(NamedTuple):
@@ -216,6 +217,22 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     """
     if is_terminal(state):
         return []
+
+    # --- 117: the Mulligan, before the first turn -------------------------
+    # In turn order, and it is the first decision either player makes -- so it
+    # is checked before every other pending state rather than after.
+    if state.pend_mull >= 0:
+        if seat != int(state.pend_mull):
+            return []
+        out = []
+        if bin(int(state.mull_mask)).count("1") < phases.MULLIGAN_MAX:
+            out += [Action(A_MULLIGAN, i)
+                    for i in range(int(state.n_hand[seat]))
+                    if not (int(state.mull_mask) >> i & 1)]
+        # 117.1 is "UP TO two", so stopping is always legal -- including
+        # immediately, which is the choice to keep the opening hand.
+        out.append(Action(A_MULLIGAN_DONE))
+        return out
 
     # --- mid-decision: a target slot is open ------------------------------
     # Targets are chosen one slot at a time -- the same add-one loop as a Move
@@ -496,6 +513,13 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
 
     if k == A_HIDE_AT:
         return _hide_at(state, table, cfg, seat, action.arg)
+
+    if k == A_MULLIGAN:
+        state.mull_mask |= 1 << int(action.arg)
+        return {}
+
+    if k == A_MULLIGAN_DONE:
+        return _finish_mulligan(state, table, cfg)
 
     if k == A_PLAY_FLOW:
         return _play_flow(state, table, cfg, int(state.priority), action.arg)
@@ -947,10 +971,30 @@ def outcome(state: GameState) -> tuple[float, float]:
     return (0.0, 0.0)
 
 
+def _finish_mulligan(state: GameState, table: CardTable, cfg: Config) -> dict:
+    """Perform this seat's Mulligan, then hand off or begin the game (117)."""
+    seat = int(state.pend_mull)
+    chosen = [i for i in range(int(state.n_hand[seat]))
+              if int(state.mull_mask) >> i & 1]
+    recycled = phases.mulligan(state, seat, chosen)
+    state.mull_mask = 0
+    if seat + 1 < N_SEATS:
+        state.pend_mull = seat + 1
+        return {"mulliganed": [table.names[c] for c in recycled]}
+    # 118 -- both players are done, so the First Player takes their turn.
+    state.pend_mull = -1
+    state.active = 0
+    log = phases.start_turn(state, table, cfg)
+    log["mulliganed"] = [table.names[c] for c in recycled]
+    return log
+
+
 def acting_seat(state: GameState) -> int:
     """Which seat is being asked to choose, or -1 if none is."""
     if is_terminal(state):
         return -1
+    if state.pend_mull >= 0:
+        return int(state.pend_mull)
     if state.pend_slot >= 0:
         item = chain.oldest_pending(state)
         if item >= 0:

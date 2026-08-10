@@ -254,6 +254,48 @@ def heal_board(state: GameState) -> None:
         state.perms[:state.n_perms, P_DMG] = 0
 
 
+# 116 -- "Players each draw 4." This was 5, which is a Magic reflex rather than
+# a Riftbound rule, and it made every opening hand 25% larger than the real one.
+STARTING_HAND = 4
+# 117.1 -- "A player may choose up to two cards in their hand."
+MULLIGAN_MAX = 2
+
+
+def mulligan(state: GameState, seat: int, indices) -> list[int]:
+    """117 -- set aside up to two cards, draw that many, then Recycle them.
+
+    **The order is set-aside -> draw -> recycle, and it is not cosmetic.**
+    117.2 draws before 117.3 recycles, so the cards going to the bottom cannot
+    be among the ones drawn to replace them. Recycling first would let a player
+    redraw the exact card they just put back -- vanishingly unlikely with a full
+    deck, certain with a nearly empty one, and wrong either way.
+
+    Returns the card ids that were recycled.
+    """
+    idxs = sorted(set(int(i) for i in indices), reverse=True)
+    assert len(idxs) <= MULLIGAN_MAX, (
+        f"117.1 allows up to {MULLIGAN_MAX} cards, got {len(idxs)}")
+    assert all(0 <= i < int(state.n_hand[seat]) for i in idxs), \
+        "mulligan index outside the hand"
+
+    # Set aside: out of the hand, but NOT yet into the deck.
+    aside = []
+    for i in idxs:
+        n = int(state.n_hand[seat])
+        aside.append(int(state.hand[seat, i]))
+        state.hand[seat, i:n - 1] = state.hand[seat, i + 1:n]
+        state.hand[seat, n - 1] = -1
+        state.n_hand[seat] = n - 1
+
+    prev, state.active = int(state.active), seat
+    draw(state, len(aside))
+    state.active = prev
+
+    for card in aside:
+        state.recycle_card(seat, card)
+    return aside
+
+
 def ending(state: GameState) -> None:
     """Heal all units, expire 'this turn' effects, empty pools (317.2).
 

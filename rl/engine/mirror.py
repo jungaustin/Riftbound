@@ -36,14 +36,14 @@ SEAT_AXIS = (
 
 # The value *is* a seat id: flip it, but leave the -1 "nobody" sentinel alone.
 SEAT_VALUED_SCALAR = ("active", "priority", "attacker", "focus", "winner",
-                      "pend_order", "pend_play_seat")
+                      "pend_order", "pend_play_seat", "pend_mull")
 SEAT_VALUED_ARRAY = ("bf_ctrl", "fd_owner")
 
 # Seat-agnostic: battlefield identities, phase, counters, the RNG.
 UNCHANGED = (
     "n_perms", "bf_card", "bf_contested", "fd_card", "n_chain", "turn",
     "phase", "showdown_bf", "showdown_step", "passes", "decl_dst",
-    "decl_mask", "pend_play", "truncated", "rng",
+    "decl_mask", "pend_play", "truncated", "rng", "mull_mask",
     # Chain targets are permanent ROW indices, and mirroring preserves row
     # order (it rewrites P_CTRL in place rather than reordering), so the
     # indices stay valid. `pend_slot` is a slot number on a card, not a seat.

@@ -62,9 +62,16 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, N_BF,
 # refusing to accept it silently is the reason it is worth keeping.
 #     before: (12345, 3) -> (0, 6, 68, [3, 1])
 #             (12345, 8) -> (1, 12, 176, [7, 8])
+#
+# Re-recorded again when the Mulligan became a DECISION rather than a skipped
+# step (117). The random agent now chooses one, which both adds decisions to
+# every game and changes which cards each player holds -- so these had to move,
+# and an unchanged golden would have meant no one was being asked.
+#     before: (12345, 3) -> (1, 5, 77, [2, 3])
+#             (12345, 8) -> (1, 10, 170, [7, 8])
 GOLDEN: dict[tuple[int, int], tuple] = {
-    (12345, 3): (1, 5, 77, [2, 3]),
-    (12345, 8): (1, 10, 170, [7, 8]),
+    (12345, 3): (1, 5, 83, [0, 3]),
+    (12345, 8): (1, 10, 154, [5, 8]),
 }
 
 
