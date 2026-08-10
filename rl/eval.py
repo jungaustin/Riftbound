@@ -32,6 +32,30 @@ def net_choice(net, obs, device: str, deterministic: bool,
     return int(idx.item())
 
 
+# Games abandoned as livelocked, this process. Surfaced in the eval line so a
+# nonzero count is visible rather than buried in a log file.
+LIVELOCKS: list[dict] = []
+
+
+def _dump_livelock(env, table, seed: int, net_seat: int, steps: int) -> None:
+    """Record enough to reproduce an abandoned game, and say so once."""
+    s = env.state
+    info = {
+        "seed": seed, "net_seat": net_seat, "steps": steps,
+        "turn": int(s.turn), "phase": int(s.phase),
+        "showdown_bf": int(s.showdown_bf), "showdown_step": int(s.showdown_step),
+        "n_chain": int(s.n_chain), "n_trig": int(s.n_trig),
+        "priority": int(s.priority), "passes": int(s.passes),
+        "points": s.points.tolist(),
+        "hands": [int(x) for x in s.n_hand],
+        "chain": [table.names[int(s.chain[i, 0])] for i in range(int(s.n_chain))],
+        "legal": [repr(a) for a in env.legal[:12]],
+    }
+    LIVELOCKS.append(info)
+    if len(LIVELOCKS) == 1:
+        print(f"  !! livelocked game abandoned: {info}", flush=True)
+
+
 @torch.no_grad()
 def play_one(net, opponent, table, cfg, enc: Encoder, seed: int, net_seat: int,
              deal_fn, device: str = "cpu", deterministic: bool = False,
@@ -46,9 +70,15 @@ def play_one(net, opponent, table, cfg, enc: Encoder, seed: int, net_seat: int,
     while obs is not None:
         steps += 1
         if steps > 5000:
-            raise RuntimeError(
-                f"eval game exceeded 5000 decisions (seed {seed}, net_seat "
-                f"{net_seat}) -- livelock, not slowness")
+            # **A livelock is a bug, but killing the run loses the bug.** This
+            # used to raise, which took down a 400-iteration training run at
+            # iteration 80 and threw away the only copy of the policy that
+            # caused it -- the surviving checkpoint was two evals older and
+            # did not reproduce. So: dump everything needed to reproduce, count
+            # it, and let the run continue. `duel` already treats a -1 as a
+            # game nobody won.
+            _dump_livelock(env, table, seed, net_seat, steps)
+            return -1
         if obs.to_move == net_seat:
             i = net_choice(net, obs, device, deterministic, generator)
         else:
@@ -85,5 +115,6 @@ def report(net, table, cfg, deal_fn, n: int = 200, device: str = "cpu") -> dict:
     return {
         "vs_random": vs_random,
         "vs_greedy": vs_greedy,
+        "livelocks": len(LIVELOCKS),
         "pass": vs_random >= 0.90 and vs_greedy >= 0.65,
     }

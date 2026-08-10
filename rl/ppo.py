@@ -604,10 +604,12 @@ def main(argv=None) -> int:
         if a.eval_every and it % a.eval_every == 0:
             r = report(tr.net, table, cfg, deal, n=a.eval_games, device=a.device)
             flag = "  <-- PHASE 4 EXIT MET" if r["pass"] else ""
+            lock = (f"  livelocked {r['livelocks']}" if r.get("livelocks")
+                    else "")
             print(f"       eval: vs_random {r['vs_random']:.1%}  "
                   f"vs_greedy {r['vs_greedy']:.1%}  "
                   f"elo(greedy=0) {elo_from_winrate(r['vs_greedy']):+.0f}"
-                  f"{flag}\n       {tr.pool.summary()}", flush=True)
+                  f"{lock}{flag}\n       {tr.pool.summary()}", flush=True)
             score = r["vs_random"] + r["vs_greedy"]
             if score > best:
                 best = score
