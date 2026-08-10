@@ -55,9 +55,16 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, N_BF,
 # Neither touched a rule. The golden pins an OUTCOME under a fixed seed, so it
 # is sensitive to the deal by design -- that is what makes it catch a genuine
 # behaviour change, and it means a pool change has to be re-pinned by hand.
+# Re-recorded when the opening hand went 5 -> 4. Rule 116 is "players each
+# draw 4"; the 5 was a Magic reflex, and it made every opening hand 25% larger
+# than the real game's. Changing the deal changes every game from turn one, so
+# these moving was the expected outcome, not a regression -- and the gate
+# refusing to accept it silently is the reason it is worth keeping.
+#     before: (12345, 3) -> (0, 6, 68, [3, 1])
+#             (12345, 8) -> (1, 12, 176, [7, 8])
 GOLDEN: dict[tuple[int, int], tuple] = {
-    (12345, 3): (0, 6, 68, [3, 1]),
-    (12345, 8): (1, 12, 176, [7, 8]),
+    (12345, 3): (1, 5, 77, [2, 3]),
+    (12345, 8): (1, 10, 170, [7, 8]),
 }
 
 

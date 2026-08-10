@@ -310,3 +310,55 @@ ok(f"{seen} episodes auto-reset cleanly; 12 replays match the single env exactly
 print(f"    truncation rate {vec.truncation_rate:.1%} over {vec.episodes} episodes")
 
 print("\n\033[32mall gym tests passed\033[0m")
+
+# ---------------------------------------------------------------------------
+print("\n[mulligan] 116-117: draw 4, set aside up to 2, draw, THEN recycle")
+
+from rl.engine.game import MULLIGAN_MAX, STARTING_HAND, mulligan, new_game
+
+from rl.ppo import deck_pool_deal
+_decks, _runes, _bfs = deck_pool_deal(T, 0.0)(3)
+_s = new_game(T, CFG, _decks, _runes, _bfs, seed=3)
+# Seat 1 has not taken a turn, so its hand is the untouched 116 deal.
+if int(_s.n_hand[1]) != STARTING_HAND or STARTING_HAND != 4:
+    die("mulligan", f"116 deals 4, got {int(_s.n_hand[1])} "
+                    f"(STARTING_HAND={STARTING_HAND})")
+ok("116 -- each player is dealt exactly 4")
+
+_s = new_game(T, CFG, _decks, _runes, _bfs, seed=3)
+_ptr = int(_s.deck_ptr[0])
+_top2 = [int(_s.deck[0, _ptr]), int(_s.deck[0, _ptr + 1])]
+_before = [int(c) for c in _s.hand[0, :int(_s.n_hand[0])]]
+_bottom = int(_s.n_deck[0])
+_aside = mulligan(_s, 0, [0, 1])
+_after = [int(c) for c in _s.hand[0, :int(_s.n_hand[0])]]
+
+if len(_after) != len(_before):
+    die("mulligan", "117.2 draws as many as were set aside, so the hand size "
+                    "is unchanged")
+if _after[-2:] != _top2:
+    die("mulligan", "the replacements come off the TOP of the deck")
+if int(_s.n_deck[0]) != _bottom + 2:
+    die("mulligan", "the set-aside cards should have gone to the bottom")
+ok("117.1-117.3 -- set aside, draw the replacements, recycle to the bottom")
+
+# **The order is load-bearing.** 117.2 draws before 117.3 recycles, so a card
+# put back can never be one of the replacements. Recycling first would make
+# that possible -- certain, on a nearly empty deck.
+if set(_aside) & (set(_after) - set(_before)):
+    die("mulligan", "a recycled card came back as its own replacement -- the "
+                    "draw must happen BEFORE the recycle")
+ok("...and the draw precedes the recycle, so nothing replaces itself")
+
+# "Up to two" -- zero is a legal choice, and three is not.
+_s2 = new_game(T, CFG, _decks, _runes, _bfs, seed=3)
+if mulligan(_s2, 0, []) != []:
+    die("mulligan", "choosing zero must be legal and do nothing")
+try:
+    mulligan(_s2, 0, [0, 1, 2])
+except AssertionError:
+    pass
+else:
+    die("mulligan", f"117.1 caps the choice at {MULLIGAN_MAX}")
+ok(f"'up to two' includes zero and refuses {MULLIGAN_MAX + 1}")
+
