@@ -1933,4 +1933,89 @@ if int(s.perms[row, P_LOC]) != bf_loc(0) or int(s.n_hand[0]) != 0:
 ok("822.1.b's Reaction is CONDITIONAL: in a window, only Ambush spots are legal")
 
 
+# ---------------------------------------------------------------------------
+# Printed play-destination permissions (exceptions to 806.3)
+#
+# 806.3/813.3.a restrict a Unit to its controller's base or a Battlefield they
+# already control. A handful of cards print an exception, and each one ADDS
+# destinations rather than replacing them -- the base is always still legal.
+# "Open" and "occupied" are card vocabulary, not defined rules terms, so the
+# readings live in `effects.PLAY_PERMISSIONS` where a wrong one is visible.
+
+RENGAR_TH = T.id_of("Rengar, Trophy Hunter")
+OCEAN_DRAKE = T.id_of("Ocean Drake")
+PLAIN_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit")
+                  and not T.is_token(c) and not T.has(c, "Ambush")
+                  and T.names[c] not in ("Rengar, Trophy Hunter", "Ocean Drake"))
+
+
+def destinations(card, enemy_bf=None):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    if enemy_bf is not None:
+        s.add_permanent(PLAIN_BODY, 1, bf_loc(enemy_bf))
+    return sorted(A.play_destinations(s, T, CFG, 0, card))
+
+
+if destinations(RENGAR_TH) != [base_loc(0)]:
+    die("perm", "with no enemy anywhere, Rengar has no extra destination")
+if destinations(RENGAR_TH, 0) != sorted([base_loc(0), bf_loc(0)]):
+    die("perm", "Rengar may be played where there ARE enemy units")
+ok("806.3 exception -- 'a battlefield where there are enemy units'")
+
+if destinations(OCEAN_DRAKE) != sorted([base_loc(0), bf_loc(0), bf_loc(1)]):
+    die("perm", "both battlefields are open when nobody is on them")
+if destinations(OCEAN_DRAKE, 0) != sorted([base_loc(0), bf_loc(1)]):
+    die("perm", "a battlefield with a unit on it is no longer OPEN")
+ok("...and 'an open battlefield' means one with no units at all")
+
+if destinations(PLAIN_BODY, 0) != [base_loc(0)]:
+    die("perm", "a card without a printed permission is unaffected")
+ok("...while a card that prints no exception keeps the 806.3 default")
+
+# ---------------------------------------------------------------------------
+# Printed exceptions to "units enter exhausted" (359.2.c)
+#
+# [Accelerate] is the exception the engine already knew. These two print their
+# own, each with a different condition, so the condition is per card while the
+# hook is shared.
+
+XIN_ZHAO = T.id_of("Xin Zhao - Vigilant")
+SHADOW_WATCHER = T.id_of("Shadow Watcher")
+ER_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit")
+               and not T.is_token(c))
+
+
+def enters_ready(card, others_at_base=0, died_in_beginning=False):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    for _ in range(others_at_base):
+        s.add_permanent(ER_BODY, 0, base_loc(0))
+    if died_in_beginning:
+        s.died_in_beginning[0] = 1
+    s.n_hand[0] = 1
+    s.hand[0, 0] = card
+    s.runes_ready[0, :] = 8
+    s.n_deck[0] = 10
+    act = next(x for x in A.legal_actions(s, T, CFG, 0) if x.kind == A.A_PLAY)
+    A.apply(s, T, CFG, act)
+    A.apply(s, T, CFG, A.legal_actions(s, T, CFG, 0)[0])
+    return int(s.perms[s.n_perms - 1, P_READY]) == 1
+
+
+# "two or more OTHER units" -- Xin Zhao is not on the board yet when the card
+# asks, so every friendly unit at the base is an "other" one. The boundary is
+# the part worth checking: one is not two.
+if enters_ready(XIN_ZHAO, 0) or enters_ready(XIN_ZHAO, 1):
+    die("enter-ready", "fewer than two others -- Xin Zhao enters exhausted")
+if not enters_ready(XIN_ZHAO, 2):
+    die("enter-ready", "two others at the base is the condition")
+ok("359.2.c exception -- 'two or more other units in your base'")
+
+if enters_ready(SHADOW_WATCHER, died_in_beginning=False):
+    die("enter-ready", "with no death this Beginning Phase it enters exhausted")
+if not enters_ready(SHADOW_WATCHER, died_in_beginning=True):
+    die("enter-ready", "a friendly death in the Beginning Phase readies it")
+ok("...and a PAST-tense one, recorded when the death happened")
+
 print("\n\033[32mall effect tests passed\033[0m")

@@ -69,7 +69,9 @@ HAND_SLOTS = MAX_HAND
 # tracking it is the one value that cannot be outgrown.
 BOARD_SLOTS = MAX_PERMS
 
-GLOBAL_DIM = 39 + 5 * N_DOMAINS
+# 5*N_DOMAINS: runes_ready + runes_spent for both seats (4), plus this seat's
+# pool_power (1). The +1 is pool_power's [A] column -- see state.D_ANY.
+GLOBAL_DIM = 39 + 5 * N_DOMAINS + 1
 
 # Action-row layout after the kind one-hot and card block.
 ACT_EXTRA = 4 + 1 + 3 + 1 + 1 + 1 + 1 + 2 + 1
@@ -336,6 +338,19 @@ class Encoder:
             # offered this action, and they know what they hid.
             card = int(state.fd_card[act.arg])
             loc = bf_loc(act.arg)
+        elif k == A.A_PICK and int(state.pend_reveal[0]) >= 0:
+            # Sabotage's pick, out of the opponent's REVEALED hand. Naming the
+            # card is what the card does -- they revealed it, and only the
+            # chooser is offered this action.
+            card = int(state.hand[int(state.pend_reveal[1]), act.arg])
+        elif k == A.A_PICK:
+            # "Look at the top N... put 1 into your hand." The whole decision
+            # is WHICH card, so naming it is the only feature that could
+            # discriminate between the candidates -- and it leaks nothing: the
+            # effect is that this player is looking at these cards, and only
+            # they are ever offered the action. No row and no location; the
+            # cards are off the deck and in no zone.
+            card = int(state.look_cards[act.arg])
         elif k == A.A_TARGET:
             # **`arg` means whatever the open slot's KIND says it means**: a
             # permanent row, a location, or a Chain Item uid. This read

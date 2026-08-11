@@ -32,6 +32,8 @@ card ids.
 
 from __future__ import annotations
 
+import re
+
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,8 +46,10 @@ from engine.cards import find  # noqa: E402
 
 from rl.config import ABILITY_KEYWORDS, DOMAINS  # noqa: E402
 from rl.engine.cardtable import CardTable, read_decklist  # noqa: E402
-from rl.engine.effects import (ABILITIES, COND_LEGION, SPECS,  # noqa: E402
-                               STATICS)
+from rl.engine.effects import (ABILITIES, COND_EMPOWERED,  # noqa: E402
+                               COND_LEGION, OP_EMPOWER, OP_LOOK_TOP,
+                               ENTERS_READY_IF, PLAY_PERMISSIONS, SPECS,
+                               STATICS, TEMPORARY_SUPPRESSORS, TOKEN_DOUBLERS)
 
 _DOMAIN_ID = {d.lower(): i for i, d in enumerate(DOMAINS)}
 
@@ -113,6 +117,49 @@ def _encodes_legion(name: str) -> bool:
     return any(st.cond == COND_LEGION for st in STATICS.get(name, ()))
 
 
+def _encodes_predict(name: str) -> bool:
+    """Does this card's transcription actually perform the [Predict]?
+
+    Credited the same way [Legion] is, and NOT through `ABILITY_KEYWORDS`.
+    Blanket-crediting a keyword to any card that has a spec is how Hunt and
+    Vision were once forgiven on cards that never implemented them: the spec
+    covers the rest of the text and the keyword silently rides along. 436.1
+    makes Predicting a real action -- look at the top card, choose whether to
+    Recycle it -- so the only honest test is whether an OP_LOOK_TOP is there.
+    """
+    for entry in list(ABILITIES.get(name, ())) + (
+            [SPECS[name]] if name in SPECS else []):
+        if any(op.op == OP_LOOK_TOP for op in entry.ops):
+            return True
+    return False
+
+
+_PLAY_PERM_CLAUSE = re.compile(
+    r"(?:You may play me|I can be played) to an? [^.]*\.?", re.I)
+
+
+def _encodes_empower(name: str) -> bool:
+    """Does this card's transcription carry the [Empower] activated ability?
+
+    827.1.c.1 makes [Empower Cost] short for "[Cost]: Empower this", and the
+    cost is different on every card -- {2 energy}, "{1 energy} or {Body rune}",
+    "Kill a friendly unit". So the ENGINE implements the mechanism (the status,
+    the once-only gate, the dependent-ability condition) while each card still
+    has to state its own cost. That makes it a Deathknell-shaped keyword, not a
+    Deflect-shaped one, and blanket-crediting it in `ENGINE_KEYWORDS` would
+    pass ~35 cards that never transcribed a cost.
+    """
+    return any(op.op == OP_EMPOWER
+               for ab in ABILITIES.get(name, ()) for op in ab.ops)
+
+
+def _encodes_empowered(name: str) -> bool:
+    """Does it carry the [Empowered] dependent ability (828.1.b.1)?"""
+    return any(st.cond == COND_EMPOWERED for st in STATICS.get(name, ())) or \
+        any(op.cond == COND_EMPOWERED
+            for ab in ABILITIES.get(name, ()) for op in ab.ops)
+
+
 def plays_as_printed(table: CardTable, cid: int) -> bool:
     """Does the engine execute **everything** this card says?
 
@@ -144,6 +191,12 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
     # and quietly dropped the "if you've played another card this turn".
     if "Legion" in unread and _encodes_legion(name):
         unread.discard("Legion")
+    if "Predict" in unread and _encodes_predict(name):
+        unread.discard("Predict")
+    if "Empower" in unread and _encodes_empower(name):
+        unread.discard("Empower")
+    if "Empowered" in unread and _encodes_empowered(name):
+        unread.discard("Empowered")
     if unread:
         return False
     # Presence in ABILITIES or STATICS means the same thing presence in SPECS
@@ -151,7 +204,25 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
     # ability and one unimplemented one (Scuttle Crab: an ETB draw and a
     # Deathknell) are deliberately absent, so this stays an allowlist rather
     # than a guess.
-    if table.residual_text(cid) and not (name in ABILITIES or name in STATICS):
+    # A printed play-destination permission (806.3's exceptions) is executed
+    # by `actions.play_destinations`, so it counts as implemented -- but it
+    # only ever covers its OWN sentence. Ocean Drake says "You may play me
+    # to an open battlefield" AND "you may return a non-Dragon unit to its
+    # owner's hand"; forgiving the whole residual because the first half is
+    # handled would credit a card whose second half does nothing. So strip
+    # just that clause and let whatever is left be judged normally.
+    residual = table.residual_text(cid)
+    if name in PLAY_PERMISSIONS:
+        residual = _PLAY_PERM_CLAUSE.sub("", residual).strip()
+    # `TOKEN_DOUBLERS` sits alongside ABILITIES/STATICS for the same reason:
+    # membership asserts that the card's whole text is the thing the engine
+    # implements. That is true of Zilean, whose text is nothing but the
+    # replacement clause. A future doubler with extra text would need an
+    # ABILITIES entry for that text, exactly as any other card does.
+    if residual and not (name in ABILITIES or name in STATICS
+                         or name in TOKEN_DOUBLERS
+                         or name in TEMPORARY_SUPPRESSORS
+                         or name in ENTERS_READY_IF):
         return False
     # A card that creates a token it cannot play correctly is approximating,
     # exactly as a card whose own text is ignored would be. The Bird token

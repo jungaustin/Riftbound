@@ -38,11 +38,12 @@ import numpy as np
 
 from rl.config import Config
 from rl.engine.cardtable import CardTable
+from rl.engine.effects import TEMPORARY_SUPPRESSORS
 from rl.engine.state import (AWAKEN, BEGINNING, CHANNEL, DRAW, ENDING, MAIN,
                              N_BF, N_SEATS, P_ALIVE, P_CARD, P_CTRL, P_DMG,
                              P_FLAGS, P_LOC, P_MIGHT_MOD, P_READY,
                              TURN_SCOPED_FLAGS,
-                             GameState, bf_loc)
+                             GameState, bf_loc, is_battlefield)
 
 POINTS_PER_HOLD = 1     # some battlefields alter this; per-battlefield later
 POINTS_PER_CONQUER = 1  # confirmed: Conquer is always 1
@@ -82,9 +83,22 @@ def expire_temporary(state: GameState, table: CardTable) -> list[int]:
             continue
         # Through `perm_kw`, so a unit GIVEN [Temporary] (Shadow's Call,
         # Fading Memories) expires exactly like one printed with it.
-        if combat.perm_kw(state, table, i, "Temporary"):
-            combat._destroy(state, table, i)
-            killed.append(i)
+        if not combat.perm_kw(state, table, i, "Temporary"):
+            continue
+        # LeBlanc - Everywhere At Once suppresses the expiry for the turn
+        # player's own Temporary permanents standing at her battlefield. A
+        # base does not count -- the card says "my BATTLEFIELD".
+        loc = int(row[P_LOC])
+        if is_battlefield(loc) and any(
+                state.perms[j, P_ALIVE] == 1
+                and int(state.perms[j, P_CTRL]) == seat
+                and int(state.perms[j, P_LOC]) == loc
+                and table.names[int(state.perms[j, P_CARD])]
+                in TEMPORARY_SUPPRESSORS
+                for j in range(state.n_perms)):
+            continue
+        combat._destroy(state, table, i)
+        killed.append(i)
     return killed
 
 
@@ -311,6 +325,9 @@ def ending(state: GameState) -> None:
         state.perms[:state.n_perms, P_MIGHT_MOD] = 0   # 'this turn' buffs
     state.no_spells[:] = 0          # 'this turn' play restrictions
     state.cards_played[:] = 0       # [Legion] counts within one turn
+    state.played_types[:] = 0       # ...and so does Swain's trio
+    state.died_in_beginning[:] = 0  # ...and Shadow Watcher's window
+    state.any_damage_kills = 0      # ...and Imperial Decree
     if state.n_perms:
         state.kw_grant_turn[:state.n_perms] = 0   # "[Assault 3] this turn"
     state.clear_pools()

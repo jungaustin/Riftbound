@@ -41,12 +41,19 @@ from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
                             plan_ability_cost, plan_flow, plan_payment,
                             plan_surcharge)
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import (TR_ACTIVATED, TR_PLAY_ME, TR_PLAY_SPELL,
-                               abilities_for, spec_for)
+from rl.engine.effects import (ENTERS_READY_IF, ER_DIED_IN_BEGINNING,
+                               ER_TWO_OTHERS_AT_BASE,
+                               OP_EMPOWER, PERM_ENEMY, PERM_NONE,
+                               PERM_OPEN, PLAY_PERMISSIONS, TR_ACTIVATED,
+                               TR_PLAY_ME, TR_PLAY_SPELL, abilities_for,
+                               spec_for)
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
-                             F_LEGION, P_FLAGS,
+                             F_EMPOWERED, F_LEGION, P_FLAGS,
+                             PT_GEAR, PT_SPELL, PT_UNIT,
                              C_DEST, COST_FLOW, COST_NO_ENERGY,
-                             COST_PRINTED, DEST_BANISH, DEST_RECYCLE,
+                             COST_PRINTED, DEST_BANISH, DEST_HAND,
+                             C_REPEAT, DEST_TOP, LOOK_TYPE_BIT,
+                             DEST_RECYCLE,
                              C_SRC, MAIN,
                              MAX_CHAIN, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
@@ -59,13 +66,14 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
 (A_PASS, A_END_TURN, A_PLAY, A_PLAY_AT, A_DECLARE, A_ADD, A_COMMIT, A_CANCEL,
  A_RETREAT, A_TARGET, A_HIDE, A_HIDE_AT, A_PLAY_HIDDEN,
  A_ACCEPT, A_DECLINE, A_PLAY_AT_FAST, A_ORDER, A_ACTIVATE,
- A_PLAY_FLOW, A_MULLIGAN, A_MULLIGAN_DONE) = range(21)
+ A_PLAY_FLOW, A_MULLIGAN, A_MULLIGAN_DONE, A_PICK, A_PICK_NONE,
+ A_PLAY_REPEAT) = range(24)
 
 KIND_NAMES = ("pass", "end_turn", "play", "play_at", "declare", "add",
               "commit", "cancel", "retreat", "target", "hide", "hide_at",
               "play_hidden", "accept", "decline", "play_at_fast",
               "order", "activate", "play_flow", "mulligan",
-              "mulligan_done")
+              "mulligan_done", "pick", "pick_none", "play_repeat")
 
 
 class Action(NamedTuple):
@@ -129,8 +137,73 @@ def play_destinations(state: GameState, table: CardTable, cfg: Config,
         # So a unit played in a response window may ONLY go to an Ambush
         # destination -- it has no timing permission to reach its own base.
         return ambush
+    # Printed exceptions to 806.3, one per card -- see `effects.PLAY_PERMISSIONS`
+    # for what "open" and "occupied" are taken to mean, since neither is a
+    # defined rules term. These ADD destinations exactly as [Ambush] does; they
+    # never remove the base.
+    perm = PLAY_PERMISSIONS.get(table.names[card], PERM_NONE)
+    extra = []
+    for i in range(N_BF):
+        loc = bf_loc(i)
+        if perm == PERM_OPEN and not state.seats_at(loc)[0] \
+                and not state.seats_at(loc)[1]:
+            extra.append(loc)
+        elif perm == PERM_ENEMY and state.units_at(loc, 1 - seat).size:
+            extra.append(loc)
+
     own = [bf_loc(i) for i in range(N_BF) if int(state.bf_ctrl[i]) == seat]
-    return [base_loc(seat)] + sorted(set(own + ambush))
+    return [base_loc(seat)] + sorted(set(own + ambush + extra))
+
+
+def _enters_ready(state: GameState, table: CardTable, seat: int,
+                  card: int) -> bool:
+    """Does this card print its own exception to 359.2.c (enter exhausted)?
+
+    Checked as the unit is played, which is when the card asks. Xin Zhao counts
+    the board at that instant -- "two or more OTHER units", and he is not on it
+    yet, so every friendly unit at the base is an "other" one.
+    """
+    kind = ENTERS_READY_IF.get(table.names[card])
+    if kind is None:
+        return False
+    if kind == ER_TWO_OTHERS_AT_BASE:
+        return int(state.units_at(base_loc(seat), seat).size) >= 2
+    if kind == ER_DIED_IN_BEGINNING:
+        return bool(state.died_in_beginning[seat])
+    return False
+
+
+def _played_bits(table: CardTable, card: int) -> int:
+    """Which of Swain's kinds this card counts as, when played.
+
+    **A card with more than one type counts for EVERY one of them.** A gear
+    unit is both a gear and a unit for Swain's "a non-token unit, a non-token
+    gear, and a spell this turn", so this ORs the bits rather than picking one.
+    Written as an if/elif first, which would have quietly counted such a card
+    once and made the trio a card harder to complete than it is.
+
+    No card in the current export carries two types, so nothing exercises this
+    today -- which is exactly why it is worth stating: the chain was wrong in
+    principle and would have stayed wrong invisibly until the set that prints
+    one landed.
+    """
+    bits = 0
+    if table.is_type(card, "Unit"):
+        bits |= PT_UNIT
+    if table.is_type(card, "Gear"):
+        bits |= PT_GEAR
+    if table.is_type(card, "Spell"):
+        bits |= PT_SPELL
+    return bits
+
+
+def _look_type_bit(table: CardTable, card: int) -> int:
+    """`LK_*` bit for a card's printed type, for a look's pick restriction."""
+    bit = 0
+    for name, b in LOOK_TYPE_BIT.items():
+        if table.is_type(card, name):
+            bit |= b
+    return bit
 
 
 def _main_open(state: GameState, seat: int) -> bool:
@@ -183,6 +256,14 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
             if ab.cost_exhaust and not row[P_READY]:
                 continue
             if ab.cost_xp and int(state.xp[seat]) < ab.cost_xp:
+                continue
+            # 827.1.c.1 -- "[Cost]: Empower this. Play only if not Empowered."
+            # The restriction is part of what the keyword abbreviates, so it is
+            # read off the op rather than written on each of the ~35 cards that
+            # print it. 441.1.b says the same thing from the other side: an
+            # Empowered object cannot be Empowered.
+            if (any(op.op == OP_EMPOWER for op in ab.ops)
+                    and state.has_flag(i, F_EMPOWERED)):
                 continue
             if plan_ability_cost(state, table, seat, card,
                                  ab.cost_energy, ab.cost_power) is None:
@@ -261,6 +342,65 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     # counts as never having triggered (383.3.a.2), so it cannot be responded
     # to and it never sees the board it would have changed. A "you may" later
     # in the text is a different thing, decided on resolution (383.3.a.3).
+    # "Look at the top N cards... put 1 into your hand and recycle the rest."
+    # Checked before everything else for the same reason the mulligan is: the
+    # cards are off the deck and in no zone, so nothing else may happen until
+    # they land somewhere.
+    if state.pend_look >= 0:
+        if seat != int(state.pend_look):
+            return []
+        mask = int(state.look_type_mask)
+        out = [Action(A_PICK, i) for i in range(int(state.n_look))
+               if not mask or (mask & _look_type_bit(
+                   table, int(state.look_cards[i])))]
+        # "You may reveal a gear from among them" with no gear among them
+        # leaves nothing to pick -- and the card said "may", so declining
+        # is the whole answer. A type filter therefore always implies an
+        # out, which `effects.py` asserts at import.
+        if state.look_optional or not out:
+            out.append(Action(A_PICK_NONE))
+        assert out, "a look with nothing to pick should never have been pended"
+        return out
+
+    # Zilean's replacement: "you may play that token and an additional copy of
+    # it instead." Checked before `pend_may` because both use ACCEPT/DECLINE
+    # and only one can ever be live -- this one is set during a resolution that
+    # has already finished, and `_advance_pending` will not start another until
+    # it clears.
+    if int(state.pend_double[0]) >= 0:
+        src = int(state.pend_double[0])
+        if seat != int(state.perms[src, P_CTRL]):
+            return []
+        return [Action(A_ACCEPT), Action(A_DECLINE)]
+
+    # Sabotage: pick a card out of the revealed hand. Candidates are read live
+    # off the opponent's hand, filtered by the printed type restriction
+    # ("a non-unit card"). With no legal card there is nothing to choose and
+    # the effect simply does nothing, so a decline is always available.
+    if int(state.pend_reveal[0]) >= 0:
+        if seat != int(state.pend_reveal[0]):
+            return []
+        foe = int(state.pend_reveal[1])
+        mask = int(state.look_type_mask)
+        out = [Action(A_PICK, i) for i in range(int(state.n_hand[foe]))
+               if not mask or (mask & _look_type_bit(
+                   table, int(state.hand[foe, i])))]
+        out.append(Action(A_PICK_NONE))
+        return out
+
+    # Cull the Weak: each player kills one of THEIR OWN units, in turn order.
+    # Offered as A_TARGET over the chooser's own live units -- a seat with none
+    # never reaches here, because `_advance_cull` skips it.
+    if state.pend_cull >= 0:
+        if seat != int(state.pend_cull):
+            return []
+        out = [Action(A_TARGET, i) for i in range(state.n_perms)
+               if state.perms[i, P_ALIVE] == 1
+               and int(state.perms[i, P_CTRL]) == seat
+               and table.is_type(int(state.perms[i, P_CARD]), "Unit")]
+        assert out, "a cull with no unit to kill should have been skipped"
+        return out
+
     if state.pend_may >= 0:
         item = int(state.pend_may)
         if int(state.chain[item, C_CTRL]) != seat:
@@ -372,6 +512,17 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
             out.append(Action(A_PLAY, i))
     for i in chain.playable_hand_indices(state, table, cfg, seat):
         out.append(Action(A_PLAY, i))
+        # 820.1.c.1 -- [Repeat] is an Additional Cost paid "during the steps of
+        # playing", so whether to pay it belongs to THIS decision, exactly as
+        # [Accelerate] belongs to the destination choice above. Offered only
+        # when the base cost plus the Repeat cost are affordable together:
+        # `plan_payment`'s extra_* arguments share the overlapping-pool rule,
+        # so this is max(e, p) over the combined cost, not two payments.
+        card = int(state.hand[seat, i])
+        re_e, re_p = int(table.repeat_energy[card]), int(table.repeat_power[card])
+        if re_e >= 0 and plan_payment(state, table, seat, card,
+                                      re_e, re_p) is not None:
+            out.append(Action(A_PLAY_REPEAT, i))
     hide_cards, _ = chain.hideable(state, table, cfg, seat)
     for i in hide_cards:
         out.append(Action(A_HIDE, i))
@@ -424,6 +575,8 @@ def _settle(state: GameState, table: CardTable, cfg: Config) -> dict:
     """
     if (state.pend_slot >= 0 or state.pend_may >= 0 or state.pend_order >= 0
             or state.pend_play >= 0 or state.pend_hide >= 0 or state.declaring
+            or state.pend_look >= 0 or int(state.pend_double[0]) >= 0
+            or int(state.pend_reveal[0]) >= 0 or state.pend_cull >= 0
             or is_terminal(state)):
         return {}
     log: dict = {}
@@ -510,7 +663,13 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
             return {}
         return _play_spell(state, table, cfg, seat, action.arg)
 
+    if k == A_PLAY_REPEAT:
+        seat = int(state.priority)
+        return _play_spell(state, table, cfg, seat, action.arg, repeat=True)
+
     if k == A_TARGET:
+        if state.pend_cull >= 0:
+            return _cull_one(state, table, cfg, int(action.arg))
         return _choose_target(state, table, cfg, action.arg)
 
     if k == A_ACTIVATE:
@@ -522,9 +681,13 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
         return {}
 
     if k == A_ACCEPT:
+        if int(state.pend_double[0]) >= 0:
+            return _resolve_double(state, table, cfg, take=True)
         return _accept_may(state, table, cfg)
 
     if k == A_DECLINE:
+        if int(state.pend_double[0]) >= 0:
+            return _resolve_double(state, table, cfg, take=False)
         return _decline_may(state, table, cfg)
 
     if k == A_HIDE:
@@ -540,6 +703,13 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
 
     if k == A_MULLIGAN_DONE:
         return _finish_mulligan(state, table, cfg)
+
+    if k in (A_PICK, A_PICK_NONE):
+        if int(state.pend_reveal[0]) >= 0:
+            return _finish_reveal(state, table, cfg,
+                                  int(action.arg) if k == A_PICK else -1)
+        return _finish_look(state, table, cfg,
+                            int(action.arg) if k == A_PICK else -1)
 
     if k == A_PLAY_FLOW:
         return _play_flow(state, table, cfg, int(state.priority), action.arg)
@@ -628,7 +798,7 @@ def _advance_pending(state: GameState, table: CardTable, cfg: Config) -> dict:
 
 
 def _play_spell(state: GameState, table: CardTable, cfg: Config, seat: int,
-                hand_idx: int) -> dict:
+                hand_idx: int, repeat: bool = False) -> dict:
     """Announce a spell: it goes on the Chain Pending, then targets are chosen.
 
     The card leaves hand now but does **not** resolve -- that is the whole point
@@ -642,6 +812,11 @@ def _play_spell(state: GameState, table: CardTable, cfg: Config, seat: int,
     state.n_hand[seat] = n - 1
 
     item = chain.push(state, card, seat, from_hand=True, bound_bf=-1)
+    if repeat:
+        # Recorded now, paid at finalization with the rest of the cost, and
+        # read at resolution. 820.1.c.3 -- once only, so this is a flag and
+        # never a count.
+        state.chain[item, C_REPEAT] = 1
     spec = spec_for(table, card)
     assert spec is not None, f"{table.names[card]!r} has no spec"
     if spec.n_targets:
@@ -689,7 +864,8 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
             recycle = plan_ability_cost(state, table, seat, card,
                                         spec.cost_energy, spec.cost_power)
             assert recycle is not None, "unaffordable ability reached finalize"
-            pay_ability_cost(state, table, seat, spec.cost_energy, recycle)
+            pay_ability_cost(state, table, seat, spec.cost_energy, recycle,
+                             spec.cost_power, card)
             if spec.cost_exhaust:
                 src = int(state.chain[item, C_SRC])
                 assert state.perms[src, P_READY], "exhaust cost with no ready source"
@@ -732,7 +908,7 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
         recycle = plan_flow(state, table, seat, card)
         assert recycle is not None, "unaffordable Flow cost reached finalization"
         pay_ability_cost(state, table, seat, int(table.flow_energy[card]),
-                         recycle)
+                         recycle, int(table.flow_power[card]), card)
     elif cost_mode == COST_NO_ENERGY:
         # "ignoring its Energy cost. (You must still pay its Power cost.)" --
         # the reminder is on the card because the two halves are separable, and
@@ -741,13 +917,22 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
         recycle = plan_ability_cost(state, table, seat, card, 0,
                                     int(table.power[card]))
         assert recycle is not None, "unaffordable Power cost reached finalization"
-        pay_ability_cost(state, table, seat, 0, recycle)
+        pay_ability_cost(state, table, seat, 0, recycle,
+                         int(table.power[card]), card)
     elif int(state.chain[item, C_BOUND_BF]) < 0:
         # 811.1.b -- a card played from Hidden ignores its cost entirely. The
         # rune was already paid when it was hidden.
-        recycle = plan_payment(state, table, seat, card)
+        # 820.1.c.1 -- a paid [Repeat] rides along as an Additional Cost, part
+        # of the SAME payment rather than a second one, so it goes through
+        # `plan_payment`'s extra_* arguments and shares the overlapping-pool
+        # rule: max(energy, power) over the combined cost.
+        re_e = re_p = 0
+        if int(state.chain[item, C_REPEAT]) == 1:
+            re_e = max(0, int(table.repeat_energy[card]))
+            re_p = max(0, int(table.repeat_power[card]))
+        recycle = plan_payment(state, table, seat, card, re_e, re_p)
         assert recycle is not None, "unaffordable spell reached finalization"
-        pay(state, table, seat, card, recycle)
+        pay(state, table, seat, card, recycle, re_e, re_p)
     for dom in surcharge:
         state.recycle_rune(seat, dom)
     chain.finalize(state, item)
@@ -756,6 +941,8 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
     # say the card was played, and not at resolution: a countered spell was
     # still played, and still turns Legion on for what follows.
     state.cards_played[seat] += 1
+    if not table.is_token(card):
+        state.played_types[seat] |= _played_bits(table, card)
     # "When you play a spell" -- 349 makes a card *played* at finalization, not
     # at resolution, so Ravenbloom Student grows the moment the spell is
     # committed to the Chain and keeps the Might even if it is countered.
@@ -793,7 +980,8 @@ def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
         recycle = plan_ability_cost(state, table, seat, card,
                                     spec.cost_energy, spec.cost_power)
         assert recycle is not None, "unaffordable ability reached _activate"
-        pay_ability_cost(state, table, seat, spec.cost_energy, recycle)
+        pay_ability_cost(state, table, seat, spec.cost_energy, recycle,
+                         spec.cost_power, card)
         if spec.cost_exhaust:
             state.perms[perm, P_READY] = 0
         ctx_loc = int(state.perms[perm, P_LOC])
@@ -954,14 +1142,20 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     # the card is played.
     legion = bool(state.cards_played[seat])
     state.cards_played[seat] += 1
-    src = state.add_permanent(card, seat, loc, ready=(fast or not is_unit),
+    # A token IS played (187) but is never a "non-token unit"; Swain's clause
+    # asks for the non-token kind, so tokens are excluded here rather than at
+    # the point the condition is read.
+    if not table.is_token(card):
+        state.played_types[seat] |= _played_bits(table, card)
+    enters_ready = fast or not is_unit or _enters_ready(state, table, seat, card)
+    src = state.add_permanent(card, seat, loc, ready=enters_ready,
                               is_unit=is_unit)
     if legion:
         state.perms[src, P_FLAGS] |= F_LEGION
     # "When you play a unit" watchers -- Lillia. Queued after the permanent is
     # on the board, so a watcher that is itself the unit being played sees a
     # consistent board.
-    chain.fire_play_unit(state, table, seat, card)
+    chain.fire_play_unit(state, table, seat, card, src)
 
     # 359.2.b -- rules text executes as the permanent enters, so "When you play
     # me" triggers here, after it is on the board. 337.2 already resolved the
@@ -1013,12 +1207,160 @@ def _finish_mulligan(state: GameState, table: CardTable, cfg: Config) -> dict:
     return log
 
 
+def _resolve_double(state: GameState, table: CardTable, cfg: Config,
+                    take: bool) -> dict:
+    """Answer Zilean's "you may play ... an additional copy of it instead".
+
+    The once-each-turn stamp is spent whether or not the copy is taken: the
+    replacement was applied to this token play either way, and 820-style "you
+    may" costs nothing to decline only when the card says so. Zilean's does
+    not -- "Once each turn" gates the OPPORTUNITY, and this was it.
+    """
+    src, card, loc = (int(x) for x in state.pend_double)
+    seat = int(state.perms[src, P_CTRL])
+    state.pend_double[:] = (-1, -1, -1)
+    state.once_used[src] = int(state.turn)
+    log: dict = {}
+    if take:
+        row = state.add_permanent(card, seat, loc, ready=False,
+                                  is_unit=bool(table.is_type(card, "Unit")))
+        log["doubled"] = row
+        # 187 -- the copy is PLAYED like any other token, so a watcher for
+        # "when you play a token unit" sees it too. Lillia counts both.
+        chain.fire_play_unit(state, table, seat, card, row)
+    log.update(_advance_pending(state, table, cfg))
+    return log
+
+
+def _has_cullable(state: GameState, table: CardTable, seat: int) -> bool:
+    return any(state.perms[i, P_ALIVE] == 1
+               and int(state.perms[i, P_CTRL]) == seat
+               and table.is_type(int(state.perms[i, P_CARD]), "Unit")
+               for i in range(state.n_perms))
+
+
+def _advance_cull(state: GameState, table: CardTable, seat_done: int) -> None:
+    """Hand the cull to the next seat that actually has a unit, or end it."""
+    nxt = seat_done + 1
+    while nxt < N_SEATS and not _has_cullable(state, table, nxt):
+        nxt += 1
+    state.pend_cull = nxt if nxt < N_SEATS else -1
+
+
+def _cull_one(state: GameState, table: CardTable, cfg: Config,
+              perm: int) -> dict:
+    """One seat's "kill one of their units", then pass to the next."""
+    seat = int(state.pend_cull)
+    combat.destroy(state, table, perm)
+    _advance_cull(state, table, seat)
+    log = {"culled": perm}
+    if state.pend_cull < 0:
+        log.update(_advance_pending(state, table, cfg))
+    return log
+
+
+def _finish_reveal(state: GameState, table: CardTable, cfg: Config,
+                   pick: int) -> dict:
+    """Recycle the chosen card out of the revealed hand (416.1.c).
+
+    The card goes to its OWNER's deck, not the chooser's -- 416.1.c is explicit
+    that each player recycles to their own Main Deck regardless of who was
+    instructed to perform the Recycle. Everything not chosen stays in hand
+    untouched; only the one card moves.
+    """
+    foe = int(state.pend_reveal[1])
+    state.pend_reveal[:] = (-1, -1)
+    log: dict = {}
+    n = int(state.n_hand[foe])
+    if 0 <= pick < n:
+        card = int(state.hand[foe, pick])
+        state.hand[foe, pick:n - 1] = state.hand[foe, pick + 1:n]
+        state.hand[foe, n - 1] = -1
+        state.n_hand[foe] = n - 1
+        state.recycle_card(foe, card)
+        log["sabotaged"] = table.names[card]
+    log.update(_advance_pending(state, table, cfg))
+    return log
+
+
+def _finish_look(state: GameState, table: CardTable, cfg: Config,
+                 pick: int) -> dict:
+    """Send the picked card and the rest to their destinations.
+
+    `pick` is an index into the look buffer, or -1 for "I choose none" on a
+    card whose choice is optional. The cards have been off the deck since the
+    op ran, so every one of them must land somewhere here -- the buffer is
+    emptied unconditionally.
+
+    416.1.c: a Recycle goes to the card's OWNER's deck, and the only player who
+    can be looking at their own deck's top is that owner, so `seat` is both.
+    """
+    seat = int(state.pend_look)
+    n = int(state.n_look)
+    picked = int(state.look_cards[pick]) if 0 <= pick < n else -1
+
+    def send(card: int, dest: int) -> None:
+        if card < 0:
+            return
+        if dest == DEST_HAND:
+            h = int(state.n_hand[seat])
+            assert h < state.hand.shape[1], "hand overflow from a look"
+            state.hand[seat, h] = card
+            state.n_hand[seat] = h + 1
+        elif dest == DEST_RECYCLE:
+            state.recycle_card(seat, card)
+        elif dest == DEST_BANISH:
+            b = int(state.n_banished[seat])
+            state.banished[seat, b] = card
+            state.n_banished[seat] = b + 1
+        else:
+            t = int(state.n_trash[seat])
+            state.trash[seat, t] = card
+            state.n_trash[seat] = t + 1
+
+    # 436.1 -- whatever goes back on TOP is written first, in the order it came
+    # off, so the deck reads the same as before for anything not recycled. This
+    # runs before the other destinations because it rewinds `deck_ptr`, and a
+    # card sent elsewhere must not be sitting in the rewound span.
+    top = [int(state.look_cards[i]) for i in range(n)
+           if (int(state.look_pick_dest) if i == pick
+               else int(state.look_rest_dest)) == DEST_TOP]
+    if top:
+        ptr = int(state.deck_ptr[seat]) - len(top)
+        assert ptr >= 0, "put-back underflows the deck"
+        for k, card in enumerate(top):
+            state.deck[seat, ptr + k] = card
+        state.deck_ptr[seat] = ptr
+
+    for i in range(n):
+        card = int(state.look_cards[i])
+        dest = int(state.look_pick_dest) if i == pick else int(state.look_rest_dest)
+        if dest == DEST_TOP:
+            continue                       # already written back above
+        send(card, dest)
+    state.look_cards[:] = -1
+    state.n_look = 0
+    state.pend_look = -1
+    log = {"picked": table.names[picked] if picked >= 0 else None}
+    # The look was the last op of its card, so the Chain can carry on now.
+    log.update(_advance_pending(state, table, cfg))
+    return log
+
+
 def acting_seat(state: GameState) -> int:
     """Which seat is being asked to choose, or -1 if none is."""
     if is_terminal(state):
         return -1
     if state.pend_mull >= 0:
         return int(state.pend_mull)
+    if state.pend_look >= 0:
+        return int(state.pend_look)
+    if int(state.pend_double[0]) >= 0:
+        return int(state.perms[int(state.pend_double[0]), P_CTRL])
+    if int(state.pend_reveal[0]) >= 0:
+        return int(state.pend_reveal[0])
+    if state.pend_cull >= 0:
+        return int(state.pend_cull)
     if state.pend_slot >= 0:
         item = chain.oldest_pending(state)
         if item >= 0:

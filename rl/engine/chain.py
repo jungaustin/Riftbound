@@ -41,7 +41,9 @@ from rl.engine.cost import plan_flow, plan_payment
 from rl.engine.effects import (TR_PLAY_UNIT,
                                SPEED_ACTION, SPEED_REACTION, abilities_for,
                                spec_for)
-from rl.engine.state import (C_ABIL, C_SUBJ, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
+from rl.engine.state import (is_battlefield,  # noqa: F401
+                             C_REPEAT,  # noqa: F401
+                             C_ABIL, C_SUBJ, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
                              C_FINAL, C_COST, C_DEST, C_FROM_HAND, C_SRC,
                              C_UID, COST_PRINTED, DEST_TRASH, DEST_BANISH,
                              DEST_RECYCLE,
@@ -306,7 +308,7 @@ def queue(state: GameState, trigger: int, src: int, ctx: int = -1,
 
 
 def fire_play_unit(state: GameState, table: CardTable, seat: int,
-                   card: int) -> None:
+                   card: int, perm: int = -1) -> None:
     """Queue "when you play a unit" watchers for `seat` (Lillia).
 
     Called from BOTH places a unit can be played -- from hand in
@@ -316,14 +318,30 @@ def fire_play_unit(state: GameState, table: CardTable, seat: int,
     """
     is_token = table.is_token(card)
     for w in range(state.n_perms):
-        if state.perms[w, P_CTRL] != seat or state.perms[w, P_ALIVE] != 1:
+        if state.perms[w, P_ALIVE] != 1:
             continue
+        mine = int(state.perms[w, P_CTRL]) == seat
         for ab in abilities_for(table, int(state.perms[w, P_CARD])):
             if ab.trigger != TR_PLAY_UNIT:
                 continue
+            # "When you play a unit" (Lillia) watches its OWN controller;
+            # "when an OPPONENT plays a unit" (Vex) watches the other seat.
+            # One flag rather than two triggers, because everything else about
+            # them -- when they fire, what they see -- is identical.
+            if ab.subject_enemy == mine:
+                continue
             if ab.subject_token and not is_token:
                 continue
-            queue(state, TR_PLAY_UNIT, w, int(state.perms[w, P_LOC]))
+            # Vex needs somewhere to point [Stun], and that is the permanent
+            # just played -- not a target, so it rides as the subject the same
+            # way an attack trigger's does.
+            if ab.subject_enemy and perm < 0:
+                continue
+            if ab.subject_at_battlefield and not is_battlefield(
+                    int(state.perms[w, P_LOC])):
+                continue
+            queue(state, TR_PLAY_UNIT, w, int(state.perms[w, P_LOC]),
+                  subj=perm)
 
 
 def trig_controller(state: GameState, i: int) -> int:
@@ -552,11 +570,22 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
     ctx = int(state.chain[item, C_CTX])
     dest = int(state.chain[item, C_DEST])
     subj = int(state.chain[item, C_SUBJ])
+    repeated = int(state.chain[item, C_REPEAT]) == 1
     card, ctrl, from_hand, bound, targets = _pop(state, item)
 
     assert spec is not None, f"no spec for {table.names[card]!r} on the chain"
     log = rsv.resolve(state, table, cfg, spec, ctrl, targets[:spec.n_targets],
                       bound, from_hand, source=src, ctx=ctx, subj=subj)
+    if repeated:
+        # 820.1.d -- "execute the instructions of this chain item one
+        # additional time during resolution". One more pass over the SAME ops
+        # with the SAME targets, inside the same resolution: targets were
+        # chosen once, at finalization, and Repeat does not re-choose them.
+        # 820.1.c.3 makes it exactly one extra pass, never a loop.
+        again = rsv.resolve(state, table, cfg, spec, ctrl,
+                            targets[:spec.n_targets], bound, from_hand,
+                            source=src, ctx=ctx, subj=subj)
+        log["repeated"] = again
     log["card"] = table.names[card]
 
     if abil >= 0:

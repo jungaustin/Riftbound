@@ -576,4 +576,61 @@ if s.pool_power[0].sum() != before + 1:
     die("add", "no Power was added to the Rune Pool")
 ok("[Add] resolves immediately: Power appears with nothing on the Chain")
 
+# ---------------------------------------------------------------------------
+# Vex - Apathetic: "When an opponent plays a unit while I'm at a battlefield,
+# [Stun] it. They can't move it this turn."
+#
+# The mirror image of Lillia's "when you play a unit": same trigger, opposite
+# side, which is one flag rather than a second trigger. Three restrictions, and
+# each is separately checkable because dropping any one widens the card.
+
+from rl.engine import chain as chain_mod
+from rl.engine import combat as _combat
+from rl.engine.state import (C_FINAL, F_NO_MOVE as _F_NO_MOVE,
+                             F_STUNNED as _F_STUNNED)
+
+VEX = T.id_of("Vex - Apathetic")
+VEX_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit")
+                and not T.is_token(c))
+
+
+def vex_play(vex_loc, player=1):
+    """Seat `player` plays a unit while seat 0 has a Vex at `vex_loc`."""
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, player, player
+    s.add_permanent(VEX, 0, vex_loc)
+    played = s.add_permanent(VEX_BODY, player, bf_loc(0))
+    chain_mod.fire_play_unit(s, T, player, VEX_BODY, played)
+    while s.n_trig:
+        chain_mod.place(s, T, V1, 0)
+    for i in range(int(s.n_chain)):
+        s.chain[i, C_FINAL] = 1
+    while s.n_chain:
+        chain_mod.resolve_top(s, T, V1)
+    return s, played
+
+
+s, p = vex_play(bf_loc(0))
+if not s.has_flag(p, _F_STUNNED) or not s.has_flag(p, _F_NO_MOVE):
+    die("vex", "an opponent's unit is stunned and pinned")
+s.active = 1
+s.perms[p, P_READY] = 1
+if _combat.can_move(s, T, V1, p, base_loc(1)):
+    die("vex", "'they can't move it this turn' must block the retreat home too")
+ok("Vex stuns what an opponent plays, and pins it for the turn")
+
+s, p = vex_play(base_loc(0))
+if s.has_flag(p, _F_STUNNED):
+    die("vex", "'while I'm at a BATTLEFIELD' -- a Vex in a base watches nothing")
+ok("...only while she is at a battlefield")
+
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+s.add_permanent(VEX, 0, bf_loc(0))
+own = s.add_permanent(VEX_BODY, 0, bf_loc(0))
+chain_mod.fire_play_unit(s, T, 0, VEX_BODY, own)
+if int(s.n_trig):
+    die("vex", "'when an OPPONENT plays' -- my own units must not trigger it")
+ok("...and never on her own controller's units")
+
 print("\n\033[32mall trigger tests passed\033[0m")

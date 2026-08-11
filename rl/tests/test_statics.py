@@ -30,7 +30,8 @@ from rl.engine import resolve
 from rl.engine.effects import SPECS
 from rl.engine.cardtable import full_table
 from rl.engine.cost import card_domains, plan_payment
-from rl.engine.state import (P_ALIVE, P_DMG, P_LOC, GameState, base_loc,
+from rl.engine.state import (F_EMPOWERED, MAIN, P_ALIVE, P_DMG, P_LOC,
+                             GameState, base_loc,
                              bf_loc,
                              bf_loc)
 
@@ -490,3 +491,232 @@ if m(s, lil) != _base + 2:
                   f"got {m(s, lil) - _base}")
 ok("tokens made by an EFFECT count as played, and each one triggers")
 
+
+
+# ---------------------------------------------------------------------------
+# [Empower] (827) / [Empowered] (828)
+#
+# 441.1.a -- Empowered is a BINARY state, so it is a flag. 827.1.c.1 makes
+# "[Empower Cost]" short for "[Cost]: Empower this. Play only if not
+# Empowered", and 828.1.b.1 makes "[Empowered] - Text" short for "While I have
+# the Empowered status, this card gains 'Text'". The engine owns the status,
+# the once-only gate and the condition; each card still states its own cost,
+# which is why `decks._encodes_empower` credits the keyword by evidence.
+
+SUNHAWK = T.id_of("Solari Sunhawk")      # [Empower] {2}; +1 Might and [Deflect 2]
+
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+hawk = s.add_permanent(SUNHAWK, 0, base_loc(0))
+s.runes_ready[0, 0] = 6
+
+base_might = combat.might(s, T, hawk)
+if combat.perm_kw(s, T, hawk, "Deflect"):
+    die("empower", "the dependent ability must be OFF before Empowering")
+
+acts = [a for a in A.legal_actions(s, T, CFG, 0) if a.kind == A.A_ACTIVATE]
+if not acts:
+    die("empower", "the Empower ability should be activatable")
+A.apply(s, T, CFG, acts[0])
+for _ in range(6):
+    if s.n_chain == 0 and s.n_trig == 0:
+        break
+    A.apply(s, T, CFG, A.Action(A.A_PASS))
+
+if not s.has_flag(hawk, F_EMPOWERED):
+    die("empower", "827.1.b -- paying the cost Empowers the source")
+if combat.might(s, T, hawk) != base_might + 1:
+    die("empower", f"828.1.b.1 -- the dependent +1 Might should be live, "
+                   f"got {combat.might(s, T, hawk)} not {base_might + 1}")
+if combat.perm_kw(s, T, hawk, "Deflect") != 2:
+    die("empower", "...and so should the dependent [Deflect 2]")
+ok("828.1.b.1 -- a dependent ability switches on with the Empowered status")
+
+if [a for a in A.legal_actions(s, T, CFG, 0) if a.kind == A.A_ACTIVATE]:
+    die("empower", "827.1.c.1 -- 'only if not Empowered' must withdraw the "
+                   "ability once the status is held")
+ok("827.1.c.1/441.1.b -- an Empowered permanent cannot be Empowered again")
+
+print("\n\033[32mall static tests passed\033[0m")
+
+
+# ---------------------------------------------------------------------------
+# Zilean - Time Mage: a replacement on playing a token unit
+#
+# "Once each turn, if you would play a token unit while I'm at a battlefield,
+# you may play that token and an additional copy of it instead." Three
+# restrictions and a choice, and each is worth its own check because dropping
+# any one of them makes a strictly stronger card.
+
+from rl.engine.state import MAIN as _MAIN, P_CTRL as _P_CTRL
+
+ZILEAN = T.id_of("Zilean - Time Mage")
+
+
+def zilean_board(at_battlefield=True, turn=1):
+    s = GameState()
+    s.phase, s.active, s.priority = _MAIN, 0, 0
+    s.turn = turn
+    z = s.add_permanent(ZILEAN, 0,
+                        bf_loc(0) if at_battlefield else base_loc(0))
+    return s, z
+
+
+def play_tokens(s):
+    resolve.resolve(s, T, CFG, SPECS["Recruit the Vanguard"], 0,
+                    [base_loc(0)], -1, True)
+    return sum(1 for i in range(s.n_perms)
+               if s.perms[i, P_ALIVE] == 1 and int(s.perms[i, _P_CTRL]) == 0)
+
+
+s, z = zilean_board()
+n = play_tokens(s)
+if int(s.pend_double[0]) < 0:
+    die("zilean", "playing token units should offer the replacement")
+A.apply(s, T, CFG, A.Action(A.A_ACCEPT))
+after = sum(1 for i in range(s.n_perms)
+            if s.perms[i, P_ALIVE] == 1 and int(s.perms[i, _P_CTRL]) == 0)
+if after != n + 1:
+    die("zilean", f"accepting adds exactly ONE additional copy, got {after - n}")
+ok("'and an additional copy of it' -- one extra token, not a doubling of all")
+
+play_tokens(s)
+if int(s.pend_double[0]) >= 0:
+    die("zilean", "'Once each turn' -- a second token play gets no offer")
+ok("...and 'Once each turn' spends the opportunity for the rest of the turn")
+
+# A new turn re-arms it: the stamp is compared against the turn, not cleared.
+s.turn += 1
+play_tokens(s)
+if int(s.pend_double[0]) < 0:
+    die("zilean", "the once-each-turn stamp must re-arm on a new turn")
+A.apply(s, T, CFG, A.Action(A.A_DECLINE))
+if int(s.pend_double[0]) >= 0:
+    die("zilean", "declining clears the offer")
+ok("...re-arming next turn, and declining is a real option (it can break 'alone')")
+
+s, z = zilean_board(at_battlefield=False)
+play_tokens(s)
+if int(s.pend_double[0]) >= 0:
+    die("zilean", "'while I'm at a battlefield' -- a Zilean at base does nothing")
+ok("...and it only applies while Zilean is AT A BATTLEFIELD")
+
+print("\n\033[32mall static tests passed\033[0m")
+
+
+# ---------------------------------------------------------------------------
+# LeBlanc - Everywhere At Once: "Your [Temporary] effects at my battlefield
+# don't trigger."
+#
+# 816's reminder -- "Kill it at the start of its controller's Beginning Phase"
+# -- is the trigger being suppressed. Two restrictions in the wording, and
+# dropping either one makes a much stronger card: "YOUR" effects (never an
+# opponent's) and "at my BATTLEFIELD" (never from a base).
+
+from rl.engine import phases as _phases
+from rl.engine.state import BEGINNING as _BEGINNING
+
+LEBLANC = T.id_of("LeBlanc - Everywhere At Once")
+TEMP_TOKEN = T.id_of("Sprite (274) // Buff")     # 3 Might [Temporary] token
+
+
+def expires(lb_loc, lb_seat=0, temp_loc=None):
+    s = GameState()
+    s.phase, s.active, s.priority = _BEGINNING, 0, 0
+    if lb_loc is not None:
+        s.add_permanent(LEBLANC, lb_seat, lb_loc)
+    t = s.add_permanent(TEMP_TOKEN, 0, temp_loc, is_unit=True)
+    _phases.expire_temporary(s, T)
+    return s.perms[t, P_ALIVE] != 1
+
+
+if not expires(None, temp_loc=bf_loc(0)):
+    die("leblanc", "without LeBlanc a [Temporary] unit expires as normal")
+if expires(bf_loc(0), temp_loc=bf_loc(0)):
+    die("leblanc", "a friendly LeBlanc at the same battlefield suppresses it")
+ok("816 -- LeBlanc suppresses the [Temporary] expiry at her battlefield")
+
+if not expires(bf_loc(1), temp_loc=bf_loc(0)):
+    die("leblanc", "'at MY battlefield' -- the other battlefield is not hers")
+if not expires(base_loc(0), temp_loc=base_loc(0)):
+    die("leblanc", "'at my BATTLEFIELD' -- a base is not one")
+ok("...only at HER battlefield, and never from a base")
+
+if not expires(bf_loc(0), lb_seat=1, temp_loc=bf_loc(0)):
+    die("leblanc", "'YOUR effects' -- an enemy LeBlanc spares nothing of mine")
+ok("...and only for its own controller's units")
+
+print("\n\033[32mall static tests passed\033[0m")
+
+
+# ---------------------------------------------------------------------------
+# Swain, Visionary: "When I conquer, if you've played a non-token unit, a
+# non-token gear, and a spell this turn, you score 1 point."
+#
+# `cards_played` is a bare count and cannot answer this, so `played_types`
+# tracks the KINDS. Set at the moment each card is played (349) rather than at
+# resolution, so a countered spell still counts -- it was played.
+
+from rl.engine.state import (PT_GEAR as _PT_GEAR, PT_SPELL as _PT_SPELL,
+                             PT_UNIT as _PT_UNIT)
+
+SWAIN = T.id_of("Swain, Visionary")
+SWAIN_AB = ABILITIES["Swain, Visionary"][0]
+
+
+def swain_score(bits):
+    s = GameState()
+    s.phase, s.active, s.priority = _MAIN, 0, 0
+    w = s.add_permanent(SWAIN, 0, bf_loc(0))
+    s.played_types[0] = bits
+    resolve.resolve(s, T, CFG, SWAIN_AB, 0, [], -1, True, source=w)
+    return int(s.points[0])
+
+
+for bits, label in ((0, "nothing"), (_PT_UNIT, "a unit"),
+                    (_PT_UNIT | _PT_GEAR, "unit and gear"),
+                    (_PT_GEAR | _PT_SPELL, "gear and spell")):
+    if swain_score(bits) != 0:
+        die("swain", f"{label} is not the full trio -- no point should score")
+if swain_score(_PT_UNIT | _PT_GEAR | _PT_SPELL) != 1:
+    die("swain", "all three kinds this turn scores exactly 1 point")
+ok("Swain scores only on the full trio, and any two of three is not enough")
+
+# "non-token unit" -- tokens are played (187) but are not the non-token kind.
+s = GameState()
+s.phase, s.active, s.priority = _MAIN, 0, 0
+s.n_deck[0] = 10
+resolve.resolve(s, T, CFG, SPECS["Recruit the Vanguard"], 0, [base_loc(0)],
+                -1, True)
+if int(s.played_types[0]) & _PT_UNIT:
+    die("swain", "token units must not satisfy 'a NON-TOKEN unit'")
+ok("...and token units do not count toward it (187 plays them, but not as that)")
+
+# **A card with more than one type counts for EVERY one of them.** A gear unit
+# is both a gear and a unit for Swain. No card in the export carries two types
+# yet, so this drives `_played_bits` directly rather than through a real card --
+# the alternative is leaving the rule untested until the set that prints one
+# lands, by which time the if/elif it replaced would have been wrong for months.
+from rl.engine.actions import _played_bits as _bits
+
+
+class _GearUnit:
+    def is_type(self, cid, ty):
+        return ty in ("Gear", "Unit")
+
+
+class _AllThree:
+    def is_type(self, cid, ty):
+        return True
+
+
+b = _bits(_GearUnit(), 0)
+if not (b & _PT_UNIT and b & _PT_GEAR):
+    die("swain", "a gear unit must count as BOTH a gear and a unit")
+if b & _PT_SPELL:
+    die("swain", "...but not as a type it does not have")
+if _bits(_AllThree(), 0) != (_PT_UNIT | _PT_GEAR | _PT_SPELL):
+    die("swain", "a card of all three kinds completes the trio by itself")
+ok("...while a multi-type card counts for every kind it has, not just one")
+
+print("\n\033[32mall static tests passed\033[0m")

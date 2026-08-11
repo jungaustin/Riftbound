@@ -153,6 +153,10 @@ def cards_owned(state, table, seat: int) -> int:
     n = live(state.hand[seat, :int(state.n_hand[seat])])
     n += live(state.deck[seat, int(state.deck_ptr[seat]):int(state.n_deck[seat])])
     n += live(state.trash[seat, :int(state.n_trash[seat])])
+    # Cards mid-"look at the top N" are off the deck and in no zone at all
+    # until the player picks. They still belong to the seat looking at them.
+    if int(state.pend_look) == seat:
+        n += live(state.look_cards[:int(state.n_look)])
     n += live(state.banished[seat, :int(state.n_banished[seat])])
     n += sum(1 for i in range(state.n_perms)
              if state.perms[i, P_ALIVE] == 1

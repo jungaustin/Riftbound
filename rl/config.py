@@ -53,6 +53,12 @@ ENGINE_KEYWORDS = {
     "Hidden":    "chain.hideable -- may be hidden in the Facedown Zone",
     "Accelerate": "actions.legal_actions -- the A_PLAY_AT_FAST variant, and "
                   "cost.accelerate_cost for the additional cost (805)",
+    "Vision":    "effects._vision_abilities -- 817.1.b is 'When this is "
+                 "played, predict', synthesised from the keyword like [Hunt] "
+                 "rather than transcribed per card (436.1 Predict)",
+    "Repeat":    "actions.legal_actions -- the A_PLAY_REPEAT variant, "
+                 "cardtable.repeat_cost for the additional cost, and "
+                 "chain.resolve_top for the one extra execution (820)",
     "Shield":    "combat.combat_role_bonus -- +X Might while a defender (814)",
     "Buff":      "combat.might -- a Buff counter is +1 Might (702/703)",
     "Flow":      "chain.flow_playable -- play from the trash for the Flow "

@@ -197,6 +197,39 @@ def keyword_value(text: str, keyword: str) -> int:
 
 
 _FLOW = re.compile(r"\[Flow\]\s*((?:\{[^}]*\})+)")
+# "[Repeat] {1 energy}{Mind rune}" -- 820.1.c, an Optional Additional Cost.
+# Same shape as the Flow cost and parsed the same way; the two are read
+# separately because they are different KINDS of cost. Flow REPLACES the
+# base cost (829.1.c.1); Repeat is paid ON TOP of it and buys a second
+# execution rather than a cheaper one.
+_REPEAT = re.compile(r"\[Repeat\]\s*((?:\{[^}]*\})+)")
+
+
+def _symbol_cost(group: str) -> tuple[int, int]:
+    """(energy, power) from a run of "{...}" cost symbols."""
+    energy, power = 0, 0
+    for tok in re.findall(r"\{([^}]*)\}", group):
+        t = tok.strip()
+        if t.endswith("energy"):
+            energy += int(t.split()[0]) if t.split()[0].isdigit() else 1
+        else:
+            power += 1
+    return energy, power
+
+
+def repeat_cost(text: str) -> tuple[int, int]:
+    """The (energy, power) of a card's [Repeat] cost, or (-1, -1) if none.
+
+    820.1.b -- an optional cost "to execute the effect of their spells and
+    abilities a second time". 820.1.c.3 makes each Repeat cost payable only
+    ONCE, so this buys exactly one extra execution and never a loop.
+    """
+    if not text:
+        return -1, -1
+    m = _REPEAT.search(text)
+    if not m:
+        return -1, -1
+    return _symbol_cost(m.group(1))
 
 
 def flow_cost(text: str) -> tuple[int, int]:
@@ -252,6 +285,9 @@ class CardTable:
     hunt: np.ndarray          # int16, 0 = no [Hunt] (823)
     # [Flow] alternate cost (829.1.c): "[Flow] {2 energy}" or
     # "[Flow] {4 energy}{Fury rune}". -1 in `flow_energy` means no Flow.
+    # [Repeat] (820), an Optional Additional Cost. -1 means the card has none.
+    repeat_energy: np.ndarray  # int16
+    repeat_power: np.ndarray   # int16
     flow_energy: np.ndarray   # int16
     flow_power: np.ndarray    # int16
     text_len: np.ndarray      # int16, reminder text stripped
@@ -363,6 +399,8 @@ def _rows(cards: list[Card]) -> CardTable:
         assault=np.array([keyword_value(c.text, "Assault") for c in cards], np.int16),
         deflect=np.array([keyword_value(c.text, "Deflect") for c in cards], np.int16),
         hunt=np.array([keyword_value(c.text, "Hunt") for c in cards], np.int16),
+        repeat_energy=np.array([repeat_cost(c.text)[0] for c in cards], np.int16),
+        repeat_power=np.array([repeat_cost(c.text)[1] for c in cards], np.int16),
         flow_energy=np.array([flow_cost(c.text)[0] for c in cards], np.int16),
         flow_power=np.array([flow_cost(c.text)[1] for c in cards], np.int16),
         text_len=np.array([len(body_text(c.text)) for c in cards], np.int16),

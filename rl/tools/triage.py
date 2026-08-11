@@ -39,12 +39,52 @@ from rl.engine.effects import ABILITIES, SPECS, STATICS
 # Mechanisms that do not exist yet. A card mentioning one is blocked on the
 # mechanism, not on transcription -- ordered so the FIRST match is the biggest
 # thing standing in the card's way.
-# Token cards the effect would have to instantiate. `data/cards.json` only
-# ships Recruit and Sprite, so a card that plays a Gold, Bird, Mech, Sand
-# Soldier or Reflection token cannot be encoded at all -- there is nothing to
-# put on the board. This is a DATA gap, not an engine one, and it was giving
-# false "ready" flags on nine deck cards.
-MISSING_TOKENS = r"(Gold|Bird|Mech|Sand Soldier|Reflection|Poro|Treasure)\b[^.]*token"
+
+# A card that plays a token needs that token to EXIST as a card, or there is
+# nothing to put on the board -- a DATA gap rather than an engine one.
+#
+# This used to be a hardcoded list of names (Gold, Bird, Mech, Sand Soldier,
+# Reflection, Poro, Treasure) written when `cards.json` shipped only Recruit
+# and Sprite. `data/tokens.json` has since added the rest of rule 187, so the
+# list outlived its own truth and went on blocking 30 cards whose tokens were
+# sitting in the table -- the largest phantom cluster in the queue. Poro and
+# Treasure never existed at all: 187 defines exactly eleven tokens and neither
+# is among them, so those two names could never have resolved.
+#
+# Asking the table instead means the answer tracks the data. Today it is empty.
+# If a future set prints a token the export omits, this reports it again by
+# itself, which is the only reason to keep the check at all.
+TOKEN_PHRASE = re.compile(r"([A-Z][A-Za-z' ]*?)\s+(?:unit|gear|battlefield)\s+tokens?")
+# Text noise that survives the capture: "Play a ready Reflection unit token",
+# "play a 2 Might Sand Soldier unit token" -- the name is the tail.
+TOKEN_NOISE = re.compile(r"^(?:[Pp]lay|[A-Za-z]+)?\s*(?:a|an|two|four|ready|\d+|Might)\s+"
+                         r"|^(?:a|an|two|four|ready)\s+")
+
+
+def _token_key(name: str) -> str:
+    """Card name -> comparable token name.
+
+    The export decorates tokens with a back face and a collector number:
+    `Gold // Buff`, `Recruit (271) // Buff`. Card TEXT says plain "Gold".
+    """
+    return re.sub(r"\s*\(\d+\)|\s*//.*$", "", name).strip().lower()
+
+
+def missing_tokens(table, text: str) -> list[str]:
+    """Token names `text` plays that no card in the table provides."""
+    known = {_token_key(table.names[c]) for c in range(table.n)
+             if table.is_token(c)}
+    out = []
+    for m in TOKEN_PHRASE.finditer(text):
+        name = m.group(1).strip()
+        while True:                       # peel "Play a 2 Might " one word at a time
+            stripped = TOKEN_NOISE.sub("", name).strip()
+            if stripped == name:
+                break
+            name = stripped
+        if name and _token_key(name) not in known:
+            out.append(name)
+    return out
 
 # Ability keywords whose TRIGGER the DSL already has. 808.1 makes [Deathknell]
 # short for "When I die, [Effect]" and the effect is the card's own text, so the
@@ -57,7 +97,6 @@ MISSING_TOKENS = r"(Gold|Bird|Mech|Sand Soldier|Reflection|Poro|Treasure)\b[^.]*
 TRIGGER_KEYWORDS = {"Deathknell"}
 
 MECHANISMS = [
-    ("MissingToken", MISSING_TOKENS),
     ("Empower",     r"\[Empower"),
     ("XP",          r"\bXP\b|\[Level"),
     ("Equip",       r"\[Equip\]|\[Weaponmaster\]|Equipment|attach"),
@@ -66,7 +105,13 @@ MECHANISMS = [
     ("Trash",       r"from your trash|in your trash"),
     ("DeckManip",   r"top \d+ cards|top card|[Rr]ecycle|[Bb]anish|[Ss]huffle"),
     ("HandInfo",    r"reveal their hand|look at their|reveals? their"),
-    ("Discard",     r"discard"),
+    # A plain "discard N" is `OP_DISCARD` and has been for a while -- Traveling
+    # Merchant's "discard 1, then draw 1" was filed here for months while both
+    # halves already existed. What is NOT implemented is discarding something
+    # CHOSEN or a whole hand, and branching on what came out: Hwei reads the
+    # discarded card's type, Invert Timelines empties both hands. Match those
+    # instead of the bare word, the same correction MissingToken needed.
+    ("Discard",     r"discards? (their|your) hand|discarded card"),
     ("Replacement", r"if you would|would be|instead"),
     ("Points",      r"\d+ points?\b"),
     ("Channel",     r"[Cc]hannel"),
@@ -130,6 +175,12 @@ def classify(table, cid: int) -> tuple[str, bool]:
     if unread:
         return unread[0], False
     residual = table.residual_text(cid)
+    # Asked first, and of the RAW text: a token this card plays has to exist
+    # before any clause of it can be transcribed, so it outranks every
+    # mechanism below.
+    absent = missing_tokens(table, table.raw_text[cid])
+    if absent:
+        return f"NoToken:{absent[0]}", False
     for label, pat in MECHANISMS:
         if re.search(pat, residual):
             return label, False

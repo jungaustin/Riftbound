@@ -32,11 +32,19 @@ SEAT_AXIS = (
     "banished", "n_banished",
     "pool_energy", "pool_power", "bf_scored", "points", "burned_out",
     "legend", "champion", "no_spells", "cards_played", "xp",
+    "played_types", "died_in_beginning",
+    # Rows into `perms`, which mirroring leaves in place, so the VALUES
+    # stay valid -- only which seat owns the guard swaps.
+    "death_guard",
 )
 
 # The value *is* a seat id: flip it, but leave the -1 "nobody" sentinel alone.
 SEAT_VALUED_SCALAR = ("active", "priority", "attacker", "focus", "winner",
-                      "pend_order", "pend_play_seat", "pend_mull")
+                      "pend_order", "pend_play_seat", "pend_mull",
+                      # Only one look is ever pending, so the BUFFER is
+                      # seat-agnostic (it lists card ids) while this names who
+                      # is looking -- the same split as pend_mull.
+                      "pend_look", "pend_cull")
 SEAT_VALUED_ARRAY = ("bf_ctrl", "fd_owner")
 
 # Seat-agnostic: battlefield identities, phase, counters, the RNG.
@@ -44,10 +52,26 @@ UNCHANGED = (
     "n_perms", "bf_card", "bf_contested", "fd_card", "n_chain", "turn",
     "phase", "showdown_bf", "showdown_step", "passes", "decl_dst",
     "decl_mask", "pend_play", "truncated", "rng", "mull_mask",
+    # Affects BOTH players' units, so a seat swap leaves it alone.
+    "any_damage_kills",
     # Chain targets are permanent ROW indices, and mirroring preserves row
     # order (it rewrites P_CTRL in place rather than reordering), so the
     # indices stay valid. `pend_slot` is a slot number on a card, not a seat.
     "chain_targets", "pend_slot",
+    # The look buffer holds CARD ids and its destinations are constants, so
+    # none of it changes under a seat swap -- only `pend_look` above does.
+    "look_cards", "n_look", "look_pick_dest", "look_rest_dest",
+    "look_optional",
+    # Parallel to `perms` by ROW, which mirroring leaves in place.
+    "once_used",
+    # (source ROW, token CARD, LOCATION). The row and the card survive a
+    # seat swap untouched; the location is flipped by hand below, the same
+    # way C_CTX is.
+    "pend_double",
+    # (chooser seat, revealer seat) -- BOTH are seats, so a swap must flip
+    # both. Handled by hand below rather than by a list, since no list
+    # means "every element of this array is a seat id".
+    "pend_reveal", "look_type_mask",
     # Parallel to `perms` by ROW, and mirroring rewrites P_CTRL in place
     # rather than reordering rows, so the indices stay valid untouched.
     "kw_grant", "kw_grant_turn",
@@ -122,6 +146,14 @@ def mirror(state: GameState) -> GameState:
         # mirroring untouched (rows keep their order); the location does not.
         t = s.trig[:s.n_trig]
         t[:, 2] = [mirror_loc(int(x)) for x in t[:, 2]]
+
+    if int(s.pend_reveal[0]) >= 0:
+        s.pend_reveal[:] = [N_SEATS - 1 - int(x) for x in s.pend_reveal]
+
+    # `pend_double`'s third slot is a LOCATION and a token may be created at a
+    # base, so unlike `decl_dst` this one genuinely needs flipping.
+    if int(s.pend_double[0]) >= 0:
+        s.pend_double[2] = mirror_loc(int(s.pend_double[2]))
 
     # A declaration only ever targets a Battlefield, so it needs no mirroring.
     # Assert rather than assume: if lateral or base-targeted movement ever

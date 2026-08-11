@@ -212,6 +212,31 @@ if base.public_bytes() != after.public_bytes():
                 "changed the policy observation")
 ok("opponent hand contents, deck order and facedown identity are all invisible")
 
+# ...except when a card says otherwise. Sabotage's "They reveal their hand" is
+# the ONE way the opponent's hand reaches the policy observation, and it does
+# so through the A_PICK action rows -- naming the card is the whole point of
+# the effect. Asserted rather than left to pass by accident: the rule is "never
+# visible unless a card revealed it", and a test that only checks the first
+# half would go on passing if the second half broke.
+rev = s.clone()
+rev.n_hand[1] = 2
+rev.hand[1, 0], rev.hand[1, 1] = pool[0], pool[1]
+rev.pend_reveal[:] = (0, 1)
+rev.look_type_mask = 0
+a = enc.encode(rev, 0, A.legal_actions(rev, T, CFG, 0))
+rev2 = rev.clone()
+rev2.hand[1, 0], rev2.hand[1, 1] = pool[2], pool[3]
+b = enc.encode(rev2, 0, A.legal_actions(rev2, T, CFG, 0))
+if a.public_bytes() == b.public_bytes():
+    die("leak", "a REVEALED hand must reach the chooser's observation -- "
+                "otherwise Sabotage's choice carries no information")
+ok("...and a revealed hand does reach the chooser, which is the card working")
+
+# The revealer still cannot see anything new, and cannot act.
+if A.legal_actions(rev, T, CFG, 1):
+    die("leak", "only the chooser acts on a reveal")
+ok("...while the revealing player has no say in what is taken")
+
 if np.array_equal(base.privileged, after.privileged):
     die("leak", "the privileged vector did not change either -- the "
                 "perturbation was a no-op and test [4] proves nothing")

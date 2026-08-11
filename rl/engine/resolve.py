@@ -34,6 +34,7 @@ from rl.engine.cardtable import CardTable
 from rl.engine import combat
 from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                COND_FROM_HAND,
+                               COND_EMPOWERED, COND_PLAYED_TRIO,
                                COND_LEGION, COND_LEVEL, COND_NONE,
                                COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
@@ -56,19 +57,27 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                OP_TRASH_TO_HAND, OP_PLAY_FROM_TRASH,
                                OP_PLAY_UNIT_FROM_TRASH, W_FRIENDLY,
                                OP_RECYCLE_FROM_TRASH, OP_GAIN_XP,
+                               OP_LOOK_TOP, OP_EMPOWER, OP_CHANNEL,
+                               OP_DEATH_GUARD, OP_REVEAL_HAND, OP_SCORE,
+                               OP_EACH_KILLS_OWN, OP_NO_MOVE,
+                               OP_ANY_DAMAGE_KILLS, OP_SWAP_MIGHT,
                                OP_GRANT_KEYWORD,
                                TR_PLAY_ME, T_CTX, T_HERE, T_MY_BASE,
                                T_OWNER_BASE, T_SELF, T_SUBJECT,
+                               TOKEN_DOUBLERS,
                                CardSpec, Op, pack_trash, unpack_trash,
                                TargetSpec)
 from rl.engine import chain
 from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
+                             LOOK_TYPE_BIT,
                              COST_NO_ENERGY, COST_PRINTED,
                              F_BUFFED,
-                             F_DIED_ALONE, F_LEGION,
+                             F_DIED_ALONE, F_EMPOWERED, F_LEGION, F_NO_MOVE,
                              GRANT_IDX, N_BF, N_SEATS, P_ALIVE,
+                             PT_GEAR, PT_SPELL, PT_UNIT,
                              P_FLAGS,
-                             P_CARD, P_CTRL, P_DMG, P_LOC, P_READY, GameState,
+                             P_CARD, P_CTRL, P_DMG, P_LOC, P_MIGHT_MOD,
+                             P_READY, GameState,
                              base_loc, bf_index, bf_loc,
                              is_battlefield)
 
@@ -152,6 +161,15 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
     if spec.who == W_FRIENDLY and ctrl != seat:
         return False
     if spec.who == W_ENEMY and ctrl == seat:
+        return False
+
+    # "an enemy unit HERE" on a unit's own ability -- the source's location.
+    # Distinct from `rel`/`rel_to`, which can only relate a slot to an earlier
+    # SLOT and so cannot say this at all; and from `at_battlefield`, which says
+    # "at SOME battlefield" and would let Crackshot Corsair shoot across the
+    # board. With no source (a spell), there is no "here" and nothing matches.
+    if spec.same_loc_as_source and (source < 0
+                                    or int(state.perms[source, P_LOC]) != loc):
         return False
 
     if spec.lacks_keyword and combat.perm_kw(state, table, perm,
@@ -239,10 +257,38 @@ def _spell_targets(state: GameState, table: CardTable, spec: TargetSpec,
                 continue
             if spec.max_power >= 0 and int(table.power[card]) > spec.max_power:
                 continue
+        if spec.chooses_friendly_perm and not _chose_friendly_perm(
+                state, table, i, seat):
+            continue
         uid = int(state.chain[i, C_UID])
         if uid not in chosen:
             out.append(uid)
     return out
+
+
+def _chose_friendly_perm(state: GameState, table: CardTable, item: int,
+                         seat: int) -> bool:
+    """Did Chain Item `item` choose a unit or gear controlled by `seat`?
+
+    Read off that item's own recorded targets. **A slot's value means whatever
+    its KIND says** -- a location slot holds 0-3 and a counterspell slot holds
+    a Chain uid, both of which are valid permanent ROW indices and neither of
+    which is a permanent. So this consults the source's spec and skips every
+    slot that is not a unit slot; the same trap `deflect_cost` documents, and
+    it would misfire in exactly the same way.
+    """
+    src_spec = chain.item_spec(state, table, item)
+    if src_spec is None:
+        return False
+    for slot in range(src_spec.n_targets):
+        if src_spec.targets[slot].kind != TK_UNIT:
+            continue
+        p = int(state.chain_targets[item, slot])
+        if p < 0 or p >= state.n_perms:
+            continue
+        if state.perms[p, P_ALIVE] == 1 and int(state.perms[p, P_CTRL]) == seat:
+            return True
+    return False
 
 
 def can_play_from_trash(state: GameState, table: CardTable, seat: int,
@@ -306,7 +352,8 @@ def _pay_trash_play(state: GameState, table: CardTable, seat: int, card: int,
         recycle = plan_ability_cost(state, table, seat, card, 0,
                                     int(table.power[card]))
         assert recycle is not None, "unaffordable Power cost reached the play"
-        pay_ability_cost(state, table, seat, 0, recycle)
+        pay_ability_cost(state, table, seat, 0, recycle,
+                         int(table.power[card]), card)
         return
     recycle = plan_payment(state, table, seat, card)
     assert recycle is not None, "unaffordable card reached the play"
@@ -580,6 +627,20 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
         # priority window in which the count can move again.
         return source >= 0 and bool(
             int(state.perms[source, P_FLAGS]) & F_LEGION)
+    if op.cond == COND_PLAYED_TRIO:
+        # All three kinds this turn. `played_types` is set as each card is
+        # played, so this asks about the turn's history rather than the board.
+        return seat >= 0 and int(state.played_types[seat]) & (
+            PT_UNIT | PT_GEAR | PT_SPELL) == (PT_UNIT | PT_GEAR | PT_SPELL)
+    if op.cond == COND_EMPOWERED:
+        # 828.1.d -- an [Empowered] dependent ability that is a TRIGGER is
+        # active while its source holds the status. Read on the source, and
+        # `dead_source` matters: Noxian Emissary's payload is a [Deathknell],
+        # so by resolution the source is already a corpse and `source` alone
+        # would be -1. The status it held when it died is what the card asks
+        # about (359.3.f.3), and the flag is still on the dead row.
+        who = source if source >= 0 else dead_source
+        return who >= 0 and bool(int(state.perms[who, P_FLAGS]) & F_EMPOWERED)
     if op.cond == COND_DIED_ALONE:
         # Lonely Poro: "If I died alone", where its own reminder defines alone
         # as "no other friendly units here". Past tense, and that decides the
@@ -794,8 +855,26 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # Missing this would have made Lillia blind to the token deck she
             # exists to reward.
             if table.is_type(card, "Unit"):
-                for _ in made:
-                    chain.fire_play_unit(state, table, seat, card)
+                for _row in made:
+                    chain.fire_play_unit(state, table, seat, card, _row)
+            # Zilean - Time Mage: "Once each turn, if you would play a TOKEN
+            # UNIT while I'm AT A BATTLEFIELD, you may play that token and an
+            # additional copy of it instead." Offered rather than applied --
+            # the extra body can break an "alone" clause (740.2.a), so it is a
+            # real choice and not a strictly better one.
+            #
+            # The offer is deferred to after this resolution finishes, which
+            # costs no ordering: every token-creating op in the pool is its
+            # card's last, asserted at import in `effects.py`.
+            if table.is_type(card, "Unit") and state.pend_double[0] < 0:
+                for z in range(state.n_perms):
+                    zr = state.perms[z]
+                    if (zr[P_ALIVE] == 1 and int(zr[P_CTRL]) == seat
+                            and is_battlefield(int(zr[P_LOC]))
+                            and table.names[int(zr[P_CARD])] in TOKEN_DOUBLERS
+                            and int(state.once_used[z]) != int(state.turn)):
+                        state.pend_double[:] = (z, card, loc)
+                        break
             # No cleanup here: 321 forbids one while Chain Items are resolving.
             # Arriving units stage a Combat by presence (461); it is initiated
             # by the cleanup the action layer runs once the Chain empties.
@@ -1019,8 +1098,128 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             state.pool_energy[seat] += op.n
         elif op.op == OP_ADD_POWER:
             state.pool_power[seat, op.domain] += op.n
+        elif op.op == OP_SWAP_MIGHT:
+            b = _slot(state, still_legal, op.target_b, source, ctx, seat, subj)
+            if b < 0 or a == b or state.perms[b, P_ALIVE] != 1:
+                log["fizzled"].append(op.op)
+                continue
+            # Swap the EFFECTIVE Mights, which is what the card says -- statics
+            # and buffs included, not the printed corners. Expressed through
+            # the turn-scoped modifier, so it expires with the turn and
+            # `set_might_mod` re-checks lethality for both (143.2.a): swapping
+            # a big unit's Might onto a damaged small one can kill it at once.
+            ma = combat.might(state, table, a)
+            mb = combat.might(state, table, b)
+            if ma != mb:
+                combat.set_might_mod(state, table, a,
+                                     int(state.perms[a, P_MIGHT_MOD]) + mb - ma)
+                combat.set_might_mod(state, table, b,
+                                     int(state.perms[b, P_MIGHT_MOD]) + ma - mb)
+            log["swapped_might"] = (a, b)
+        elif op.op == OP_ANY_DAMAGE_KILLS:
+            state.any_damage_kills = 1
+            log["any_damage_kills"] = True
+        elif op.op == OP_NO_MOVE:
+            # "They can't move it this turn." Turn-scoped, cleared by the same
+            # end-of-turn sweep as [Stun].
+            if a >= 0 and state.perms[a, P_ALIVE] == 1:
+                state.set_flag(a, F_NO_MOVE)
+                log["no_move"] = a
+        elif op.op == OP_EACH_KILLS_OWN:
+            # Open the sequential choice; the action layer walks the seats.
+            # Starting with the resolving player, which is the turn order the
+            # rules default to for "each player".
+            # Skip straight past any seat with no unit to kill -- "each
+            # player kills one of their units" asks nothing of a player who
+            # has none, and an empty decision point would deadlock the turn.
+            nxt = seat
+            while nxt < N_SEATS and not any(
+                    state.perms[i, P_ALIVE] == 1
+                    and int(state.perms[i, P_CTRL]) == nxt
+                    and table.is_type(int(state.perms[i, P_CARD]), "Unit")
+                    for i in range(state.n_perms)):
+                nxt += 1
+            state.pend_cull = nxt if nxt < N_SEATS else -1
+            log["cull"] = int(state.pend_cull)
+        elif op.op == OP_SCORE:
+            # "You score N points." Straight onto the score; the winner check
+            # is a Cleanup concern (194.2) and happens on its own.
+            state.points[seat] += op.n
+            log["scored_points"] = op.n
+        elif op.op == OP_REVEAL_HAND:
+            # The opponent reveals; the caster then chooses. Nothing is copied
+            # out of the hand -- `pend_reveal` names the two seats and the
+            # action layer reads the candidates live, so a card that leaves the
+            # hand in between simply is not offered.
+            foe = 1 - seat
+            state.pend_reveal[:] = (seat, foe)
+            state.look_pick_dest = op.pick_dest
+            state.look_type_mask = 0
+            for _t in op.pick_types:
+                state.look_type_mask |= LOOK_TYPE_BIT[_t]
+            log["revealed"] = int(state.n_hand[foe])
+        elif op.op == OP_DEATH_GUARD:
+            # Register the delayed replacement on its controller. One at a
+            # time: a second Zhonya's simply overwrites, which is right because
+            # each says "the NEXT time" and only one death can be the next one.
+            if source >= 0:
+                state.death_guard[seat] = source
+                log["death_guard"] = source
+        elif op.op == OP_CHANNEL:
+            # 430.1 -- take runes off the top of the Rune Deck onto the board.
+            # 430.4.b is the permission these cards use; the two-per-turn of
+            # 430.4.a is `phases.channel` and is a different thing.
+            got = []
+            for _ in range(op.n):
+                dom = state.channel_one(seat, ready=op.ready_runes)
+                if dom < 0:
+                    break                      # an empty Rune Deck, not a loss
+                got.append(dom)
+            log["channelled"] = got
+            if op.draw_if_short and len(got) < op.n:
+                # "If you couldn't channel N this way, draw 1" -- the
+                # consolation is for coming up SHORT, so it pays out on a
+                # partial channel as well as on none at all.
+                log["drew"] = phases.draw_for(state, seat, op.draw_if_short)
+        elif op.op == OP_EMPOWER:
+            # 827.1.b -- Empower "Empowers the source of the ability", and
+            # 827.1.b.1 is explicit that the source is NOT a target. So this
+            # never reads a slot: it always acts on the permanent the ability
+            # is printed on. 441.1.b/c make re-empowering a no-op, which
+            # setting a flag already is.
+            if source >= 0 and state.perms[source, P_ALIVE] == 1:
+                state.set_flag(source, F_EMPOWERED)
+                log["empowered"] = source
         elif op.op == OP_DISCARD:
             log["discarded"] = phases.discard(state, seat, op.n)
+        elif op.op == OP_LOOK_TOP:
+            # "Look at the top N cards of your Main Deck." The cards come off
+            # the deck NOW and the player picks among them afterwards, through
+            # `pend_look` in the action layer -- the same suspend-and-ask shape
+            # as the mulligan, because the choice is made during resolution and
+            # so cannot go through the target machinery (355.10).
+            #
+            # Between the two the cards are in NO zone. That is faithful (they
+            # are being looked at, not held) but it means `cards_owned` has to
+            # count the buffer, and it means this op must be the LAST one on
+            # its card -- an op after it would run before the player had
+            # chosen. `effects.py` asserts that at import.
+            ptr, end = int(state.deck_ptr[seat]), int(state.n_deck[seat])
+            take = min(op.n, end - ptr)
+            state.n_look = take
+            state.look_cards[:] = -1
+            for k in range(take):
+                state.look_cards[k] = state.deck[seat, ptr + k]
+            state.deck_ptr[seat] = ptr + take
+            state.look_pick_dest = op.pick_dest
+            state.look_rest_dest = op.rest_dest
+            state.look_optional = int(op.pick_optional)
+            state.look_type_mask = 0
+            for _t in op.pick_types:
+                state.look_type_mask |= LOOK_TYPE_BIT[_t]
+            # An empty deck makes this a no-op rather than a stuck decision.
+            state.pend_look = seat if take else -1
+            log["looked"] = take
         elif op.op == OP_KILL_ALL:
             for i in range(state.n_perms):
                 r = state.perms[i]

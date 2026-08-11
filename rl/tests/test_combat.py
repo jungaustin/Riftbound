@@ -543,4 +543,137 @@ if int(s.n_trash[0]) != 1:
 ok("a Might change on a dead permanent is a no-op, not a second death")
 
 
+# ---------------------------------------------------------------------------
+# [10] "When I attack" is not "when I attack or defend" (459)
+#
+# Both readings used to collapse into one trigger, and `open_showdown` applied
+# Mask of Foresight's "...alone" clause to every card that used it. These check
+# the three axes that were merged: which SIDE triggers, WHOSE attack it watches,
+# and whether "here" means the source's battlefield or any of them.
+
+ANIVIA = T.id_of("Anivia - Primal")
+
+
+def anivia_board(attacker_seat):
+    """Anivia and an enemy at bf0; a second enemy parked at bf1."""
+    s = GameState()
+    s.n_deck[:] = 20
+    s.deck[:, :20] = MASK_UNIT
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    an = s.add_permanent(ANIVIA, 0, bf_loc(0))
+    near = s.add_permanent(MASK_UNIT, 1, bf_loc(0))
+    far = s.add_permanent(MASK_UNIT, 1, bf_loc(1))
+    friend = s.add_permanent(MASK_UNIT, 0, bf_loc(0))
+    combat.open_showdown(s, T, 0, attacker=attacker_seat)
+    drain(s)
+    return s, an, near, far, friend
+
+
+s, an, near, far, friend = anivia_board(attacker_seat=0)
+if int(s.perms[near, P_DMG]) != 3:
+    die("attack-only", f"an attacking Anivia deals 3 to the enemy here, got "
+                       f"{int(s.perms[near, P_DMG])}")
+ok("ROLE_ATTACK fires when its controller is the Attacker")
+
+if int(s.perms[far, P_DMG]):
+    die("here", "'here' is the source's battlefield -- bf1 must be untouched")
+ok("same_loc_as_source/at=T_HERE confines a sweep to the source's location")
+
+if int(s.perms[friend, P_DMG]):
+    die("who", "'all ENEMY units here' must spare the controller's own unit")
+ok("...and who=W_ENEMY spares friendly units standing there")
+
+# The same board with the opponent attacking: Anivia now DEFENDS, and a card
+# that says "When I attack" says nothing about that.
+s, an, near, far, friend = anivia_board(attacker_seat=1)
+if int(s.perms[near, P_DMG]):
+    die("attack-only", "'When I attack' must not fire while defending")
+ok("459 -- ROLE_ATTACK is silent on defence")
+
+# ---------------------------------------------------------------------------
+# [11] A Combat in progress is resumed, not re-initiated (461)
+#
+# `staged_combat` reads presence, which stays true for the whole Combat. The
+# Cleanup that follows an emptied Chain would find the same two units and open
+# the Showdown again, re-queueing every attack/defend trigger with it. That is
+# a livelock: the pass that should advance the Combat restarts it instead.
+# Caught in training as episodes of 1500 decisions inside 3 turns, with a
+# Mask of Foresight unit at +1270 Might.
+
+s, rows, _ = mask_board(1)
+combat.open_showdown(s, T, 0, attacker=0)
+drain(s)
+first = int(s.perms[rows[0], P_MIGHT_MOD])
+if first != 1:
+    die("resume", f"expected +1 from the first trigger, got {first}")
+
+# The Chain is empty and a Showdown is live -- exactly the state the A_PASS
+# branch reaches before it calls a Cleanup.
+if int(s.showdown_bf) < 0:
+    die("resume", "the fixture should still be in a Showdown")
+combat.cleanup(s, T, CFG_V1, mover=0, dst=-1)
+if int(s.n_trig):
+    die("resume", f"the Cleanup re-opened the Showdown and queued "
+                  f"{int(s.n_trig)} more trigger(s)")
+drain(s)
+if int(s.perms[rows[0], P_MIGHT_MOD]) != first:
+    die("resume", f"Might grew from +{first} to "
+                  f"+{int(s.perms[rows[0], P_MIGHT_MOD])} without a new Combat")
+ok("461 -- a Cleanup during a live Showdown does not re-initiate the Combat")
+
+# ---------------------------------------------------------------------------
+# [12] Zhonya's Hourglass -- a delayed replacement on death
+#
+# "The next time a friendly unit would die, kill this instead. Recall that unit
+# exhausted." It replaces the DEATH, not its cause -- and it does NOT heal,
+# where Guardian Angel's effect text explicitly says "Heal me" (136.2.d). So it
+# answers targeted removal and does almost nothing against damage, which is the
+# difference the two cards are priced on.
+
+from rl.engine import resolve as _rsv
+from rl.engine.effects import ABILITIES as _AB
+from rl.engine.state import P_READY as _P_READY
+
+ZHONYA = T.id_of("Zhonya's Hourglass")
+VICTIM = next(c for c in range(T.n) if T.is_type(c, "Unit")
+              and not T.is_token(c) and int(T.might[c]) >= 4)
+
+
+def guarded():
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    g = s.add_permanent(ZHONYA, 0, base_loc(0))
+    u = s.add_permanent(VICTIM, 0, bf_loc(0))
+    _rsv.resolve(s, T, CFG_V1, _AB["Zhonya's Hourglass"][0], 0, [], -1, True,
+                 source=g)
+    return s, g, u
+
+
+s, g, u = guarded()
+combat.destroy(s, T, u)
+if s.perms[u, P_ALIVE] != 1:
+    die("zhonya", "a kill effect must be replaced, not applied")
+if int(s.perms[u, P_LOC]) != base_loc(0) or int(s.perms[u, _P_READY]) != 0:
+    die("zhonya", "455/456 -- the unit is Recalled to base, exhausted")
+if s.perms[g, P_ALIVE] != 0:
+    die("zhonya", "the Hourglass is killed instead")
+ok("455 -- a death replacement recalls the unit and kills the guard instead")
+
+combat.destroy(s, T, u)
+if s.perms[u, P_ALIVE] != 0:
+    die("zhonya", "'the NEXT time' is one-shot -- a second death goes through")
+ok("...and it is consumed, so the next death is not replaced")
+
+# Damage is a different story: the death is replaced but the marked damage is
+# not removed, so 143.2.a catches the unit again immediately.
+s, g, u = guarded()
+combat.mark_damage(s, T, u, int(T.might[VICTIM]))
+if s.perms[u, P_ALIVE] != 1:
+    die("zhonya", "the replacement should fire on lethal damage too")
+combat.enforce_lethal(s, T)
+if s.perms[u, P_ALIVE] != 0:
+    die("zhonya", "without a heal the damage is still lethal (143.2.a), so "
+                  "the unit dies on the next continuous check")
+ok("143.2.a -- no heal, so it answers removal and not damage")
+
 print("\n\033[32mall combat tests passed\033[0m")

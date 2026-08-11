@@ -48,14 +48,17 @@ import numpy as np
 from rl.config import Config
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH,
-                               COND_LEGION, COND_LEVEL, COND_NONE,
+                               COND_EMPOWERED, COND_LEGION, COND_LEVEL,
+                               COND_NONE,
                                SC_SELF, ST_KEYWORD, ST_MIGHT,
                                TR_ATTACK_OR_DEFEND,
                                TR_DEATH, TR_MOVE, abilities_for,
                                statics_for)
 from rl.engine.state import (GRANT_IDX, P_MIGHT_MOD, F_BUFFED,
                              F_DIED_ALONE,
-                             F_NON_UNIT, F_NO_COMBAT_DAMAGE,
+                             BEGINNING,
+                             F_EMPOWERED, F_NON_UNIT, F_NO_COMBAT_DAMAGE,
+                             F_NO_MOVE,
                              N_BF, N_SEATS, P_ALIVE,
                              P_ARRIVED, P_CARD, P_CTRL, P_DMG, P_FLAGS, P_LOC,
                              P_READY, SD_CLEANUP, SD_DAMAGE, SD_NONE,
@@ -107,14 +110,15 @@ def static_might(state: GameState, table: CardTable, perm: int) -> int:
                     continue
                 if not table.is_type(int(row[P_CARD]), "Unit"):
                     continue
-            if not static_applies(state, st, src_seat):
+            if not static_applies(state, st, src_seat, i):
                 continue
             total += st.n * static_count(state, table, st, src_seat,
                                          int(src[P_LOC]), int(src[P_CARD]))
     return total
 
 
-def static_applies(state: GameState, st, src_seat: int) -> bool:
+def static_applies(state: GameState, st, src_seat: int,
+                   src_perm: int = -1) -> bool:
     """Is this static's gate satisfied for its controller right now?
 
     Shared by `static_might` and `cost.energy_discounts`, because a gate that
@@ -129,6 +133,13 @@ def static_applies(state: GameState, st, src_seat: int) -> bool:
         return int(state.xp[src_seat]) >= st.level
     if st.cond == COND_LEGION:
         return bool(state.cards_played[src_seat])
+    if st.cond == COND_EMPOWERED:
+        # 828.1.c -- the dependent ability is active exactly while the SOURCE
+        # holds the Empowered status, so this asks about a permanent and not a
+        # player. `src_perm < 0` means the source is not on the board at all --
+        # `cost.energy_discounts` asks about a card still in hand, which has no
+        # status to hold, so the gate is correctly closed there.
+        return src_perm >= 0 and state.has_flag(src_perm, F_EMPOWERED)
     return False
 
 
@@ -219,7 +230,7 @@ def static_keyword(state: GameState, table: CardTable, perm: int,
             if st.kind != ST_KEYWORD or st.keyword != keyword:
                 continue
             src_seat = int(src[P_CTRL])
-            if not static_applies(state, st, src_seat):
+            if not static_applies(state, st, src_seat, i):
                 continue
             if st.scope == SC_SELF:
                 if i != perm:
@@ -373,6 +384,13 @@ def mark_damage(state: GameState, table: CardTable, perm: int,
     """Mark damage and apply 143.2.a. Returns True if it killed the unit."""
     state.perms[perm, P_DMG] += amount
     dmg = int(state.perms[perm, P_DMG])
+    # Imperial Decree lowers the lethal threshold to ANY nonzero damage, for
+    # every unit on the board. 143.2.a's "nonzero" still holds -- a 0-damage
+    # event kills nothing, which is what keeps Might reduction from becoming
+    # removal under the Decree.
+    if state.any_damage_kills and dmg > 0:
+        _destroy(state, table, perm)
+        return True
     if dmg > 0 and dmg >= might(state, table, perm):
         _destroy(state, table, perm)
         return True
@@ -447,6 +465,33 @@ def _destroy(state: GameState, table: CardTable, perm: int,
     # nothing, which the per-seat conservation gate caught at victory 8.
     if row[P_ALIVE] != 1:
         return
+    # Shadow Watcher's window: a unit dying during ITS CONTROLLER's Beginning
+    # Phase. Recorded here because the question is asked later, when the phase
+    # has passed and nothing on the board still says it happened.
+    if (state.phase == BEGINNING and not state.has_flag(perm, F_NON_UNIT)
+            and int(row[P_CTRL]) == int(state.active)):
+        state.died_in_beginning[int(row[P_CTRL])] = 1
+    # Zhonya's Hourglass -- "the next time a friendly UNIT would die, kill this
+    # instead. Recall that unit exhausted." A replacement, so it runs before
+    # anything else here: the unit never dies, so no Deathknell fires for it
+    # and nothing reaches its trash.
+    #
+    # The guard is cleared FIRST and the guarding permanent is killed by the
+    # same `_destroy` this sits in -- which is why clearing comes first. The
+    # gear is not a unit, so it cannot guard its own death, and a second pass
+    # finds no guard to consume. Without that order this recurses forever.
+    ctrl_now = int(row[P_CTRL])
+    guard = int(state.death_guard[ctrl_now])
+    if (guard >= 0 and guard != perm
+            and state.perms[guard, P_ALIVE] == 1
+            and not state.has_flag(perm, F_NON_UNIT)):
+        state.death_guard[ctrl_now] = -1
+        _destroy(state, table, guard)
+        # 455 -- a Recall relocates to the base and is NOT a Move (456.1), so
+        # no move trigger fires. Exhausted, and deliberately NOT healed.
+        row[P_LOC] = base_loc(ctrl_now)
+        row[P_READY] = 0
+        return
     if any(a.trigger == TR_DEATH for a in abilities_for(table, int(row[P_CARD]))):
         loc, ctrl = int(row[P_LOC]), int(row[P_CTRL])
         others = [i for i in range(state.n_perms)
@@ -493,6 +538,11 @@ def can_move(state: GameState, table: CardTable, cfg: Config,
     if row[P_ALIVE] != 1 or row[P_READY] != 1 or row[P_CTRL] != state.active:
         return False
     if not table.is_type(int(row[P_CARD]), "Unit"):
+        return False
+    # Vex - Apathetic: "They can't move it this turn." Checked here rather than
+    # in the destination logic, so it blocks every ordinary Move including the
+    # retreat home, which is what makes the stun stick.
+    if state.has_flag(perm, F_NO_MOVE):
         return False
     src = int(row[P_LOC])
     if src == dst_loc:
@@ -620,6 +670,23 @@ def cleanup(state: GameState, table: CardTable, cfg: Config,
     dead = enforce_lethal(state, table)
     if dead:
         log["lethal_static"] = dead
+
+    # **A Combat already in progress is resumed, never re-initiated.**
+    # `staged_combat` reads PRESENCE (461): units from both players at a
+    # battlefield. That stays true for the whole Combat, so it is only a
+    # question worth asking when no Combat is running. A Showdown that yields
+    # for a response window empties the Chain, and the Cleanup that follows
+    # would find the same two units still standing there and open the Showdown
+    # a second time -- re-queueing every attack/defend trigger with it.
+    #
+    # Mask of Foresight made that visible: it re-triggered once per priority
+    # pass and stacked +1 Might per decision, reaching +1270 on a single unit
+    # while the turn counter never moved. The Combat cannot end, because the
+    # only thing that advances it is the pass that keeps restarting it.
+    # `advance_combat` is what resumes this one; see the A_PASS branch in
+    # `actions._apply_one`.
+    if state.showdown_bf >= 0:
+        return log
 
     # A Cleanup resolves EVERY staged Combat, not just the first. v0 could only
     # ever stage one at a time -- a single Move declaration has one destination
@@ -830,29 +897,49 @@ def open_showdown(state: GameState, table: CardTable, bf: int,
     state.focus = attacker
     state.passes = 0
 
-    # "When a friendly unit attacks or defends alone" -- 459 designates every
-    # unit at the battlefield as an attacker or a defender when the Combat
-    # begins, so this is the moment the trigger condition is met. "Alone" is
-    # checked HERE rather than at resolution: it is part of the trigger
-    # condition, so a unit that is not alone never triggers at all, and one
-    # that is keeps the +1 even if a friend walks in during the response
-    # window. Same reading as Lonely Poro's "died alone" (359.3.f.3).
-    from rl.engine.chain import queue as chain_queue, has_trigger
+    # 459 designates every unit at the battlefield as an Attacker or a Defender
+    # the moment the Combat begins, so this is when an attack/defend trigger's
+    # condition is met -- and every part of that condition is checked HERE
+    # rather than at resolution (359.3.f.3). A unit that does not qualify never
+    # triggers at all; one that does keeps the effect even if a friend walks in
+    # during the response window. Same reading as Lonely Poro's "died alone".
+    #
+    # Which conditions apply is read off each ABILITY. This loop used to apply
+    # `is_alone` to every unit unconditionally, which was Mask of Foresight's
+    # own "...alone" clause hardcoded into the shared path: correct for that one
+    # card and wrong for every other attack/defend card, none of which had been
+    # written yet. Ahri's "when I attack or defend" has no such clause.
+    from rl.engine.chain import queue as chain_queue
+    from rl.engine.effects import (ROLE_ATTACK, ROLE_DEFEND, ROLE_EITHER,
+                                   abilities_for)
     loc = bf_loc(bf)
     for u in range(state.n_perms):
         if state.perms[u, P_ALIVE] != 1 or int(state.perms[u, P_LOC]) != loc:
             continue
-        if state.has_flag(u, F_NON_UNIT) or not is_alone(state, u):
+        if state.has_flag(u, F_NON_UNIT):
             continue
         owner = int(state.perms[u, P_CTRL])
+        alone = is_alone(state, u)
+        role = ROLE_ATTACK if owner == attacker else ROLE_DEFEND
         # The watcher is any permanent its controller has anywhere -- Mask of
         # Foresight sits at a base and watches a battlefield.
         for w in range(state.n_perms):
             if state.perms[w, P_ALIVE] != 1 or int(state.perms[w, P_CTRL]) != owner:
                 continue
-            if has_trigger(table, int(state.perms[w, P_CARD]),
-                           TR_ATTACK_OR_DEFEND):
+            for ab in abilities_for(table, int(state.perms[w, P_CARD])):
+                if ab.trigger != TR_ATTACK_OR_DEFEND:
+                    continue
+                if not ab.subject_any_friendly and w != u:
+                    continue          # "When I attack" -- I am the subject
+                if ab.subject_alone and not alone:
+                    continue
+                if ab.subject_role not in (ROLE_EITHER, role):
+                    continue
                 chain_queue(state, TR_ATTACK_OR_DEFEND, w, loc, subj=u)
+                # One queue per (watcher, subject): the Chain Item names the
+                # source, and resolution runs every matching ability on it.
+                # Queueing per ability would run a two-ability card twice.
+                break
 
 
 def showdown_responses(state: GameState, table: CardTable, cfg: Config,

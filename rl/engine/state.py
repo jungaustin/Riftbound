@@ -31,6 +31,18 @@ AWAKEN, BEGINNING, CHANNEL, DRAW, MAIN, ENDING = range(6)
 PHASE_NAMES = ("Awaken", "Beginning", "Channel", "Draw", "Main", "Ending")
 
 N_DOMAINS = len(DOMAINS)
+# 135.2.e.5 -- [A], "Power of any Domain", the swirling rainbow symbol. Added
+# to a Rune Pool it "can be spent to pay a Power cost of any Domain"
+# (135.2.e.5.b), so it is not Power of some particular domain and cannot be
+# stored as one; the Gold gear token (187.5) is what produces it.
+#
+# It rides as one extra COLUMN on `pool_power` rather than a separate array so
+# that `clear_pools`, `GameState.__slots__`, the mirror field list and the
+# state digest all keep working untouched. Payment sums the card's own domains
+# and then this, and spends it LAST -- a wildcard left in the pool is worth
+# more than a domain-locked one for whatever is cast next.
+D_ANY = N_DOMAINS
+N_POOL_DOMAINS = N_DOMAINS + 1
 N_SEATS = 2
 N_BF = 2  # battlefields in play (rule 485.4); each player chose one
 
@@ -102,6 +114,23 @@ F_DIED_ALONE = 1 << 4
 # Snapshotting also sidesteps the off-by-one that reading the live counter
 # invites, since by then the permanent has itself been counted.
 F_LEGION = 1 << 5
+# 441.1.a -- Empowered is a BINARY state: "A Game Object is Empowered or it
+# isn't", and 441.1.b forbids empowering something already Empowered. A flag,
+# not a count. Kayle's "I can be [Empowered] up to three times" is the printed
+# exception 441.1.c.1 allows and is deliberately not supported by this bit.
+#
+# NOT turn-scoped: the status persists until the permanent leaves play.
+F_EMPOWERED = 1 << 6
+
+# Bits in `GameState.played_types`. "Non-token" is part of what Swain asks, and
+# a token is never played FROM A HAND -- but it IS played (187), so the
+# distinction has to be made here rather than assumed.
+PT_UNIT, PT_GEAR, PT_SPELL = 1, 2, 4
+
+# Vex - Apathetic: "They can't move it this turn." A movement restriction, not
+# a status the rules name -- so it is turn-scoped like [Stun]'s, and cleared by
+# the same end-of-turn sweep.
+F_NO_MOVE = 1 << 7
 
 # Keywords an effect can GRANT to a permanent. Values, not bits: [Assault 3]
 # and [Assault 2] are different grants, and 807.1.b.2 calls the number the
@@ -119,7 +148,7 @@ N_GRANTABLE = len(GRANTABLE)
 # Statuses that expire during the end-of-turn cleanup (423.1.a.2, 317.2).
 # F_LEGION is deliberately NOT here: it records what was true when the
 # permanent was played and stays true for as long as it is on the board.
-TURN_SCOPED_FLAGS = F_STUNNED | F_NO_COMBAT_DAMAGE   # NOT F_NON_UNIT
+TURN_SCOPED_FLAGS = F_STUNNED | F_NO_COMBAT_DAMAGE | F_NO_MOVE  # NOT F_NON_UNIT
 
 # Capacities. Generous enough that overflow means a real bug, small enough that
 # cloning stays cheap.
@@ -188,8 +217,13 @@ RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 # produces. One flag would have had to become an enum of whole card behaviours,
 # which is the shape that stops composing at exactly four cards.
 C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF, C_UID, C_ABIL, C_SRC, \
-    C_CTX, C_COST, C_DEST, C_SUBJ = range(12)
-N_CHAIN_COLS = 12
+    C_CTX, C_COST, C_DEST, C_SUBJ, C_REPEAT = range(13)
+N_CHAIN_COLS = 13
+
+# C_REPEAT: 1 if this item's [Repeat] cost was paid as it was played (820).
+# Orthogonal to C_COST, which says WHICH cost was paid (printed, Flow, free):
+# Repeat is paid ON TOP of whichever that was, and buys one extra execution
+# of the ops at resolution -- 820.1.c.3, once only, never a loop.
 
 # C_SUBJ is the permanent a trigger fired *for*, which is not the same as
 # C_SRC, the permanent the ability is printed on. Every trigger so far has been
@@ -209,6 +243,30 @@ COST_FREE = 3        # "ignoring its cost" -- both halves waived
 DEST_TRASH = 0
 DEST_BANISH = 1      # 829.1.b.1, [Flow]
 DEST_RECYCLE = 2     # 416.1.a, bottom of the owner's own Main Deck
+# Only a look-at-the-top effect uses this one: "Put 1 into your hand". A Chain
+# Item never ends up in a hand, so it is not a `C_DEST` value in practice --
+# it shares the enum because it answers the same question, "where does the
+# card go", and one vocabulary beats two.
+DEST_HAND = 3
+# 436.1 -- [Predict] is "look at the top card and choose whether to Recycle
+# it", so the card you DON'T recycle goes back where it came from. That is a
+# fourth destination and not the same as any of the others: the deck's top, not
+# its bottom. 436.1.a keeps the order of multiple returned cards up to the
+# player; with the pool's only Predict being Predict 1, order never arises, so
+# they go back in the order they came off.
+DEST_TOP = 4
+
+# How many cards a single "look at the top N" may hold. The widest in the pool
+# is 5 (Promising Future, Wild Claw, Reinforce); sized from the cards rather
+# than guessed, and asserted at import in `effects.py`.
+MAX_LOOK = 5
+
+# Which card types a look may PICK: "you may reveal a gear from among them"
+# (Ornn), "a unit from among them" (Ivern, Rift Herald, Reinforce). A mask
+# rather than a list because it has to live in a numpy scalar on the state, and
+# 0 means "no restriction" -- which is what most looks print.
+LK_UNIT, LK_SPELL, LK_GEAR = 1, 2, 4
+LOOK_TYPE_BIT = {"Unit": LK_UNIT, "Spell": LK_SPELL, "Gear": LK_GEAR}
 
 # `C_UID` is a stable per-item id. Chain *indices* shift whenever an item is
 # removed, so a counterspell that stored an index could hit the wrong item
@@ -242,6 +300,11 @@ class GameState:
         "showdown_bf", "showdown_step", "attacker", "passes",
         "decl_dst", "decl_mask", "pend_play", "pend_play_seat",
         "pend_hide", "pend_mull", "mull_mask",
+        "look_cards", "n_look", "pend_look",
+        "look_pick_dest", "look_rest_dest", "look_optional",
+        "look_type_mask", "death_guard",
+        "once_used", "pend_double", "pend_reveal", "played_types",
+        "pend_cull", "died_in_beginning", "any_damage_kills",
         "winner", "truncated",
         "rng",
     )
@@ -277,7 +340,8 @@ class GameState:
 
         # Rune Pool -- emptied at Main start and turn end (rule 167).
         self.pool_energy = np.zeros(N_SEATS, np.int16)
-        self.pool_power = np.zeros((N_SEATS, N_DOMAINS), np.int16)
+        # N_POOL_DOMAINS, not N_DOMAINS: the last column is [A] (see D_ANY).
+        self.pool_power = np.zeros((N_SEATS, N_POOL_DOMAINS), np.int16)
 
         self.bf_card = np.full(N_BF, -1, np.int16)
         self.bf_ctrl = np.full(N_BF, -1, np.int8)      # -1 = uncontrolled
@@ -376,6 +440,86 @@ class GameState:
         # "already chosen" a test rather than a scan.
         self.pend_mull = -1
         self.mull_mask = 0
+
+        # "Look at the top N cards of your Main Deck..." -- a choice made
+        # DURING resolution, not at finalization, so it is not targeting
+        # (355.10: no count is announced and the opponent cannot respond to
+        # it). The cards sit here, off the deck and in no other zone, until
+        # the choice is made -- which is why `fuzz.cards_owned` has to count
+        # this buffer or conservation fires on a healthy game.
+        self.look_cards = np.full(MAX_LOOK, -1, np.int16)
+        self.n_look = 0
+        self.pend_look = -1        # the seat choosing, or -1
+        self.look_pick_dest = DEST_HAND
+        self.look_rest_dest = DEST_RECYCLE
+        self.look_optional = 0     # may the player pick nothing?
+        self.look_type_mask = 0    # 0 = any type; see LK_* above
+
+        # Zhonya's Hourglass: "The next time a friendly unit would die, kill
+        # this instead." A DELAYED REPLACEMENT -- registered when the gear
+        # resolves and consumed by the next friendly death, so it is the row of
+        # the guarding permanent per seat, or -1 for none.
+        #
+        # It replaces the death, NOT its cause. Zhonya's does not say "heal",
+        # where Guardian Angel's effect text explicitly does (136.2.d), so a
+        # unit recalled with lethal damage still marked dies again on the very
+        # next 143.2.a check. That is why the card reads as anti-REMOVAL rather
+        # than anti-damage.
+        self.death_guard = np.full(N_SEATS, -1, np.int16)
+
+        # "Once each turn" on a PERMANENT's ability -- the turn number it was
+        # last used, per permanent row, or -1. A turn stamp rather than a flag
+        # so nothing has to remember to reset it, and per ROW rather than per
+        # seat because two copies of the card each get their own use.
+        self.once_used = np.full(MAX_PERMS, -1, np.int16)
+
+        # Zilean - Time Mage: "if you would play a token unit ... you may play
+        # that token and an additional copy of it INSTEAD." A replacement whose
+        # choice is offered once the resolving card has finished -- every
+        # token-creating op in the pool is its card's last, which `effects.py`
+        # asserts, so deferring the extra copy changes no ordering.
+        # (source row, token card, location), or -1s for none pending. The
+        # SEAT is not stored: it is the source's controller, and deriving it
+        # keeps this array free of anything a seat swap would have to rewrite
+        # except the location.
+        self.pend_double = np.full(3, -1, np.int16)
+
+        # Sabotage: "Choose an opponent. They reveal their hand. Choose a
+        # non-unit card from it, and recycle that card." (chooser, revealer),
+        # or -1s. The revealed hand is NOT copied anywhere -- the candidates
+        # are hand indices read live, and the only lasting effect is the one
+        # card that moves. What the chooser *remembers* of the rest is not
+        # modelled; see the note on Scuttle Crab, which is pure information and
+        # therefore needs the observation to change rather than the board.
+        self.pend_reveal = np.full(2, -1, np.int16)
+
+        # Which KINDS of card each seat has played this turn -- Swain asks for
+        # "a non-token unit, a non-token gear, and a spell this turn", which
+        # `cards_played` (a bare count) cannot answer. A bitmask of PT_*,
+        # cleared alongside `cards_played` in the end-of-turn cleanup.
+        #
+        # Set at the moment the card is PLAYED (349), the same instant
+        # `cards_played` moves, so a countered spell still counts -- it was
+        # played.
+        self.played_types = np.zeros(N_SEATS, np.int16)
+
+        # Cull the Weak: "Each player kills one of their units." A sequential
+        # per-seat choice like the Mulligan -- the seat currently choosing, or
+        # -1. Each player picks from their OWN units, so there is no target
+        # slot: the opponent chooses their own casualty, not the caster.
+        self.pend_cull = -1
+
+        # Shadow Watcher: "If a friendly unit died during YOUR Beginning Phase
+        # this turn, I enter ready." Past tense and phase-scoped, so it cannot
+        # be recomputed later -- by the time the card is played the phase is
+        # over. Recorded when the death happens, cleared with the turn.
+        self.died_in_beginning = np.zeros(N_SEATS, np.int8)
+
+        # Imperial Decree: "When any unit takes damage this turn, kill it."
+        # A turn-scoped modifier on what counts as lethal, affecting BOTH
+        # players' units -- "any unit", not "any enemy unit". Cleared with the
+        # turn like the other this-turn effects.
+        self.any_damage_kills = 0
 
         self.winner = -1
         self.truncated = False
@@ -558,6 +702,9 @@ class GameState:
     def has_flag(self, perm: int, flag: int) -> bool:
         return bool(self.perms[perm, P_FLAGS] & flag)
 
+    def set_flag(self, perm: int, flag: int) -> None:
+        self.perms[perm, P_FLAGS] |= flag
+
     def live(self) -> np.ndarray:
         """Boolean mask over permanent rows that are still on the board."""
         return self.perms[:self.n_perms, P_ALIVE] == 1
@@ -627,15 +774,24 @@ class GameState:
         """
         return self.runes_ready[seat] + self.runes_spent[seat]
 
-    def channel_one(self, seat: int) -> int:
-        """Pop the next rune from the Rune Deck, or -1 if it is empty."""
+    def channel_one(self, seat: int, ready: bool = True) -> int:
+        """Pop the next rune from the Rune Deck, or -1 if it is empty.
+
+        430.4.a's two-per-turn arrive READY. Almost every card that channels
+        extra says "channel N runes EXHAUSTED" instead -- the rune joins the
+        board but cannot be spent until it readies next turn, which is what
+        stops those cards from being pure acceleration.
+        """
         if self.rune_left[seat] <= 0:
             return -1
         h = int(self.rune_head[seat])
         dom = int(self.rune_deck[seat, h])
         self.rune_head[seat] = (h + 1) % RUNE_RING
         self.rune_left[seat] -= 1
-        self.runes_ready[seat, dom] += 1
+        if ready:
+            self.runes_ready[seat, dom] += 1
+        else:
+            self.runes_spent[seat, dom] += 1
         return dom
 
     def recycle_rune(self, seat: int, domain: int) -> None:

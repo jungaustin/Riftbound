@@ -19,7 +19,12 @@ from __future__ import annotations
 import numpy as np
 
 from rl.engine.cardtable import CardTable
-from rl.engine.state import N_DOMAINS, GameState
+from rl.engine.state import D_ANY, N_DOMAINS, GameState
+
+
+def wild(state: GameState, seat: int) -> int:
+    """Floating [A] -- Power of any Domain (135.2.e.5.b), usable for any cost."""
+    return int(state.pool_power[seat, D_ANY])
 
 
 # Power symbols on a multi-domain card: each symbol may be paid by a rune of ANY
@@ -196,7 +201,7 @@ def plan_payment(state: GameState, table: CardTable, seat: int, card: int,
             return None
         doms = list(range(N_DOMAINS))
 
-    floating = sum(int(state.pool_power[seat, d]) for d in doms)
+    floating = sum(int(state.pool_power[seat, d]) for d in doms) + wild(state, seat)
     need_p = max(0, need_p - floating)
     if need_p == 0:
         return []
@@ -274,7 +279,7 @@ def plan_ability_cost(state: GameState, table: CardTable, seat: int, card: int,
     if power <= 0:
         return []
     doms = card_domains(table, card) or list(range(N_DOMAINS))
-    floating = sum(int(state.pool_power[seat, d]) for d in doms)
+    floating = sum(int(state.pool_power[seat, d]) for d in doms) + wild(state, seat)
     need_p = max(0, power - floating)
     if need_p == 0:
         return []
@@ -291,8 +296,17 @@ def plan_ability_cost(state: GameState, table: CardTable, seat: int, card: int,
 
 
 def pay_ability_cost(state: GameState, table: CardTable, seat: int,
-                     energy: int, recycle: list[int]) -> None:
-    """Pay an activated ability's rune cost."""
+                     energy: int, recycle: list[int],
+                     power: int = 0, card: int = -1) -> None:
+    """Pay an activated ability's or a [Flow] cost's runes.
+
+    `power`/`card` exist because the matching `plan_ability_cost` counts
+    FLOATING Power toward affordability -- so a cost partly covered by the pool
+    comes back with fewer recycles than it has Power symbols, and the remainder
+    has to come out of the pool here. Without that the pool was never debited:
+    one floating Power paid for every Flow spell in the turn, over and over.
+    `plan_*` returning [] means the pool covered all of it, not that it was free.
+    """
     need_e = max(0, energy - int(state.pool_energy[seat]))
     state.pool_energy[seat] = max(0, int(state.pool_energy[seat]) - energy)
     for _ in range(need_e):
@@ -300,6 +314,16 @@ def pay_ability_cost(state: GameState, table: CardTable, seat: int,
         assert state.runes_ready[seat, dom] > 0, "energy payment underflow"
         state.runes_ready[seat, dom] -= 1
         state.runes_spent[seat, dom] += 1
+    # Whatever the recycles did not cover was paid from the pool. Same order as
+    # `pay`: domain-locked Power first, [A] last.
+    from_pool = max(0, power - len(recycle))
+    if from_pool:
+        doms = (card_domains(table, card) if card >= 0 else []) \
+            or list(range(N_DOMAINS))
+        for d in list(doms) + [D_ANY]:
+            use = min(from_pool, int(state.pool_power[seat, d]))
+            state.pool_power[seat, d] -= use
+            from_pool -= use
     for dom in recycle:
         state.recycle_rune(seat, dom)
 
@@ -323,7 +347,10 @@ def pay(state: GameState, table: CardTable, seat: int, card: int,
 
     need_p = int(table.power[card]) + extra_power
     doms = card_domains(table, card) or list(range(N_DOMAINS))
-    for d in doms:
+    # Domain-locked Power first, then [A]. A wildcard pays for anything, so
+    # spending it while a matching domain rune is sitting right there would
+    # throw away the only Power in the pool that the NEXT card might need.
+    for d in list(doms) + [D_ANY]:
         use = min(need_p, int(state.pool_power[seat, d]))
         state.pool_power[seat, d] -= use
         need_p -= use
