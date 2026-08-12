@@ -305,6 +305,8 @@ class GameState:
         "look_type_mask", "death_guard",
         "once_used", "pend_double", "pend_reveal", "played_types",
         "pend_cull", "died_in_beginning", "any_damage_kills",
+        "pend_discard", "pend_discard_ops", "pend_discard_src",
+        "pend_then",
         "winner", "truncated",
         "rng",
     )
@@ -520,6 +522,37 @@ class GameState:
         # players' units -- "any unit", not "any enemy unit". Cleared with the
         # turn like the other this-turn effects.
         self.any_damage_kills = 0
+
+        # Hwei: "draw 1, then discard 1. Then, do the following based on the
+        # discarded card's TYPE". `phases.discard` takes the oldest card and
+        # says so in its docstring -- "the day a card says 'discard a card of
+        # your choice' this becomes a decision point rather than a rule here".
+        # This is that day, and Hwei is the reason: WHICH card you pitch is how
+        # you pick which of the three modes you get, so taking the oldest would
+        # not be a simplification, it would be choosing the card's mode for it.
+        #
+        # The seat choosing, or -1. `pend_discard_ops` holds the branch to run
+        # once the type is known -- see `effects.DISCARD_BRANCHES`.
+        self.pend_discard = -1
+        self.pend_discard_ops = -1
+        # The permanent whose ability this is -- Hwei's Unit branch says
+        # "give ME +3 Might", and by then resolution has returned.
+        self.pend_discard_src = -1
+
+        # Chained deferred decisions. A suspending op ("look at the top N",
+        # "play a token", "reveal their hand") had to be its card's LAST,
+        # because resolution returns at that point and anything after it would
+        # run before the player had chosen. `pend_then` lifts that: it names a
+        # FOLLOW-UP op list in `effects.FOLLOWUPS` to run once the decision
+        # comes back, and those ops may suspend again -- which is what chains
+        # them. Diana Predicts, then reveals; Guards! makes a token, then
+        # offers to pay to ready it.
+        #
+        # (followup key, source permanent), or -1s. Ints only, so the state
+        # digest and `clone` keep working -- the same rule the discard branch
+        # key learned the hard way.
+        self.pend_then = np.full(2, -1, np.int16)
+
 
         self.winner = -1
         self.truncated = False

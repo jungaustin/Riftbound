@@ -44,7 +44,7 @@ SEAT_VALUED_SCALAR = ("active", "priority", "attacker", "focus", "winner",
                       # Only one look is ever pending, so the BUFFER is
                       # seat-agnostic (it lists card ids) while this names who
                       # is looking -- the same split as pend_mull.
-                      "pend_look", "pend_cull")
+                      "pend_look", "pend_cull", "pend_discard")
 SEAT_VALUED_ARRAY = ("bf_ctrl", "fd_owner")
 
 # Seat-agnostic: battlefield identities, phase, counters, the RNG.
@@ -53,7 +53,11 @@ UNCHANGED = (
     "phase", "showdown_bf", "showdown_step", "passes", "decl_dst",
     "decl_mask", "pend_play", "truncated", "rng", "mull_mask",
     # Affects BOTH players' units, so a seat swap leaves it alone.
-    "any_damage_kills",
+    "any_damage_kills", "pend_discard_ops",
+    # A permanent ROW, and mirroring keeps rows in place.
+    "pend_discard_src",
+    # (followup key, source ROW) -- neither changes under a seat swap.
+    "pend_then",
     # Chain targets are permanent ROW indices, and mirroring preserves row
     # order (it rewrites P_CTRL in place rather than reordering), so the
     # indices stay valid. `pend_slot` is a slot number on a card, not a seat.

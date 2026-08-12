@@ -315,8 +315,13 @@ class Encoder:
         elif k == A.A_DECLARE:
             loc = act.arg
         elif k == A.A_ACTIVATE:
-            card = int(state.perms[act.arg, P_CARD])
-            loc = int(state.perms[act.arg, P_LOC])
+            # The arg may be a packed (permanent, donor) pair -- Heimerdinger
+            # borrows abilities, so the row alone no longer says which one.
+            # The DONOR's card is what distinguishes the candidates; the
+            # location is the activating permanent's.
+            _perm, _donor = A.unpack_activate(int(act.arg))
+            card = int(state.perms[_donor, P_CARD])
+            loc = int(state.perms[_perm, P_LOC])
         elif k in (A.A_ADD, A.A_RETREAT):
             # The location a unit is *leaving*; the destination is fixed for the
             # whole decision, so it could not discriminate between candidates.

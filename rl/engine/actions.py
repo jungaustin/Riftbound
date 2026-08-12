@@ -41,7 +41,12 @@ from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
                             plan_ability_cost, plan_flow, plan_payment,
                             plan_surcharge)
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import (ENTERS_READY_IF, ER_DIED_IN_BEGINNING,
+from rl.engine.effects import (ABILITY_BORROWERS, CardSpec, FOLLOWUPS,
+                               TR_DISCARD,
+                               TR_GEAR_ABILITY,
+                               DISCARD_BRANCHES,
+                               ENTERS_READY_IF, ER_DIED_IN_BEGINNING,
+                               SPEED_MAIN,
                                ER_TWO_OTHERS_AT_BASE,
                                OP_EMPOWER, PERM_ENEMY, PERM_NONE,
                                PERM_OPEN, PLAY_PERMISSIONS, TR_ACTIVATED,
@@ -55,7 +60,7 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
                              C_REPEAT, DEST_TOP, LOOK_TYPE_BIT,
                              DEST_RECYCLE,
                              C_SRC, MAIN,
-                             MAX_CHAIN, MAX_TRIGGERS, N_BF,
+                             MAX_CHAIN, MAX_PERMS, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
                              P_LOC, P_READY, GameState, base_loc, bf_loc,
                              is_battlefield)
@@ -197,6 +202,31 @@ def _played_bits(table: CardTable, card: int) -> int:
     return bits
 
 
+# Heimerdinger - Inventor: "I have all Exhaust abilities of all friendly
+# legends, units, and gear." An A_ACTIVATE has always been identified by its
+# permanent alone, because `_activate` takes the FIRST activated ability and no
+# card in the pool has two. Heimerdinger holds many at once, so the action has
+# to say WHICH -- and a borrowed ability is identified by the permanent it came
+# from.
+#
+# Packed rather than given a second Action field: `Action.arg` is wire format
+# and every consumer reads it as one int. A plain row stays a plain row, so
+# nothing that already exists changes meaning; only the borrowed case is
+# encoded, and `arg >= MAX_PERMS` is the tag.
+def pack_activate(perm: int, donor: int) -> int:
+    """(activating permanent, ability donor) -> one action arg."""
+    if donor == perm:
+        return perm
+    return MAX_PERMS * (donor + 1) + perm
+
+
+def unpack_activate(arg: int) -> tuple[int, int]:
+    """The inverse. Returns (permanent, donor); donor == permanent if its own."""
+    if arg < MAX_PERMS:
+        return arg, arg
+    return arg % MAX_PERMS, arg // MAX_PERMS - 1
+
+
 def _look_type_bit(table: CardTable, card: int) -> int:
     """`LK_*` bit for a card's printed type, for a look's pick restriction."""
     bit = 0
@@ -272,8 +302,45 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
             if ab.n_targets and not rsv.can_be_cast(state, table, ab, seat,
                                                     -1, i, card):
                 continue
-            out.append(i)
+            out.append(pack_activate(i, i))
             break
+
+    # Heimerdinger - Inventor: "I have all Exhaust abilities of all friendly
+    # legends, units, and gear." He HAS them, so the ability is his: the
+    # Exhaust cost taps HIM, not the donor, and the donor's own readiness is
+    # irrelevant. That is the whole card -- one exhaust reused across the board.
+    for i in range(state.n_perms):
+        if (state.perms[i, P_ALIVE] != 1
+                or int(state.perms[i, P_CTRL]) != seat
+                or table.names[int(state.perms[i, P_CARD])] not in ABILITY_BORROWERS
+                or not state.perms[i, P_READY]):
+            continue
+        for d in range(state.n_perms):
+            if d == i or state.perms[d, P_ALIVE] != 1:
+                continue
+            if int(state.perms[d, P_CTRL]) != seat:
+                continue
+            dcard = int(state.perms[d, P_CARD])
+            for ab in abilities_for(table, dcard):
+                if ab.trigger != TR_ACTIVATED or not ab.cost_exhaust:
+                    continue
+                if not chain.speed_ok(state, cfg, seat, ab.speed):
+                    continue
+                if ab.cost_xp and int(state.xp[seat]) < ab.cost_xp:
+                    continue
+                # A borrowed [Empower] would Empower HEIMERDINGER, so the
+                # once-only check reads his status, not the donor's.
+                if (any(op.op == OP_EMPOWER for op in ab.ops)
+                        and state.has_flag(i, F_EMPOWERED)):
+                    continue
+                if plan_ability_cost(state, table, seat, dcard,
+                                     ab.cost_energy, ab.cost_power) is None:
+                    continue
+                if ab.n_targets and not rsv.can_be_cast(state, table, ab, seat,
+                                                        -1, i, dcard):
+                    continue
+                out.append(pack_activate(i, d))
+                break
     return out
 
 
@@ -388,6 +455,15 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         out.append(Action(A_PICK_NONE))
         return out
 
+    # Hwei: "discard 1" where WHICH card decides the mode, so it is a real
+    # decision rather than `phases.discard`'s take-the-oldest rule.
+    if state.pend_discard >= 0:
+        if seat != int(state.pend_discard):
+            return []
+        out = [Action(A_PICK, i) for i in range(int(state.n_hand[seat]))]
+        assert out, "a discard choice with an empty hand should not have pended"
+        return out
+
     # Cull the Weak: each player kills one of THEIR OWN units, in turn order.
     # Offered as A_TARGET over the chooser's own live units -- a seat with none
     # never reaches here, because `_advance_cull` skips it.
@@ -405,6 +481,15 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         item = int(state.pend_may)
         if int(state.chain[item, C_CTRL]) != seat:
             return []
+        # 383.3.b -- an optional COST, not just an optional effect. Accepting
+        # is only offered when it can actually be paid; declining always is.
+        spec = chain.item_spec(state, table, item)
+        if spec.opt_cost_energy or spec.opt_cost_power:
+            card = int(state.chain[item, C_CARD])
+            if plan_ability_cost(state, table, seat, card,
+                                 spec.opt_cost_energy,
+                                 spec.opt_cost_power) is None:
+                return [Action(A_DECLINE)]
         return [Action(A_ACCEPT), Action(A_DECLINE)]
 
     # 383.3.d -- simultaneous triggers, and their controller picks the order
@@ -577,7 +662,7 @@ def _settle(state: GameState, table: CardTable, cfg: Config) -> dict:
             or state.pend_play >= 0 or state.pend_hide >= 0 or state.declaring
             or state.pend_look >= 0 or int(state.pend_double[0]) >= 0
             or int(state.pend_reveal[0]) >= 0 or state.pend_cull >= 0
-            or is_terminal(state)):
+            or state.pend_discard >= 0 or is_terminal(state)):
         return {}
     log: dict = {}
     # Every queued trigger goes on the Chain BEFORE any of them is finalized:
@@ -705,6 +790,8 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
         return _finish_mulligan(state, table, cfg)
 
     if k in (A_PICK, A_PICK_NONE):
+        if state.pend_discard >= 0:
+            return _finish_discard(state, table, cfg, int(action.arg))
         if int(state.pend_reveal[0]) >= 0:
             return _finish_reveal(state, table, cfg,
                                   int(action.arg) if k == A_PICK else -1)
@@ -968,10 +1055,22 @@ def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
     ability whose targets all become illegal before it finalizes is never paid
     for.
     """
-    card = int(state.perms[perm, P_CARD])
+    perm, donor = unpack_activate(perm)
+    # The SPEC comes from the donor; the SOURCE stays the activating permanent.
+    # For an ordinary activation the two are the same permanent. `item_spec`
+    # already reads C_CARD and C_SRC independently, so a borrowed ability needs
+    # nothing new on the Chain.
+    card = int(state.perms[donor, P_CARD])
     idx = next(k for k, ab in enumerate(abilities_for(table, card))
-               if ab.trigger == TR_ACTIVATED)
+               if ab.trigger == TR_ACTIVATED
+               and (donor == perm or ab.cost_exhaust))
     spec = abilities_for(table, card)[idx]
+
+    # "When you use an activated ability of a GEAR" -- Prize of Progress. Fired
+    # as the ability is activated (151.2.a makes that the moment it is played),
+    # not when it resolves, so a countered ability still counts as used.
+    if table.is_type(card, "Gear"):
+        chain.fire_watchers(state, table, seat, TR_GEAR_ABILITY, subj=perm)
 
     if spec.immediate:
         # 337.2 -- a resource-adding ability resolves immediately and never
@@ -1008,6 +1107,14 @@ def _accept_may(state: GameState, table: CardTable, cfg: Config) -> dict:
     item = int(state.pend_may)
     state.pend_may = -1
     spec = chain.item_spec(state, table, item)
+    if spec.opt_cost_energy or spec.opt_cost_power:
+        card = int(state.chain[item, C_CARD])
+        recycle = plan_ability_cost(state, table, seat_of := int(
+            state.chain[item, C_CTRL]), card,
+            spec.opt_cost_energy, spec.opt_cost_power)
+        assert recycle is not None, "unaffordable optional cost was offered"
+        pay_ability_cost(state, table, seat_of, spec.opt_cost_energy, recycle,
+                         spec.opt_cost_power, card)
     if spec.n_targets:
         state.pend_slot = 0
         return {}
@@ -1259,6 +1366,62 @@ def _cull_one(state: GameState, table: CardTable, cfg: Config,
     return log
 
 
+def _run_followup(state: GameState, table: CardTable, cfg: Config,
+                  seat: int) -> dict:
+    """Run the ops queued to follow a deferred decision, if any.
+
+    The ops may suspend again -- that is the point. Each handler calls this
+    instead of assuming its decision was the last thing the card had to say,
+    which is what lets Diana Predict and THEN reveal.
+
+    Cleared before running, so a follow-up that suspends can set its own
+    without being overwritten by this one.
+    """
+    key, src = int(state.pend_then[0]), int(state.pend_then[1])
+    state.pend_then[:] = (-1, -1)
+    if key < 0 or key >= len(FOLLOWUPS) or not FOLLOWUPS[key]:
+        return {}
+    return rsv.resolve(state, table, cfg,
+                       CardSpec(speed=SPEED_MAIN, ops=FOLLOWUPS[key]),
+                       seat, [], -1, True, source=src)
+
+
+def _finish_discard(state: GameState, table: CardTable, cfg: Config,
+                    hand_idx: int) -> dict:
+    """Discard the chosen card, then run the branch its TYPE selects.
+
+    A card with more than one type takes EVERY matching branch -- a gear unit
+    is both, so it would draw AND ready runes. Checked independently rather
+    than as an if/elif, the same rule as Swain's trio.
+    """
+    seat = int(state.pend_discard)
+    key = int(state.pend_discard_ops)
+    src = int(state.pend_discard_src)
+    state.pend_discard = -1
+    state.pend_discard_ops = -1
+    state.pend_discard_src = -1
+
+    n = int(state.n_hand[seat])
+    card = int(state.hand[seat, hand_idx])
+    state.hand[seat, hand_idx:n - 1] = state.hand[seat, hand_idx + 1:n]
+    state.hand[seat, n - 1] = -1
+    state.n_hand[seat] = n - 1
+    phases._to_trash(state, seat, card)
+    # A chosen discard is still a discard, so the same watchers see it.
+    chain.fire_watchers(state, table, seat, TR_DISCARD)
+
+    log: dict = {"discarded": table.names[card]}
+    branches = DISCARD_BRANCHES[key] if 0 <= key < len(DISCARD_BRANCHES) else {}
+    for type_name, ops in branches.items():
+        if not table.is_type(card, type_name):
+            continue
+        log.setdefault("branches", []).append(type_name)
+        rsv.resolve(state, table, cfg, CardSpec(speed=SPEED_MAIN, ops=ops),
+                    seat, [], -1, True, source=src)
+    log.update(_advance_pending(state, table, cfg))
+    return log
+
+
 def _finish_reveal(state: GameState, table: CardTable, cfg: Config,
                    pick: int) -> dict:
     """Recycle the chosen card out of the revealed hand (416.1.c).
@@ -1342,7 +1505,9 @@ def _finish_look(state: GameState, table: CardTable, cfg: Config,
     state.n_look = 0
     state.pend_look = -1
     log = {"picked": table.names[picked] if picked >= 0 else None}
-    # The look was the last op of its card, so the Chain can carry on now.
+    # A follow-up may be queued -- and may suspend again, in which case
+    # `_advance_pending` below correctly does nothing until it resolves.
+    log.update(_run_followup(state, table, cfg, seat))
     log.update(_advance_pending(state, table, cfg))
     return log
 
@@ -1361,6 +1526,8 @@ def acting_seat(state: GameState) -> int:
         return int(state.pend_reveal[0])
     if state.pend_cull >= 0:
         return int(state.pend_cull)
+    if state.pend_discard >= 0:
+        return int(state.pend_discard)
     if state.pend_slot >= 0:
         item = chain.oldest_pending(state)
         if item >= 0:

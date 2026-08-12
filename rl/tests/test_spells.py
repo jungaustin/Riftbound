@@ -424,7 +424,7 @@ ok("204.1.b -- Power covered by the pool is debited, not silently free")
 # zone, which is why `fuzz.cards_owned` counts the buffer.
 
 from rl.engine import resolve as rsv
-from rl.engine.effects import SPECS as _SPECS
+from rl.engine.effects import ABILITIES, SPECS as _SPECS
 from rl.engine.state import MAIN
 
 BODY_A = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
@@ -751,5 +751,70 @@ if s.perms[x, P_ALIVE] == 1:
     die("switcheroo", "143.2.a is continuous -- swapping Might DOWN onto "
                       "marked damage kills at once")
 ok("...and 143.2.a rechecks lethality, so a damaged unit swapped down dies")
+
+# A target restricted by DOMAIN ("an enemy Chaos unit or gear"), and a
+# condition on the rune BOARD ("if you control 4 or fewer runes" -- ready plus
+# spent, since an exhausted rune is still controlled).
+
+CHAOS_UNIT = next(c for c in range(T.n) if T.is_type(c, "Unit")
+                  and not T.is_token(c) and int(T.domain_mask[c]) >> 2 & 1)
+OTHER_UNIT = next(c for c in range(T.n) if T.is_type(c, "Unit")
+                  and not T.is_token(c) and not (int(T.domain_mask[c]) >> 2 & 1))
+
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+chaos = s.add_permanent(CHAOS_UNIT, 1, bf_loc(0))
+s.add_permanent(OTHER_UNIT, 1, bf_loc(0))
+if rsv.legal_targets(s, T, _SPECS["Decree of Unity"], 0, 0, [], -1) != [chaos]:
+    die("domain", "only the enemy CHAOS unit is a legal target")
+ok("a domain-restricted slot admits only that domain")
+
+ECLIPSE_AB = ABILITIES["Eclipse Dragon"][0]
+for runes, want in ((4, 1), (5, 0)):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    d = s.add_permanent(T.id_of("Eclipse Dragon"), 0, bf_loc(0))
+    s.runes_ready[0, 0] = runes
+    s.n_deck[0] = 10
+    rsv.resolve(s, T, V1, ECLIPSE_AB, 0, [], -1, True, source=d)
+    if int(s.n_hand[0]) != want:
+        die("runes", f"with {runes} runes the draw should be {want}")
+ok("...and '4 or fewer runes' is exact at the boundary")
+
+# Thermo Beam: "Kill all gear." The board sweep had always been units-only,
+# because every wipe before this one was -- so the TYPE is a field on the op
+# rather than a second op, defaulting to Unit so nothing existing changes.
+
+TB_GEAR = next(c for c in range(T.n) if T.is_type(c, "Gear") and not T.is_token(c))
+TB_UNIT = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
+
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+mine_g = s.add_permanent(TB_GEAR, 0, base_loc(0))
+their_g = s.add_permanent(TB_GEAR, 1, base_loc(1))
+mine_u = s.add_permanent(TB_UNIT, 0, bf_loc(0))
+their_u = s.add_permanent(TB_UNIT, 1, bf_loc(0))
+rsv.resolve(s, T, V1, _SPECS["Thermo Beam"], 0, [], -1, True)
+if s.perms[mine_g, P_ALIVE] or s.perms[their_g, P_ALIVE]:
+    die("thermo", "'all gear' reaches BOTH players, the caster's included")
+if not (s.perms[mine_u, P_ALIVE] and s.perms[their_u, P_ALIVE]):
+    die("thermo", "...and leaves units alone")
+ok("a typed board sweep: 'kill all gear' spares every unit")
+
+# Thwonk!: "Stun an ATTACKING unit." 459 designates the Attacker's units at the
+# contested battlefield as the attacking ones, so outside a Showdown nothing is
+# attacking and the card cannot be played at all (355.8).
+
+TW_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+atk = s.add_permanent(TW_BODY, 0, bf_loc(0))
+s.add_permanent(TW_BODY, 1, bf_loc(0))
+if rsv.legal_targets(s, T, _SPECS["Thwonk!"], 0, 1, [], -1):
+    die("thwonk", "outside a Showdown nothing is attacking")
+combat.open_showdown(s, T, 0, attacker=0)
+if rsv.legal_targets(s, T, _SPECS["Thwonk!"], 0, 1, [], -1) != [atk]:
+    die("thwonk", "only the ATTACKER's units at the contested battlefield")
+ok("459 -- 'an attacking unit' needs a Showdown, and means the attacker's")
 
 print("\n\033[32mall spell tests passed\033[0m")

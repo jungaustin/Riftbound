@@ -51,7 +51,7 @@ from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH,
                                COND_EMPOWERED, COND_LEGION, COND_LEVEL,
                                COND_NONE,
                                SC_SELF, ST_KEYWORD, ST_MIGHT,
-                               TR_ATTACK_OR_DEFEND,
+                               TR_ATTACK_OR_DEFEND, TR_OTHER_DIES,
                                TR_DEATH, TR_MOVE, abilities_for,
                                statics_for)
 from rl.engine.state import (GRANT_IDX, P_MIGHT_MOD, F_BUFFED,
@@ -492,6 +492,15 @@ def _destroy(state: GameState, table: CardTable, perm: int,
         row[P_LOC] = base_loc(ctrl_now)
         row[P_READY] = 0
         return
+    # "When ANOTHER friendly unit dies" -- a watcher trigger, so it fires for
+    # everyone else the controller has, and never for the unit that died.
+    # Queued before the death is carried out, the same instant a [Deathknell]
+    # is (808.1.d.2), so both see the same board.
+    if not state.has_flag(perm, F_NON_UNIT):
+        from rl.engine.chain import fire_watchers
+        fire_watchers(state, table, int(row[P_CTRL]), TR_OTHER_DIES,
+                      subj=perm, exclude=perm)
+
     if any(a.trigger == TR_DEATH for a in abilities_for(table, int(row[P_CARD]))):
         loc, ctrl = int(row[P_LOC]), int(row[P_CTRL])
         others = [i for i in range(state.n_perms)

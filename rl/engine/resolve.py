@@ -35,6 +35,9 @@ from rl.engine import combat
 from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                COND_FROM_HAND,
                                COND_EMPOWERED, COND_PLAYED_TRIO,
+                               COND_FEW_RUNES, COND_NOT_DIED_ALONE,
+                               COND_CTX_BATTLEFIELD, COND_SELF_AT_BF,
+                               COND_N_OTHERS_HERE, COND_OTHERS_MIGHT,
                                COND_LEGION, COND_LEVEL, COND_NONE,
                                COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
@@ -61,6 +64,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                OP_DEATH_GUARD, OP_REVEAL_HAND, OP_SCORE,
                                OP_EACH_KILLS_OWN, OP_NO_MOVE,
                                OP_ANY_DAMAGE_KILLS, OP_SWAP_MIGHT,
+                               OP_READY_RUNES, OP_DISCARD_CHOOSE,
+                               OP_RECYCLE_SELF,
                                OP_GRANT_KEYWORD,
                                TR_PLAY_ME, T_CTX, T_HERE, T_MY_BASE,
                                T_OWNER_BASE, T_SELF, T_SUBJECT,
@@ -183,6 +188,17 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
     if spec.at_base and is_battlefield(loc):
         return False
     if spec.max_might >= 0 and int(table.might[int(row[P_CARD])]) > spec.max_might:
+        return False
+    # "an enemy Chaos unit or gear" -- the target's own printed domain.
+    if spec.domain >= 0 and not (int(table.domain_mask[card]) >> spec.domain & 1):
+        return False
+    # 459 -- the Attacker's units at the contested battlefield are the
+    # attacking ones. Outside a Showdown nobody is attacking, so the slot is
+    # empty and the card is simply unplayable (355.8).
+    if spec.attacking and not (
+            state.showdown_bf >= 0
+            and ctrl == int(state.attacker)
+            and loc == bf_loc(int(state.showdown_bf))):
         return False
 
     # 811.1.d.2.a -- a bound slot may only reach the battlefield the card was
@@ -632,6 +648,43 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
         # played, so this asks about the turn's history rather than the board.
         return seat >= 0 and int(state.played_types[seat]) & (
             PT_UNIT | PT_GEAR | PT_SPELL) == (PT_UNIT | PT_GEAR | PT_SPELL)
+    if op.cond == COND_NOT_DIED_ALONE:
+        # Same snapshot as COND_DIED_ALONE, read the other way. `dead_source`,
+        # because by now the source is a corpse and `source` has been blanked.
+        return dead_source >= 0 and not (
+            int(state.perms[dead_source, P_FLAGS]) & F_DIED_ALONE)
+    if op.cond == COND_CTX_BATTLEFIELD:
+        return ctx >= 0 and is_battlefield(ctx)
+    if op.cond == COND_SELF_AT_BF:
+        who = source if source >= 0 else dead_source
+        return who >= 0 and is_battlefield(int(state.perms[who, P_LOC]))
+    if op.cond == COND_N_OTHERS_HERE:
+        who = source if source >= 0 else dead_source
+        if who < 0:
+            return False
+        loc, ctrl = int(state.perms[who, P_LOC]), int(state.perms[who, P_CTRL])
+        n = sum(1 for i in range(state.n_perms)
+                if i != who and state.perms[i, P_ALIVE] == 1
+                and int(state.perms[i, P_CTRL]) == ctrl
+                and int(state.perms[i, P_LOC]) == loc
+                and table.is_type(int(state.perms[i, P_CARD]), "Unit"))
+        return n == op.level
+    if op.cond == COND_OTHERS_MIGHT:
+        who = source if source >= 0 else dead_source
+        if who < 0 or seat < 0:
+            return False
+        total = sum(combat.might(state, table, i)
+                    for i in range(state.n_perms)
+                    if i != who and state.perms[i, P_ALIVE] == 1
+                    and int(state.perms[i, P_CTRL]) == seat
+                    and table.is_type(int(state.perms[i, P_CARD]), "Unit"))
+        return total >= op.level
+    if op.cond == COND_FEW_RUNES:
+        # "If you control N or fewer runes." Runes on the BOARD -- ready plus
+        # spent -- because an exhausted rune is still controlled; the ones left
+        # in the rune deck are not.
+        return seat >= 0 and int(state.runes_ready[seat].sum()
+                                 + state.runes_spent[seat].sum()) <= op.level
     if op.cond == COND_EMPOWERED:
         # 828.1.d -- an [Empowered] dependent ability that is a TRIGGER is
         # active while its source holds the status. Read on the source, and
@@ -1098,6 +1151,57 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             state.pool_energy[seat] += op.n
         elif op.op == OP_ADD_POWER:
             state.pool_power[seat, op.domain] += op.n
+        elif op.op == OP_RECYCLE_SELF:
+            # "Recycle me." A Deathknell resolves with its card already in the
+            # trash (808.1.d.2 puts the ability on the Chain before the card
+            # moves), so this lifts it back out of the pile rather than off the
+            # board. 416.1.c -- to its OWNER's deck, which for a Deathknell is
+            # the seat whose trash it is sitting in.
+            # `dead_source`, not `source`: 383.2.c.2 blanks a source that has
+            # left the board, and a Deathknell's source is dead by definition.
+            # "Recycle ME" is one of the few things a corpse is still the
+            # authority on -- it names a card, not a board position -- so this
+            # reads the row that was kept for exactly that purpose.
+            who = source if source >= 0 else dead_source
+            if who >= 0:
+                card = int(state.perms[who, P_CARD])
+                n = int(state.n_trash[seat])
+                for k in range(n - 1, -1, -1):        # newest first: it is
+                    if int(state.trash[seat, k]) == card:   # the one just added
+                        state.trash[seat, k:n - 1] = state.trash[seat, k + 1:n]
+                        state.trash[seat, n - 1] = -1
+                        state.n_trash[seat] = n - 1
+                        if not table.is_token(card):
+                            state.recycle_card(seat, card)
+                        log["recycled_self"] = table.names[card]
+                        break
+        elif op.op == OP_DISCARD_CHOOSE:
+            # Suspend for the player to pick WHICH card. Must be the card's
+            # last op -- resolution returns here and the branch is applied by
+            # `actions._finish_discard` once the type is known.
+            if int(state.n_hand[seat]) > 0:
+                state.pend_discard = seat
+                state.pend_discard_ops = op.branch_key
+                state.pend_discard_src = source
+                log["discard_choice"] = seat
+            else:
+                log["discard_choice"] = -1   # empty hand: nothing to pitch
+        elif op.op == OP_READY_RUNES:
+            # "Ready up to N runes." A rune readies by moving from spent back
+            # to ready -- the same direction the Awaken Phase moves them, just
+            # bounded. "Up to" and there is nothing to choose between: runes of
+            # a domain are interchangeable (which is why they are counts and
+            # not objects), so readying the most-held domain first is not a
+            # choice being taken away from anyone.
+            left = op.n
+            for dom in np.argsort(-state.runes_spent[seat]):
+                if left <= 0:
+                    break
+                take = min(left, int(state.runes_spent[seat, dom]))
+                state.runes_spent[seat, dom] -= take
+                state.runes_ready[seat, dom] += take
+                left -= take
+            log["readied_runes"] = op.n - left
         elif op.op == OP_SWAP_MIGHT:
             b = _slot(state, still_legal, op.target_b, source, ctx, seat, subj)
             if b < 0 or a == b or state.perms[b, P_ALIVE] != 1:
@@ -1191,7 +1295,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                 state.set_flag(source, F_EMPOWERED)
                 log["empowered"] = source
         elif op.op == OP_DISCARD:
-            log["discarded"] = phases.discard(state, seat, op.n)
+            log["discarded"] = phases.discard(state, table, seat, op.n)
         elif op.op == OP_LOOK_TOP:
             # "Look at the top N cards of your Main Deck." The cards come off
             # the deck NOW and the player picks among them afterwards, through
@@ -1219,11 +1323,17 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                 state.look_type_mask |= LOOK_TYPE_BIT[_t]
             # An empty deck makes this a no-op rather than a stuck decision.
             state.pend_look = seat if take else -1
+            if take:
+                state.pend_then[:] = (op.then_key, source)
             log["looked"] = take
         elif op.op == OP_KILL_ALL:
+            # "Kill all gear" is the same sweep as "kill all units" with one
+            # word changed, so the TYPE is a field rather than a second op.
+            # Defaults to Unit, which is what every existing entry meant.
+            want = op.card_type or "Unit"
             for i in range(state.n_perms):
                 r = state.perms[i]
-                if r[P_ALIVE] == 1 and table.is_type(int(r[P_CARD]), "Unit"):
+                if r[P_ALIVE] == 1 and table.is_type(int(r[P_CARD]), want):
                     combat.destroy(state, table, i)
                     log.setdefault("killed", []).append(i)
         elif op.op == OP_EXHAUST_ALL:

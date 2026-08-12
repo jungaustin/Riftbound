@@ -39,7 +39,8 @@ from typing import NamedTuple
 # parallel enum for the DSL would mean two lists to keep in step.
 from rl.engine.state import (COST_FREE, COST_NO_ENERGY,  # noqa: F401
                              COST_PRINTED, D_ANY, DEST_BANISH, DEST_HAND,
-                             DEST_RECYCLE, DEST_TOP, DEST_TRASH, MAX_LOOK,
+                             DEST_RECYCLE, DEST_TOP, DEST_TRASH, MAX_DECK,
+                             MAX_LOOK,
                              MAX_TARGETS, N_SEATS)
 
 # --- speeds. When may this card be played? Wire format: append only. -------
@@ -111,7 +112,9 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_GAIN_XP, OP_GRANT_KEYWORD, OP_LOOK_TOP, OP_EMPOWER,
  OP_CHANNEL, OP_DEATH_GUARD, OP_REVEAL_HAND,
  OP_SCORE, OP_EACH_KILLS_OWN, OP_NO_MOVE,
- OP_ANY_DAMAGE_KILLS, OP_SWAP_MIGHT) = range(40)
+ OP_ANY_DAMAGE_KILLS, OP_SWAP_MIGHT,
+ OP_READY_RUNES, OP_DISCARD_CHOOSE,
+ OP_RECYCLE_SELF) = range(43)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
@@ -121,7 +124,8 @@ OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "play_unit_from_trash", "recycle_from_trash", "gain_xp",
             "grant_keyword", "look_top", "empower", "channel",
             "death_guard", "reveal_hand", "score", "each_kills_own",
-            "no_move", "any_damage_kills", "swap_might")
+            "no_move", "any_damage_kills", "swap_might",
+            "ready_runes", "discard_choose", "recycle_self")
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -146,12 +150,40 @@ T_SUBJECT = -7
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
  COND_ONLY_UNIT_THERE, COND_CONTROL_N_GEAR, COND_DIED_ALONE,
  COND_LEGION, COND_LEVEL, COND_EMPOWERED,
- COND_PLAYED_TRIO) = range(10)
+ COND_PLAYED_TRIO,
+ COND_FEW_RUNES,
+ COND_NOT_DIED_ALONE, COND_CTX_BATTLEFIELD, COND_SELF_AT_BF,
+ COND_N_OTHERS_HERE, COND_OTHERS_MIGHT) = range(16)
 
 # COND_PLAYED_TRIO is Swain's "if you've played a non-token unit, a non-token
 # gear, and a spell this turn" -- all three kinds, in one turn. Read off
 # `state.played_types`, which is set at the moment each card is PLAYED (349)
 # rather than when it resolves, so a countered spell still counts toward it.
+
+# COND_NOT_DIED_ALONE is Loyal Poro's "If I DIDN'T die alone" -- the negation
+# of the flag Lonely Poro reads, and a separate value rather than a `negate`
+# field because there is exactly one card on each side and a flag that applies
+# to every condition is a lot of surface for that.
+#
+# COND_CTX_BATTLEFIELD is Harpoon Squad's "when I move FROM a battlefield":
+# TR_MOVE captures the location left behind (359.3.f.3), so the question is
+# about `ctx`, not about where the unit is now.
+#
+# COND_SELF_AT_BF is Mischievous Marai's "when you play me TO a battlefield" --
+# about the source's own location, which for a play trigger is where it landed.
+
+# COND_N_OTHERS_HERE is Shen's "if there is EXACTLY ONE other unit you
+# control here" -- an exact count, not a threshold, so `level` is the
+# number it must equal. A second friendly unit turns it off again.
+#
+# COND_OTHERS_MIGHT is Kinkou Initiate's "if your OTHER units have total
+# Might 5 or more": the sum of every other friendly unit's EFFECTIVE
+# Might (statics and buffs included), against `level` as the threshold.
+
+# COND_FEW_RUNES is Eclipse Dragon's "if you control 4 or fewer runes" --
+# a count of the rune BOARD (ready plus spent), not the rune deck, since
+# that is what "control" means for a rune. The threshold rides on the Op as
+# `level`, reusing the field COND_LEVEL already uses for a number.
 
 # COND_EMPOWERED is 828.1.b.1's dependent keyword: "[Empowered] - [Text]" is
 # short for "While I have the Empowered status, this card gains '[Text]'". So
@@ -221,6 +253,13 @@ class TargetSpec(NamedTuple):
     # express this: they point at an earlier target slot, and "here" is not a
     # choice anyone made. Meaningless on a spell, which has no location.
     same_loc_as_source: bool = False
+    # "an enemy CHAOS unit or gear" -- a restriction on the target's DOMAIN.
+    # -1 is no restriction, which is what almost every card prints.
+    domain: int = -1
+    # "an ATTACKING unit" -- 459 designates every unit the Attacker
+    # controls at the contested battlefield. Only meaningful during a
+    # Showdown; outside one nothing is attacking and the slot is empty.
+    attacking: bool = False
     # "up to N" -- the slot may be left EMPTY. 355.14 lets a player choose
     # fewer targets than the maximum, so the card is still legal to play with
     # nothing to point at, and each unfilled slot simply does nothing. Without
@@ -290,6 +329,10 @@ class Op(NamedTuple):
     then_ready: bool = False
     # For OP_ADD_POWER: which domain's Power is added to the Rune Pool.
     domain: int = -1
+    # "an ATTACKING unit" -- 459 designates every unit the Attacker
+    # controls at the contested battlefield. Only meaningful during a
+    # Showdown; outside one nothing is attacking and the slot is empty.
+    attacking: bool = False
     # For OP_LOOK_TOP: `n` is how many cards to look at; these say where the
     # one the player picks goes and where everything else goes. Stacked Deck is
     # "Put 1 into your hand and recycle the rest" -- DEST_HAND and DEST_RECYCLE.
@@ -309,6 +352,17 @@ class Op(NamedTuple):
     # empty Rune Deck, checked against how many actually came off it.
     ready_runes: bool = False
     draw_if_short: int = 0
+    # For OP_KILL_ALL: which printed type the sweep reaches.
+    # Empty means Unit, which is what every board wipe meant before
+    # "Kill all gear" needed the distinction.
+    card_type: str = ""
+    # For OP_DISCARD_CHOOSE: which entry of `DISCARD_BRANCHES` to run
+    # once the discarded card's type is known.
+    branch_key: int = -1
+    # Chaining: after THIS op's deferred decision resolves, run the ops in
+    # `FOLLOWUPS[then_key]`. Those may suspend again, which is how a card
+    # gets two decisions in sequence. -1 for the common case of none.
+    then_key: int = -1
     # --- scoping for the board-wide ops -----------------------------------
     # These three turn "all units at battlefields" into "each other enemy unit
     # THERE", which is what most of the mass effects in the pool actually say.
@@ -353,9 +407,18 @@ class CardSpec(NamedTuple):
 # 359.3.f.3 fixes that at trigger time, not at resolution.
 (TR_PLAY_ME, TR_DEATH, TR_MOVE, TR_HOLD, TR_CONQUER,
  TR_PLAY_SPELL, TR_ACTIVATED, TR_ATTACK_OR_DEFEND,
- TR_PLAY_UNIT) = range(9)
+ TR_PLAY_UNIT, TR_OTHER_DIES, TR_GEAR_ABILITY,
+ TR_DISCARD) = range(12)
 TRIGGER_NAMES = ("play_me", "death", "move", "hold", "conquer", "play_spell",
-                 "activated", "attack_or_defend", "play_unit")
+                 "activated", "attack_or_defend", "play_unit",
+                 "other_dies", "gear_ability", "discard")
+
+# TR_OTHER_DIES and TR_GEAR_ABILITY are WATCHER triggers: they fire for a
+# permanent because something happened to a DIFFERENT one. TR_DEATH fires
+# for the thing that died; "when ANOTHER friendly unit dies" is a different
+# question and needs its own firing site. Both go through
+# `chain.fire_watchers`, which is `fire_play_unit` generalised -- one place
+# that knows how to ask "who was watching for this".
 
 # TR_ACTIVATED is not a trigger at all -- it is the marker for an ACTIVATED
 # ability (151.1: "Costs followed by a ':' and then an effect"). No event ever
@@ -444,6 +507,14 @@ class Ability(NamedTuple):
     # Vex - Apathetic stuns what an opponent plays; Lillia grows on what
     # you play. Same trigger, opposite side.
     subject_enemy: bool = False
+    # "When you play ANOTHER unit" -- the watcher must not be the unit that
+    # was just played. Reluctant Leader grows on the rest of the board and
+    # not on its own arrival.
+    subject_not_self: bool = False
+    # "The FIRST TIME ... each turn" -- gated on `state.once_used`, the same
+    # per-permanent turn stamp Zilean's once-each-turn uses. Spent when the
+    # trigger fires, so a second death in the same turn does nothing.
+    once_each_turn: bool = False
     # "while I'm at a battlefield" -- a condition on the WATCHER's own
     # location, not the subject's. Vex in a base watches nothing.
     subject_at_battlefield: bool = False
@@ -460,6 +531,12 @@ class Ability(NamedTuple):
     # other: Mask of Foresight's "alone" clause was being applied to all
     # attack/defend triggers, so a card without the clause would have inherited
     # it. Anything printed on one card belongs on that card.
+    # 383.3.b -- a cost inside the instructions: "you may PAY {1 energy}. If
+    # you do, ...". Distinct from `optional`, which is a free yes/no. The
+    # ability is only offered when the cost is affordable, and accepting
+    # pays it; declining removes the ability (383.3.a.2) and costs nothing.
+    opt_cost_energy: int = 0
+    opt_cost_power: int = 0
     subject_alone: bool = False       # "...attacks or defends ALONE" (740.2.a)
     subject_role: int = ROLE_EITHER   # attacker-only / defender-only / either
     # Whose attack this watches. "When I attack" (the common case) fires only
@@ -528,6 +605,44 @@ PERM_NONE, PERM_OPEN, PERM_ENEMY = range(3)
 # BATTLEFIELD, and it is ONCE EACH TURN (tracked per row in `state.once_used`).
 TOKEN_DOUBLERS: frozenset[str] = frozenset({"Zilean - Time Mage"})
 
+# "Then, do the following based on the discarded card's type." The branch runs
+# AFTER the player has chosen what to pitch, so it cannot be ordinary ops on
+# the card -- resolution has already returned by then. Keyed by card name and
+# looked up when the choice comes back, the same shape as PLAY_PERMISSIONS.
+#
+# A card with more than one type takes EVERY matching branch: a gear unit is
+# both, so it would draw AND ready runes. See `_played_bits` for the same rule
+# on Swain, and note the branches are checked independently for that reason.
+# Indexed by INT, not by name: `GameState` holds no Python objects (PLAN.md
+# §1.8), and `state_hash` reads every non-array field through `int(v)`. A
+# string here parsed fine and then broke determinism, cloning and the digest
+# all at once -- the rule exists for a reason.
+DB_HWEI = 0
+
+# Op lists that run AFTER a deferred decision resolves -- see `Op.then_key`.
+# Indexed by int for the same reason DISCARD_BRANCHES is: nothing but ints may
+# reach `GameState`, and the key is stored there while the decision is pending.
+FU_DIANA_REVEAL = 0
+FU_GUARDS_READY = 1
+
+# Populated below, once the ops they reference are defined.
+FOLLOWUPS: list[tuple] = [(), ()]
+# [FU_DIANA_REVEAL] "...then reveal the top card of your Main Deck. If it's a
+# spell, draw it." A second look at N=1: the spell goes to hand, anything else
+# goes back on top. `pick_optional` because a type-restricted pick must always
+# leave a way out -- the top card need not be a spell.
+
+DISCARD_BRANCHES: tuple[dict[str, tuple], ...] = (
+    # [DB_HWEI] Hwei - Brooding Painter: "Then, do the following based on the
+    # discarded card's type: Spell - Draw 1. Gear - Ready up to 2 runes.
+    # Unit - Give me +3 Might this turn."
+    {
+        "Spell": (Op(OP_DRAW, n=1),),
+        "Gear": (Op(OP_READY_RUNES, n=2),),
+        "Unit": (Op(OP_MODIFY_MIGHT, target=T_SELF, n=3),),
+    },
+)
+
 # Cards that suppress the [Temporary] expiry. LeBlanc - Everywhere At Once:
 # "Your [Temporary] effects at my battlefield don't trigger." 816's reminder --
 # "Kill it at the start of its controller's Beginning Phase" -- is the trigger
@@ -537,6 +652,12 @@ TOKEN_DOUBLERS: frozenset[str] = frozenset({"Zilean - Time Mage"})
 # Two restrictions the wording carries and a loose reading drops: "YOUR"
 # effects, so it never spares an opponent's Temporary units; and "at MY
 # BATTLEFIELD", so a LeBlanc sitting in a base suppresses nothing.
+# Heimerdinger - Inventor: "I have all Exhaust abilities of all friendly
+# legends, units, and gear." Keyed by name like the other bespoke registries.
+# The borrowed ability is HIS: its Exhaust cost taps him, its effects say "me"
+# about him, and the donor is untouched.
+ABILITY_BORROWERS: frozenset[str] = frozenset({"Heimerdinger - Inventor"})
+
 TEMPORARY_SUPPRESSORS: frozenset[str] = frozenset(
     {"LeBlanc - Everywhere At Once"})
 
@@ -988,6 +1109,56 @@ SPECS: dict[str, CardSpec] = {
                  TargetSpec(who=W_ANY, at_battlefield=True, not_self=True,
                             rel=REL_SAME_BF, rel_to=0)),
         ops=(Op(OP_SWAP_MIGHT, target=0, target_b=1),),
+    ),
+
+    # [Reaction] [Repeat] {2 energy}. Give two friendly units each +1 Might
+    # this turn.  Two slots, so repeating it gives each of them +2.
+    "Bonds of Strength": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_FRIENDLY),
+                 TargetSpec(who=W_FRIENDLY, not_self=True)),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=1),
+             Op(OP_MODIFY_MIGHT, target=1, n=1)),
+    ),
+
+    # [Reaction] [Repeat] {2 energy}. Draw 1.
+    "Downstage Dramatics": CardSpec(
+        speed=SPEED_REACTION,
+        ops=(Op(OP_DRAW, n=1),),
+    ),
+
+    # [Reaction] [Repeat] {2 energy}. Give a unit +2 Might this turn.
+    "Feral Strength": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=2),),
+    ),
+
+    # Kill an enemy Chaos ({Chaos rune}) unit or gear.
+    # The domain is a restriction on the TARGET's own printed domain, not on
+    # what this costs. "unit or gear" is the `card_type` tuple, as ever.
+    "Decree of Unity": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(who=W_ENEMY, domain=2,          # 2 == Chaos
+                            card_type=("Unit", "Gear")),),
+        ops=(Op(OP_KILL, target=0),),
+    ),
+
+    # [Action] Kill all gear.
+    # Both players', and gear only -- units are untouched. The sweep has always
+    # been units-only because every wipe before this one was.
+    "Thermo Beam": CardSpec(
+        speed=SPEED_ACTION,
+        ops=(Op(OP_KILL_ALL, card_type="Gear"),),
+    ),
+
+    # [Action] [Repeat] {2 energy}. Stun an attacking unit.
+    # Only legal during a Showdown -- 459 is what makes a unit "attacking", and
+    # outside one there is nothing to choose, so the card cannot be played.
+    "Thwonk!": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY, attacking=True),),
+        ops=(Op(OP_STUN, target=0),),
     ),
 
     # [Reaction] Draw 3.
@@ -2216,6 +2387,226 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
                      Op(OP_NO_MOVE, target=T_SUBJECT))),
     ),
 
+    # When I move, draw 1, then discard 1. Then, do the following based on the
+    # discarded card's type: Spell - Draw 1. Gear - Ready up to 2 runes.
+    # Unit - Give me +3 Might this turn.
+    #
+    # The discard is a real CHOICE and that is the whole card: which card you
+    # pitch is how you pick the mode. `phases.discard`'s take-the-oldest rule
+    # would have chosen the mode for the player.
+    "Hwei - Brooding Painter": (
+        Ability(TR_MOVE,
+                ops=(Op(OP_DRAW, n=1),
+                     Op(OP_DISCARD_CHOOSE, branch_key=DB_HWEI))),
+    ),
+
+    # [Accelerate] [Deathknell] Recycle me to ready your runes.
+    # "Recycle me" is a cost WITHIN the instructions (383.3.b) but not an
+    # optional one -- the card does not say "you may" -- so it is simply the
+    # first op. By the time a Deathknell resolves the card is already in the
+    # trash (808.1.d.2), which is where the recycle takes it from.
+    #
+    # "your runes", unbounded: every spent rune readies, which is what makes
+    # this a whole extra turn's worth of resources.
+    "Ekko - Recurrent": (
+        Ability(TR_DEATH,
+                ops=(Op(OP_RECYCLE_SELF),
+                     Op(OP_READY_RUNES, n=MAX_DECK))),
+    ),
+
+    # When you play me, discard 1, then draw 1.
+    # "discard 1" with no choice of card, unlike Hwei -- so this is
+    # `phases.discard`'s take-the-oldest rule, which is what the card means
+    # when it names no chooser. Discard first: the drawn card is never a
+    # candidate to be pitched.
+    "Evershade Stalker": (
+        Ability(TR_PLAY_ME, ops=(Op(OP_DISCARD, n=1), Op(OP_DRAW, n=1))),
+    ),
+
+    # [Vision] [Action] Kill this, Exhaust: Give a unit +2 Might this turn.
+    # Two costs at once (204.1.b), and [Vision] is synthesised from the
+    # keyword, so only the activated ability is written here.
+    "Divining Shells": (
+        Ability(TR_ACTIVATED, speed=SPEED_ACTION, cost_exhaust=True,
+                cost_kill_self=True,
+                targets=(TargetSpec(who=W_ANY),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=2),)),
+    ),
+
+    # [Accelerate] When I move, if you control 4 or fewer runes, draw 1.
+    # A CONDITION checked at resolution, not a restriction: the move has
+    # already happened and the rune board can change in the response window.
+    "Eclipse Dragon": (
+        Ability(TR_MOVE,
+                ops=(Op(OP_DRAW, n=1, cond=COND_FEW_RUNES, level=4),)),
+    ),
+
+    # [Deathknell] If I didn't die alone, draw 1.
+    # The mirror of Lonely Poro, reading the same F_DIED_ALONE snapshot the
+    # other way round. Past tense either way: recorded at the moment of death,
+    # because a priority window sits between dying and the ability resolving.
+    "Loyal Poro": (
+        Ability(TR_DEATH,
+                ops=(Op(OP_DRAW, n=1, cond=COND_NOT_DIED_ALONE),)),
+    ),
+
+    # When I move FROM a battlefield, give me +2 Might this turn.
+    # TR_MOVE's captured `ctx` is the location left behind, so this asks about
+    # where the unit came from and not where it is now -- a unit walking home
+    # to its base qualifies, one leaving its base does not.
+    "Harpoon Squad": (
+        Ability(TR_MOVE,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=2,
+                        cond=COND_CTX_BATTLEFIELD),)),
+    ),
+
+    # [Hidden] When you play me TO A BATTLEFIELD, deal 2 to an enemy unit here.
+    # [Hidden] is what makes the condition reachable: a unit played from hand
+    # normally lands at a base, and 811.1.d.3 puts a hidden one at the
+    # battlefield it was hidden at.
+    "Mischievous Marai": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ENEMY, same_loc_as_source=True),),
+                ops=(Op(OP_DAMAGE, target=0, n=2, cond=COND_SELF_AT_BF),)),
+    ),
+
+    # When I move to a battlefield, play a 1 Might Recruit unit token here.
+    # "to a battlefield" gates on where I landed; "here" is that same place.
+    "Noxian Drummer": (
+        Ability(TR_MOVE,
+                ops=(Op(OP_CREATE_TOKEN, target=T_HERE, n=1,
+                        token=RECRUIT_TOKEN, cond=COND_SELF_AT_BF),)),
+    ),
+
+    # When I move to a battlefield, give ANOTHER friendly unit +1 Might this
+    # turn.  `not_self` is the "another": I am a friendly unit too.
+    "Ribbon Dancer": (
+        Ability(TR_MOVE,
+                targets=(TargetSpec(who=W_FRIENDLY, not_self=True),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=1,
+                        cond=COND_SELF_AT_BF),)),
+    ),
+
+    # [Accelerate] When I attack, if you control 4 or fewer runes, deal 2 to
+    # all enemy units here.  Three pieces that already existed: the attack-only
+    # role, the rune-board count, and a sweep scoped to one location and side.
+    "Renekton, Rage Fueled": (
+        Ability(TR_ATTACK_OR_DEFEND, subject_role=ROLE_ATTACK,
+                ops=(Op(OP_DAMAGE_ALL, at=T_HERE, n=2, who=W_ENEMY,
+                        cond=COND_FEW_RUNES, level=4),)),
+    ),
+
+    # When you play ANOTHER unit, give me +2 Might this turn.
+    # `subject_not_self` is the "another": without it this would grow by 2 the
+    # moment it arrived, off its own play.
+    "Reluctant Leader": (
+        Ability(TR_PLAY_UNIT, subject_not_self=True,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=2),)),
+    ),
+
+    # When another friendly unit dies, give me +2 Might this turn.
+    "Spectral Centaur": (
+        Ability(TR_OTHER_DIES,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=2),)),
+    ),
+
+    # When you use an activated ability of a gear, give me +1 Might this turn.
+    "Prize of Progress": (
+        Ability(TR_GEAR_ABILITY,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=1),)),
+    ),
+
+    # When you discard ONE OR MORE cards, ready me and give me +1 Might this
+    # turn.  "one or more" is one trigger per discard EVENT, not per card: a
+    # card that pitches two fires this once.
+    "Jinx - Rebel": (
+        Ability(TR_DISCARD,
+                ops=(Op(OP_READY, target=T_SELF),
+                     Op(OP_MODIFY_MIGHT, target=T_SELF, n=1))),
+    ),
+
+    # [Hunt] [Level 6] When you play me, draw 1.
+    # [Hunt] is synthesised from the keyword; the draw is gated on 6+ XP, which
+    # COND_LEVEL already expresses.
+    "Wuju Apprentice": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_DRAW, n=1, cond=COND_LEVEL, level=6),)),
+    ),
+
+    # When you play me, return ANOTHER unit at a battlefield to its owner's
+    # hand.  Unqualified by side, so it can bounce your own -- and `not_self`
+    # is the "another", since an Ambushed Bouncer is itself at a battlefield.
+    "Zaunite Bouncer": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY, at_battlefield=True,
+                                    not_self=True),),
+                ops=(Op(OP_RETURN_TO_HAND, target=0),)),
+    ),
+
+    # The first time a friendly unit dies each turn, draw 1.
+    # A watcher for another's death with a once-per-turn gate. "A friendly
+    # unit" includes this one, but a watcher never sees its own death -- it is
+    # already gone -- so the practical reading matches TR_OTHER_DIES.
+    "Wraith of Echoes": (
+        Ability(TR_OTHER_DIES, once_each_turn=True,
+                ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # When a showdown begins here, you may pay {1 energy}. If you do,
+    # [Predict], then reveal the top card of your Main Deck. If it's a spell,
+    # draw it.
+    #
+    # "When a showdown begins HERE" is TR_ATTACK_OR_DEFEND on herself: 459
+    # designates every unit at the battlefield the moment a Combat begins, so
+    # a showdown starting at Diana's battlefield is exactly when she is an
+    # attacker or a defender.
+    #
+    # Two deferred decisions in sequence, which is what `then_key` is for --
+    # the Predict suspends, and its follow-up suspends again for the reveal.
+    "Diana - Lunari": (
+        Ability(TR_ATTACK_OR_DEFEND, optional=True, opt_cost_energy=1,
+                ops=(Op(OP_LOOK_TOP, n=1, pick_optional=True,
+                        pick_dest=DEST_RECYCLE, rest_dest=DEST_TOP,
+                        then_key=FU_DIANA_REVEAL),)),
+    ),
+
+    # When I attack, you may pay {1 energy} to give a unit here -1 Might this
+    # turn.  383.3.b again: an optional COST, so the offer only appears when
+    # the energy is there. "a unit here" is unqualified -- it may point at your
+    # own, which is occasionally what you want against a damage check.
+    "Icevale Archer": (
+        Ability(TR_ATTACK_OR_DEFEND, subject_role=ROLE_ATTACK,
+                optional=True, opt_cost_energy=1,
+                targets=(TargetSpec(who=W_ANY, same_loc_as_source=True),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=-1),)),
+    ),
+
+    # When I move to a battlefield, you may move an enemy unit to that
+    # battlefield.  A free "you may" (383.3.a), decided at finalization -- no
+    # cost, unlike Icevale Archer directly above.
+    "Irresistible Faefolk": (
+        Ability(TR_MOVE, optional=True,
+                targets=(TargetSpec(who=W_ENEMY),),
+                ops=(Op(OP_MOVE_TO, target=0, target_b=T_HERE,
+                        cond=COND_SELF_AT_BF),)),
+    ),
+
+    # When I hold, if there is exactly one other unit you control here, draw 1.
+    # EXACTLY one -- a second friendly unit at the battlefield turns it off,
+    # which is what makes it a condition rather than a threshold.
+    "Shen, Scourge of Shadows": (
+        Ability(TR_HOLD,
+                ops=(Op(OP_DRAW, n=1, cond=COND_N_OTHERS_HERE, level=1),)),
+    ),
+
+    # When you play me, draw 1 if your other units have total Might 5 or more.
+    # "OTHER units" excludes me, and the total is EFFECTIVE Might -- statics
+    # and buffs count, which is the number the player can actually see.
+    "Kinkou Initiate": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_DRAW, n=1, cond=COND_OTHERS_MIGHT, level=5),)),
+    ),
+
     # [Ambush] When I attack, [Stun] an enemy unit here.
     # Leona's shape exactly, and both were unreachable until the attack/defend
     # trigger learned to tell attacking from defending (459) and "here" from
@@ -2715,6 +3106,12 @@ for _name, _entry in list(SPECS.items()) + [
         assert not (_op.op == OP_CREATE_TOKEN and _i != len(_entry.ops) - 1), (
             f"{_name}: create_token must be the last op while the token-doubler "
             f"replacement is deferred (see TOKEN_DOUBLERS)")
+# This caught Guards! -- "Play a 2 Might Sand Soldier unit token. You may pay
+# {Order rune} to ready it." Both Zilean's doubling and that optional cost
+# defer off the same token creation, so they would queue together and
+# "ready IT" stops being answerable: one token or both? Two interacting
+# deferred decisions is real work, and the card is 2 deck slots, so it is
+# left uncovered rather than approximated.
 
 # Costs are read at finalization and ONLY for TR_ACTIVATED (204.1.b -- a base
 # cost is what stands before the ':'). A triggered ability that carries one is
@@ -2738,3 +3135,12 @@ for _name, _abs in ABILITIES.items():
                 for a in _ad}) <= 1, (
         f"{_name} has attack/defend abilities with different trigger-time "
         f"conditions; open_showdown cannot queue them separately")
+
+
+# --- follow-up op lists (see `Op.then_key`) --------------------------------
+# Filled in after the module body so they can use the same Op vocabulary the
+# cards do. Index order must match the FU_* constants above.
+FOLLOWUPS[FU_DIANA_REVEAL] = (
+    Op(OP_LOOK_TOP, n=1, pick_optional=True, pick_types=("Spell",),
+       pick_dest=DEST_HAND, rest_dest=DEST_TOP),
+)

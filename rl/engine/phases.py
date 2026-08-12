@@ -197,7 +197,8 @@ def draw_for(state: GameState, seat: int, n: int = 1) -> list[int]:
         state.active = prev
 
 
-def discard(state: GameState, seat: int, n: int = 1) -> list[int]:
+def discard(state: GameState, table: CardTable, seat: int,
+            n: int = 1) -> list[int]:
     """Discard `n` from `seat`'s hand, oldest first.
 
     Which card to discard is a real choice on many cards, but nothing in the
@@ -216,6 +217,12 @@ def discard(state: GameState, seat: int, n: int = 1) -> list[int]:
         state.n_hand[seat] = h - 1
         _to_trash(state, seat, card)
         out.append(card)
+    # "When you discard ONE OR MORE cards" -- one trigger for the event, not
+    # one per card, so this fires after the loop and only if anything moved.
+    if out:
+        from rl.engine.chain import fire_watchers
+        from rl.engine.effects import TR_DISCARD
+        fire_watchers(state, table, seat, TR_DISCARD)
     return out
 
 

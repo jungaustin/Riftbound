@@ -307,6 +307,32 @@ def queue(state: GameState, trigger: int, src: int, ctx: int = -1,
     state.n_trig = i + 1
 
 
+def fire_watchers(state: GameState, table: CardTable, seat: int,
+                  trigger: int, subj: int = -1, exclude: int = -1) -> None:
+    """Queue `seat`'s permanents watching for `trigger` to happen elsewhere.
+
+    The generalisation of `fire_play_unit`: a watcher fires because something
+    happened to a DIFFERENT permanent, so it needs the event's subject and, for
+    an "another" clause, the one permanent that must not count as a watcher.
+    """
+    for w in range(state.n_perms):
+        if w == exclude or state.perms[w, P_ALIVE] != 1:
+            continue
+        if int(state.perms[w, P_CTRL]) != seat:
+            continue
+        for ab in abilities_for(table, int(state.perms[w, P_CARD])):
+            if ab.trigger != trigger:
+                continue
+            # "The FIRST TIME ... each turn" -- one stamp per permanent per
+            # turn, the same field Zilean's once-each-turn uses.
+            if ab.once_each_turn:
+                if int(state.once_used[w]) == int(state.turn):
+                    continue
+                state.once_used[w] = int(state.turn)
+            queue(state, trigger, w, int(state.perms[w, P_LOC]), subj=subj)
+            break
+
+
 def fire_play_unit(state: GameState, table: CardTable, seat: int,
                    card: int, perm: int = -1) -> None:
     """Queue "when you play a unit" watchers for `seat` (Lillia).
@@ -331,6 +357,8 @@ def fire_play_unit(state: GameState, table: CardTable, seat: int,
             if ab.subject_enemy == mine:
                 continue
             if ab.subject_token and not is_token:
+                continue
+            if ab.subject_not_self and w == perm:
                 continue
             # Vex needs somewhere to point [Stun], and that is the permanent
             # just played -- not a target, so it rides as the subject the same

@@ -46,7 +46,8 @@ from engine.cards import find  # noqa: E402
 
 from rl.config import ABILITY_KEYWORDS, DOMAINS  # noqa: E402
 from rl.engine.cardtable import CardTable, read_decklist  # noqa: E402
-from rl.engine.effects import (ABILITIES, COND_EMPOWERED,  # noqa: E402
+from rl.engine.effects import (ABILITIES, ABILITY_BORROWERS,  # noqa: E402
+                               COND_EMPOWERED,
                                COND_LEGION, OP_EMPOWER, OP_LOOK_TOP,
                                ENTERS_READY_IF, PLAY_PERMISSIONS, SPECS,
                                STATICS, TEMPORARY_SUPPRESSORS, TOKEN_DOUBLERS)
@@ -222,7 +223,8 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
     if residual and not (name in ABILITIES or name in STATICS
                          or name in TOKEN_DOUBLERS
                          or name in TEMPORARY_SUPPRESSORS
-                         or name in ENTERS_READY_IF):
+                         or name in ENTERS_READY_IF
+                         or name in ABILITY_BORROWERS):
         return False
     # A card that creates a token it cannot play correctly is approximating,
     # exactly as a card whose own text is ignored would be. The Bird token

@@ -586,6 +586,7 @@ ok("[Add] resolves immediately: Power appears with nothing on the Chain")
 
 from rl.engine import chain as chain_mod
 from rl.engine import combat as _combat
+from rl.engine import resolve as rsv_mod
 from rl.engine.state import (C_FINAL, F_NO_MOVE as _F_NO_MOVE,
                              F_STUNNED as _F_STUNNED)
 
@@ -632,5 +633,450 @@ chain_mod.fire_play_unit(s, T, 0, VEX_BODY, own)
 if int(s.n_trig):
     die("vex", "'when an OPPONENT plays' -- my own units must not trigger it")
 ok("...and never on her own controller's units")
+
+# ---------------------------------------------------------------------------
+# Hwei - Brooding Painter: the discard is a CHOICE, and it picks the mode
+#
+# "When I move, draw 1, then discard 1. Then, do the following based on the
+# discarded card's type: Spell - Draw 1. Gear - Ready up to 2 runes. Unit -
+# Give me +3 Might this turn."
+#
+# `phases.discard` takes the oldest card and always has -- its docstring says
+# "the day a card says 'discard a card of your choice' this becomes a decision
+# point rather than a rule here". This is that card: which card you pitch IS
+# the mode selector, so taking the oldest would choose the mode for the player.
+
+HWEI = T.id_of("Hwei - Brooding Painter")
+HWEI_AB = ABILITIES["Hwei - Brooding Painter"][0]
+H_SPELL = next(c for c in range(T.n) if T.is_type(c, "Spell"))
+H_GEAR = next(c for c in range(T.n) if T.is_type(c, "Gear") and not T.is_token(c))
+H_UNIT = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
+
+
+def hwei_pitch(idx):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    h = s.add_permanent(HWEI, 0, bf_loc(0))
+    s.n_hand[0] = 3
+    s.hand[0, 0], s.hand[0, 1], s.hand[0, 2] = H_SPELL, H_GEAR, H_UNIT
+    s.n_deck[0] = 10
+    s.runes_spent[0, 0] = 3
+    rsv_mod.resolve(s, T, V1, HWEI_AB, 0, [], -1, True, source=h)
+    if s.pend_discard < 0:
+        die("hwei", "the discard must pend as a choice, not take the oldest")
+    before = _combat.might(s, T, h)
+    A.apply(s, T, V1, A.Action(A.A_PICK, idx))
+    return (int(s.n_hand[0]), int(s.runes_ready[0].sum()),
+            _combat.might(s, T, h) - before)
+
+
+# Every card in hand is offered -- the player picks the mode by picking the
+# card, so nothing may be filtered out.
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+h = s.add_permanent(HWEI, 0, bf_loc(0))
+s.n_hand[0] = 3
+s.hand[0, 0], s.hand[0, 1], s.hand[0, 2] = H_SPELL, H_GEAR, H_UNIT
+s.n_deck[0] = 10
+rsv_mod.resolve(s, T, V1, HWEI_AB, 0, [], -1, True, source=h)
+if len(A.legal_actions(s, T, V1, 0)) != int(s.n_hand[0]):
+    die("hwei", "every card in hand is a legal pitch")
+ok("Hwei's discard is a decision point over the whole hand")
+
+hand, ready, dmight = hwei_pitch(0)          # a Spell
+if ready or dmight:
+    die("hwei", "pitching a spell takes only the Spell branch")
+hand, ready, dmight = hwei_pitch(1)          # a Gear
+if ready != 2 or dmight:
+    die("hwei", f"the Gear branch readies up to 2 runes, got {ready}")
+hand, ready, dmight = hwei_pitch(2)          # a Unit
+if dmight != 3 or ready:
+    die("hwei", f"the Unit branch gives +3 Might, got {dmight}")
+ok("...and the discarded card's TYPE selects which branch runs")
+
+# ---------------------------------------------------------------------------
+# Ekko - Recurrent: "[Deathknell] Recycle me to ready your runes."
+#
+# "Recycle me" is a cost within the instructions (383.3.b) but NOT an optional
+# one -- the card never says "you may" -- so it is simply the first op.
+#
+# The subtlety is whose row answers "me". 383.2.c.2 blanks a source that has
+# left the board, and a Deathknell's source is dead by definition, so `source`
+# is -1 by the time this resolves. `dead_source` is kept for exactly the
+# questions a corpse can still answer, and "recycle ME" names a card rather
+# than a board position, so it is one of them.
+
+EKKO = T.id_of("Ekko - Recurrent")
+
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+e = s.add_permanent(EKKO, 0, bf_loc(0))
+s.runes_spent[0, 0] = 4
+s.n_deck[0] = 5
+for i in range(5):
+    s.deck[0, i] = EKKO
+_combat.destroy(s, T, e)
+while s.n_trig:
+    chain_mod.place(s, T, V1, 0)
+for i in range(int(s.n_chain)):
+    s.chain[i, C_FINAL] = 1
+while s.n_chain:
+    chain_mod.resolve_top(s, T, V1)
+
+if int(s.n_trash[0]) != 0 or int(s.n_deck[0]) != 6:
+    die("ekko", f"the card leaves the trash for the deck, got trash="
+                f"{int(s.n_trash[0])} deck={int(s.n_deck[0])}")
+if int(s.deck[0, int(s.n_deck[0]) - 1]) != EKKO:
+    die("ekko", "416.1.a -- a Recycle goes to the BOTTOM")
+ok("383.2.c.2 -- 'recycle me' reads dead_source, the row kept for a corpse")
+
+if int(s.runes_spent[0].sum()) != 0 or int(s.runes_ready[0].sum()) != 4:
+    die("ekko", "'ready your runes' is unbounded -- every spent rune readies")
+ok("...and 'ready your runes' readies all of them, not a capped number")
+
+# ---------------------------------------------------------------------------
+# Heimerdinger - Inventor: "I have all Exhaust abilities of all friendly
+# legends, units, and gear."
+#
+# He HAS them, so a borrowed ability is his: the Exhaust cost taps HIM and the
+# donor is untouched. That is the whole card -- one exhaust reused across the
+# board, and the donors keep theirs.
+#
+# An A_ACTIVATE used to be identified by its permanent alone, because
+# `_activate` takes the FIRST activated ability and no card has two.
+# Heimerdinger holds many, so the arg carries a packed (permanent, donor).
+
+HEIMER = T.id_of("Heimerdinger - Inventor")
+DARK_ICE = T.id_of("Heart of Dark Ice")      # Exhaust: give a unit +3 Might
+HEIM_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit")
+                 and not T.is_token(c) and int(T.might[c]) >= 3)
+
+for _perm, _donor in ((0, 0), (5, 5), (3, 7), (47, 0), (0, 47)):
+    if A.unpack_activate(A.pack_activate(_perm, _donor)) != (_perm, _donor):
+        die("heimer", f"the packed activate arg must round-trip "
+                      f"({_perm}, {_donor})")
+ok("a packed (permanent, donor) activate arg round-trips")
+
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+h = s.add_permanent(HEIMER, 0, bf_loc(0))
+d = s.add_permanent(DARK_ICE, 0, base_loc(0))
+u = s.add_permanent(HEIM_BODY, 0, bf_loc(0))
+before = _combat.might(s, T, u)
+
+borrowed = [a for a in A.legal_actions(s, T, V1, 0)
+            if a.kind == A.A_ACTIVATE and A.unpack_activate(a.arg) == (h, d)]
+if not borrowed:
+    die("heimer", "Heimerdinger should be offered the gear's Exhaust ability")
+A.apply(s, T, V1, borrowed[0])
+while s.pend_slot >= 0:
+    A.apply(s, T, V1, [x for x in A.legal_actions(s, T, V1, A.acting_seat(s))
+                       if x.arg == u][0])
+for _ in range(8):
+    if s.n_chain == 0:
+        break
+    A.apply(s, T, V1, A.Action(A.A_PASS))
+
+if _combat.might(s, T, u) != before + 3:
+    die("heimer", "the borrowed effect should resolve as the donor's does")
+if int(s.perms[h, P_READY]) != 0:
+    die("heimer", "the Exhaust cost taps HEIMERDINGER -- the ability is his")
+if int(s.perms[d, P_READY]) != 1:
+    die("heimer", "...and leaves the donor untouched, which is the whole card")
+ok("...and a borrowed Exhaust ability taps him, never the donor")
+
+# ---------------------------------------------------------------------------
+# Three small conditions, each the mirror or the origin of something already
+# here -- and each wrong in a way that would be invisible without a test.
+
+LOYAL_PORO = T.id_of("Loyal Poro")
+HARPOON = T.id_of("Harpoon Squad")
+COND_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit")
+                 and not T.is_token(c))
+
+
+def loyal_poro_drew(with_friend):
+    """Loyal Poro: "If I DIDN'T die alone, draw 1" -- Lonely Poro inverted."""
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    p = s.add_permanent(LOYAL_PORO, 0, bf_loc(0))
+    s.n_deck[0] = 10
+    if with_friend:
+        s.add_permanent(COND_BODY, 0, bf_loc(0))
+    _combat.destroy(s, T, p)
+    while s.n_trig:
+        chain_mod.place(s, T, V1, 0)
+    for i in range(int(s.n_chain)):
+        s.chain[i, C_FINAL] = 1
+    while s.n_chain:
+        chain_mod.resolve_top(s, T, V1)
+    return int(s.n_hand[0])
+
+
+if loyal_poro_drew(with_friend=False) != 0:
+    die("loyal", "dying alone is exactly when this card does NOTHING")
+if loyal_poro_drew(with_friend=True) != 1:
+    die("loyal", "with a friend at the same location it draws")
+ok("Loyal Poro reads F_DIED_ALONE inverted -- the mirror of Lonely Poro")
+
+# Harpoon Squad: "when I move FROM a battlefield". TR_MOVE captures the
+# location LEFT BEHIND (359.3.f.3), so this asks where it came from -- a unit
+# walking home qualifies, one leaving its base does not.
+HARPOON_AB = ABILITIES["Harpoon Squad"][0]
+for ctx, want in ((bf_loc(0), 2), (base_loc(0), 0)):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    h = s.add_permanent(HARPOON, 0, base_loc(0))
+    before = _combat.might(s, T, h)
+    rsv_mod.resolve(s, T, V1, HARPOON_AB, 0, [], -1, True, source=h, ctx=ctx)
+    if _combat.might(s, T, h) - before != want:
+        die("harpoon", f"moving from {ctx} should give +{want} Might")
+ok("...and 'move FROM a battlefield' asks about ctx, not where it is now")
+
+# ---------------------------------------------------------------------------
+# Watcher triggers: something happens to ONE permanent, and a DIFFERENT one
+# fires. `chain.fire_watchers` is `fire_play_unit` generalised, so all of these
+# share one place that knows how to ask "who was watching for this".
+
+CENTAUR = T.id_of("Spectral Centaur")     # when ANOTHER friendly unit dies
+PRIZE = T.id_of("Prize of Progress")      # when you use a GEAR's ability
+W_GEAR = T.id_of("Heart of Dark Ice")
+W_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
+
+
+def _drain(s):
+    while s.n_trig:
+        chain_mod.place(s, T, V1, 0)
+    for i in range(int(s.n_chain)):
+        s.chain[i, C_FINAL] = 1
+    while s.n_chain:
+        chain_mod.resolve_top(s, T, V1)
+
+
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+cen = s.add_permanent(CENTAUR, 0, bf_loc(0))
+other = s.add_permanent(W_BODY, 0, bf_loc(0))
+before = _combat.might(s, T, cen)
+_combat.destroy(s, T, other)
+_drain(s)
+if _combat.might(s, T, cen) - before != 2:
+    die("centaur", "another friendly unit dying gives +2")
+
+# TR_DEATH fires for the thing that died; this is the other question, and the
+# dying unit must never be its own watcher.
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+cen = s.add_permanent(CENTAUR, 0, bf_loc(0))
+_combat.destroy(s, T, cen)
+if int(s.n_trig):
+    die("centaur", "'ANOTHER friendly unit' -- its own death must not trigger it")
+ok("a watcher for another's death, and never for its own")
+
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+pp = s.add_permanent(PRIZE, 0, bf_loc(0))
+g = s.add_permanent(W_GEAR, 0, base_loc(0))
+tgt = s.add_permanent(W_BODY, 0, bf_loc(0))
+before = _combat.might(s, T, pp)
+act = next(a for a in A.legal_actions(s, T, V1, 0)
+           if a.kind == A.A_ACTIVATE and A.unpack_activate(a.arg)[1] == g)
+A.apply(s, T, V1, act)
+while s.pend_slot >= 0:
+    A.apply(s, T, V1, [x for x in A.legal_actions(s, T, V1, A.acting_seat(s))
+                       if x.arg == tgt][0])
+for _ in range(8):
+    if s.n_chain == 0 and s.n_trig == 0:
+        break
+    A.apply(s, T, V1, A.Action(A.A_PASS))
+if _combat.might(s, T, pp) - before != 1:
+    die("prize", "using a gear's activated ability gives +1")
+ok("...and a watcher for a GEAR's activated ability being used")
+
+# Jinx - Rebel: "When you discard ONE OR MORE cards, ready me and give me +1
+# Might this turn." One trigger per discard EVENT, not per card -- a card that
+# pitches two fires this once -- and nothing at all if the hand was empty.
+
+JINX = T.id_of("Jinx - Rebel")
+J_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
+
+
+def jinx_after(n_discard, hand_size):
+    from rl.engine.effects import OP_DISCARD as _OP_DISCARD
+    from rl.engine.effects import CardSpec as _CS, Op as _Op, SPEED_MAIN as _SM
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    j = s.add_permanent(JINX, 0, bf_loc(0))
+    s.perms[j, P_READY] = 0
+    s.n_hand[0] = hand_size
+    for i in range(hand_size):
+        s.hand[0, i] = J_BODY
+    before = _combat.might(s, T, j)
+    rsv_mod.resolve(s, T, V1, _CS(speed=_SM, ops=(_Op(_OP_DISCARD, n=n_discard),)),
+                    0, [], -1, True)
+    while s.n_trig:
+        chain_mod.place(s, T, V1, 0)
+    for i in range(int(s.n_chain)):
+        s.chain[i, C_FINAL] = 1
+    while s.n_chain:
+        chain_mod.resolve_top(s, T, V1)
+    return int(s.perms[j, P_READY]), _combat.might(s, T, j) - before
+
+
+if jinx_after(1, 3) != (1, 1):
+    die("jinx", "discarding readies it and gives +1")
+if jinx_after(2, 3) != (1, 1):
+    die("jinx", "'one or more' is ONE trigger for the event, not one per card")
+if jinx_after(1, 0) != (0, 0):
+    die("jinx", "an empty hand discards nothing, so nothing triggers")
+ok("'discard one or more cards' fires once per event, and not on nothing")
+
+# Wraith of Echoes: "The FIRST TIME a friendly unit dies each turn, draw 1."
+# A watcher for another's death with a once-per-turn gate, reusing the same
+# `state.once_used` turn stamp Zilean's "once each turn" uses -- a stamp rather
+# than a flag, so nothing has to remember to reset it.
+
+WRAITH = T.id_of("Wraith of Echoes")
+WR_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
+
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+s.turn = 1
+s.add_permanent(WRAITH, 0, bf_loc(0))
+s.n_deck[0] = 20
+first = s.add_permanent(WR_BODY, 0, bf_loc(0))
+second = s.add_permanent(WR_BODY, 0, bf_loc(0))
+
+_combat.destroy(s, T, first)
+_drain(s)
+if int(s.n_hand[0]) != 1:
+    die("wraith", "the first friendly death each turn draws")
+_combat.destroy(s, T, second)
+_drain(s)
+if int(s.n_hand[0]) != 1:
+    die("wraith", "'the FIRST time each turn' -- a second death draws nothing")
+
+s.turn = 2
+third = s.add_permanent(WR_BODY, 0, bf_loc(0))
+_combat.destroy(s, T, third)
+_drain(s)
+if int(s.n_hand[0]) != 2:
+    die("wraith", "the turn stamp must re-arm on a new turn")
+ok("'the first time each turn' fires once, then re-arms next turn")
+
+# ---------------------------------------------------------------------------
+# Diana - Lunari: two deferred decisions in sequence, behind an optional COST
+#
+# "When a showdown begins here, you may pay {1 energy}. If you do, [Predict],
+# then reveal the top card of your Main Deck. If it's a spell, draw it."
+#
+# Every suspending op used to have to be its card's LAST, because resolution
+# returns there. `Op.then_key` lifts that: a follow-up op list runs once the
+# decision comes back, and it may suspend again. Diana is the card that needs
+# it -- Predict, THEN reveal.
+#
+# 383.3.b is the other half: "you may PAY" is an optional COST, not a free
+# yes/no, so accepting is only offered when it can be paid.
+
+DIANA = T.id_of("Diana - Lunari")
+D_UNIT = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
+D_SPELL = next(c for c in range(T.n) if T.is_type(c, "Spell"))
+
+
+def diana_board(energy, top_card):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.add_permanent(DIANA, 0, bf_loc(0))
+    s.add_permanent(D_UNIT, 1, bf_loc(0))
+    s.runes_ready[0, 0] = energy
+    s.n_deck[0] = 4
+    for i in range(4):
+        s.deck[0, i] = top_card
+    _combat.open_showdown(s, T, 0, attacker=0)
+    while s.n_trig:
+        chain_mod.place(s, T, V1, 0)
+    for _ in range(6):
+        if s.pend_may >= 0:
+            break
+        A.apply(s, T, V1, A.legal_actions(s, T, V1, A.acting_seat(s))[0])
+    return s
+
+
+s = diana_board(0, D_UNIT)
+kinds = {A.KIND_NAMES[a.kind] for a in A.legal_actions(s, T, V1, A.acting_seat(s))}
+if kinds != {"decline"}:
+    die("diana", f"383.3.b -- an unaffordable optional cost offers only a "
+                 f"decline, got {kinds}")
+ok("383.3.b -- 'you may PAY' is offered only when the cost can be paid")
+
+s = diana_board(3, D_UNIT)
+before = int(s.runes_ready[0].sum())
+A.apply(s, T, V1, A.Action(A.A_ACCEPT))
+if int(s.runes_ready[0].sum()) != before - 1 or int(s.runes_spent[0].sum()) != 1:
+    die("diana", "accepting must actually pay the {1 energy}")
+
+# Accepting FINALIZES the ability; it resolves once priority passes, and only
+# then does the Predict suspend. That ordering is 383.3 doing its job, so the
+# test drives the passes rather than asserting through them.
+for _ in range(6):
+    if s.pend_look >= 0:
+        break
+    A.apply(s, T, V1, A.legal_actions(s, T, V1, A.acting_seat(s))[0])
+if s.pend_look < 0:
+    die("diana", "the Predict should suspend for a choice once it resolves")
+A.apply(s, T, V1, A.Action(A.A_PICK_NONE))
+if s.pend_look < 0:
+    die("diana", "the FOLLOW-UP reveal must suspend too -- that is the chain")
+ok("...and a follow-up decision chains off the first (Predict, then reveal)")
+
+# Two counting conditions, both wrong in a way a threshold reading would hide.
+#
+# Shen: "if there is EXACTLY ONE other unit you control here" -- a second
+# friendly unit turns it OFF again. Kinkou Initiate: "if your OTHER units have
+# total Might 5 or more" -- effective Might, and excluding itself.
+
+SHEN = T.id_of("Shen, Scourge of Shadows")
+KINKOU = T.id_of("Kinkou Initiate")
+
+
+def _unit_of(m):
+    return next(c for c in range(T.n) if T.is_type(c, "Unit")
+                and not T.is_token(c) and int(T.might[c]) == m)
+
+
+def shen_drew(n_others):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    h = s.add_permanent(SHEN, 0, bf_loc(0))
+    s.n_deck[0] = 10
+    for _ in range(n_others):
+        s.add_permanent(_unit_of(2), 0, bf_loc(0))
+    rsv_mod.resolve(s, T, V1, ABILITIES["Shen, Scourge of Shadows"][0], 0, [],
+                    -1, True, source=h)
+    return int(s.n_hand[0])
+
+
+if shen_drew(0) or shen_drew(2):
+    die("shen", "'EXACTLY one other' is off at zero AND at two")
+if shen_drew(1) != 1:
+    die("shen", "...and on at exactly one")
+ok("'exactly one other unit here' is an exact count, not a threshold")
+
+
+def kinkou_drew(mights):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    k = s.add_permanent(KINKOU, 0, base_loc(0))
+    s.n_deck[0] = 10
+    for m in mights:
+        s.add_permanent(_unit_of(m), 0, base_loc(0))
+    rsv_mod.resolve(s, T, V1, ABILITIES["Kinkou Initiate"][0], 0, [], -1, True,
+                    source=k)
+    return int(s.n_hand[0])
+
+
+if kinkou_drew([2, 2]) != 0 or kinkou_drew([2, 3]) != 1:
+    die("kinkou", "'total Might 5 or more' is exact at the boundary")
+ok("...and a Might TOTAL over the other units is exact at its boundary too")
 
 print("\n\033[32mall trigger tests passed\033[0m")
