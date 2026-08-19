@@ -104,7 +104,17 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
     # the combat *staged but not initiated* until the Chain empties. Asserting
     # this unconditionally was wrong: it fired on correct play once movement
     # spells existed.
-    if state.showdown_bf < 0 and state.is_open:
+    #
+    # A queued trigger is the same situation one step earlier. 323 is an
+    # ORDERED task list: triggers become Pending Chain Items (320.1) well
+    # before 323.13 initiates a staged Combat, so while `state.trig` is
+    # non-empty the Cleanup has not reached that task yet. The visible case is
+    # 383.3.d.1 -- two simultaneous triggers whose controller must choose the
+    # order -- which stops the Cleanup mid-list with a real decision pending
+    # and both seats standing on the same battlefield. `actions._settle` is
+    # what guarantees the queue drains and the Cleanup finishes, so this is a
+    # window of exactly one decision, never a resting state.
+    if state.showdown_bf < 0 and state.is_open and not state.n_trig:
         for i in range(N_BF):
             a, b = state.seats_at(N_SEATS + i)
             if a and b:

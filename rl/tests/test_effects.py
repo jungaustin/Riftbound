@@ -1973,6 +1973,33 @@ if destinations(PLAIN_BODY, 0) != [base_loc(0)]:
     die("perm", "a card without a printed permission is unaffected")
 ok("...while a card that prints no exception keeps the 806.3 default")
 
+# "I can be played to a battlefield you're ATTACKING" (Rengar - Pouncing) is the
+# first permission scoped to a COMBAT rather than to the board: it depends on
+# holding the Attacker designation (459) at a live Showdown, so the same
+# battlefield is legal or not depending purely on which side of the fight you
+# are on. Outside a Showdown nobody is attacking and the card is an ordinary
+# base play -- which is what stops it being a free "play anywhere".
+RENGAR_P = T.id_of("Rengar - Pouncing")
+
+
+def attacking_destinations(showdown_bf, attacker):
+    st = GameState()
+    st.phase, st.active, st.priority = MAIN, 0, 0
+    st.add_permanent(PLAIN_BODY, 0, bf_loc(0))
+    st.add_permanent(PLAIN_BODY, 1, bf_loc(0))
+    st.showdown_bf, st.attacker = showdown_bf, attacker
+    return sorted(A.play_destinations(st, T, CFG, 0, RENGAR_P))
+
+
+if attacking_destinations(-1, -1) != [base_loc(0)]:
+    die("perm", "outside a Showdown nothing is being attacked")
+if attacking_destinations(0, 0) != sorted([base_loc(0), bf_loc(0)]):
+    die("perm", "the battlefield I am ATTACKING is a legal destination")
+if attacking_destinations(0, 1) != [base_loc(0)]:
+    die("perm", "defending is not attacking -- the same battlefield, the "
+                "other side of the fight, and it must not be offered")
+ok("...and 'a battlefield you're attacking' turns on the Attacker designation")
+
 # ---------------------------------------------------------------------------
 # Printed exceptions to "units enter exhausted" (359.2.c)
 #
@@ -2017,5 +2044,87 @@ if enters_ready(SHADOW_WATCHER, died_in_beginning=False):
 if not enters_ready(SHADOW_WATCHER, died_in_beginning=True):
     die("enter-ready", "a friendly death in the Beginning Phase readies it")
 ok("...and a PAST-tense one, recorded when the death happened")
+
+# ---------------------------------------------------------------------------
+print("\n[17] Might restrictions on a target slot read EFFECTIVE Might")
+
+# `combat.might` is the single read path for a permanent's Might, and a slot
+# restriction is no exception: "with 3 Might or less" asks what the unit's
+# Might IS. Reading `table.might` let a 2-Might body pumped to 7 stay a legal
+# choice -- and because `_matches` runs again at resolution (359.3.e), it also
+# meant a target pumped during the response window stayed in range.
+
+from rl.engine import combat as _cbt
+from rl.engine.effects import SPECS as _SPECS, TargetSpec as _TS, W_ANY as _WANY
+from rl.engine.state import MAIN as _MAIN, base_loc as _base, bf_loc as _bf
+
+_PLAIN = {m: next(c for c in range(T.n) if T.is_type(c, "Unit")
+                  and T.might[c] == m and not T.is_token(c))
+          for m in (2, 4, 6)}
+
+
+def _board():
+    st = GameState()
+    st.phase, st.active, st.priority = _MAIN, 0, 0
+    return st
+
+
+st = _board()
+victim = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+small = _TS(who=_WANY, at_battlefield=True, max_might=3)
+if not resolve._matches(st, T, small, victim, 0, [], -1):
+    die("max_might", "a 2-Might unit is within '3 Might or less'")
+_cbt.set_might_mod(st, T, victim, +5)
+if resolve._matches(st, T, small, victim, 0, [], -1):
+    die("max_might", "pumped to 7, it is no longer '3 Might or less' -- the "
+                     "restriction must read effective Might, not the corner")
+ok("'3 Might or less' follows a buff out of range (combat.might, not the table)")
+
+# Public Execution: "Choose a friendly unit. Kill an enemy unit with less
+# Might than it." The bar is a unit you picked, so it moves with your board.
+pe = _SPECS["Public Execution"]
+st = _board()
+mine = st.add_permanent(_PLAIN[4], 0, _base(0), is_unit=True)
+weak = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+same = st.add_permanent(_PLAIN[4], 1, _bf(0), is_unit=True)
+big = st.add_permanent(_PLAIN[6], 1, _bf(0), is_unit=True)
+if not resolve._matches(st, T, pe.targets[1], weak, 0, [mine], -1):
+    die("public execution", "2 is less than 4")
+if resolve._matches(st, T, pe.targets[1], same, 0, [mine], -1):
+    die("public execution", "'LESS Might' is strict -- equal must not qualify")
+if resolve._matches(st, T, pe.targets[1], big, 0, [mine], -1):
+    die("public execution", "6 is not less than 4")
+ok("'less Might than it' compares against an earlier slot, strictly")
+
+_cbt.set_might_mod(st, T, mine, +3)          # 4 -> 7
+if not resolve._matches(st, T, pe.targets[1], big, 0, [mine], -1):
+    die("public execution", "pumping the CHOSEN unit widens what it can kill")
+ok("...and both sides of the comparison are effective Might")
+
+# ---------------------------------------------------------------------------
+print("\n[18] 'I can't be chosen by enemy spells and abilities'")
+
+RUIN = T.id_of("Ruin Runner")
+st = _board()
+own = st.add_permanent(RUIN, 0, _bf(0), is_unit=True)
+foe = st.add_permanent(RUIN, 1, _bf(0), is_unit=True)
+bystander = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+any_unit = _TS(who=_WANY)
+
+if resolve._matches(st, T, any_unit, foe, 0, [], -1):
+    die("ruin runner", "an ENEMY Ruin Runner must not be a legal choice")
+if not resolve._matches(st, T, any_unit, own, 0, [], -1):
+    die("ruin runner", "'ENEMY spells' -- its own controller still targets it")
+if not resolve._matches(st, T, any_unit, bystander, 0, [], -1):
+    die("ruin runner", "the protection is its own, not an aura over the board")
+ok("only enemy choices are refused, and only on the card itself")
+
+# The restriction is on CHOOSING (355.10). Damage and sweeps name nobody, so
+# they still land -- which is what keeps the card answerable at all.
+_cbt.mark_damage(st, T, foe, 99)
+_cbt.enforce_lethal(st, T)
+if st.perms[foe, P_ALIVE] == 1:
+    die("ruin runner", "damage does not CHOOSE, so it must still kill")
+ok("...while damage, which chooses nothing, still kills it")
 
 print("\n\033[32mall effect tests passed\033[0m")

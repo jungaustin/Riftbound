@@ -49,14 +49,29 @@ POINTS_PER_HOLD = 1     # some battlefields alter this; per-battlefield later
 POINTS_PER_CONQUER = 1  # confirmed: Conquer is always 1
 
 
-def awaken(state: GameState) -> None:
-    """Turn player readies everything they control (315.1.b)."""
+def awaken(state: GameState, table: CardTable | None = None) -> None:
+    """Turn player readies everything they control (315.1.b).
+
+    Awaken DOES count as readying, so "when you ready a friendly unit" fires
+    here -- once per unit that was actually exhausted. The board is readied in
+    one vectorised write, so the transition has to be captured before it: a
+    unit that was already ready has not become ready, and firing for it would
+    turn Pirate's Haven into a flat per-unit pump every turn.
+    """
     seat = state.active
     state.runes_ready[seat] += state.runes_spent[seat]
     state.runes_spent[seat] = 0
     p = state.perms[:state.n_perms]
-    if state.n_perms:
-        p[(p[:, P_ALIVE] == 1) & (p[:, P_CTRL] == seat), P_READY] = 1
+    if not state.n_perms:
+        return
+    mine = (p[:, P_ALIVE] == 1) & (p[:, P_CTRL] == seat)
+    woke = np.flatnonzero(mine & (p[:, P_READY] == 0))
+    p[mine, P_READY] = 1
+    if table is not None and woke.size:
+        from rl.engine.chain import fire_watchers
+        from rl.engine.effects import TR_READIED
+        for row in woke:
+            fire_watchers(state, table, seat, TR_READIED, subj=int(row))
 
 
 def expire_temporary(state: GameState, table: CardTable) -> list[int]:
@@ -147,6 +162,7 @@ def score_holds(state: GameState, cfg: Config, table: CardTable | None = None) -
     stops a Battlefield lost and retaken later in the same turn from paying
     twice.
     """
+    from rl.engine import combat
     from rl.engine.chain import has_trigger, queue as chain_queue
     from rl.engine.effects import TR_HOLD
     seat = state.active
@@ -162,8 +178,20 @@ def score_holds(state: GameState, cfg: Config, table: CardTable | None = None) -
                 for u in state.units_at(bf_loc(i), seat):
                     if has_trigger(table, int(state.perms[u, P_CARD]), TR_HOLD):
                         chain_queue(state, TR_HOLD, int(u), bf_loc(i))
+                # "When you hold here" is printed on the ground itself, and so
+                # fires once for the holder rather than once per unit -- and
+                # fires even when nothing is standing there. It cannot be:
+                # holding requires units (190.4.c), which is what makes the
+                # empty case unreachable rather than merely unlikely.
+                combat._queue_bf_trigger(state, table, TR_HOLD, i, int(seat))
     if gained:
         state.points[seat] += gained
+        # "When an opponent scores" -- one of the three sites that award a
+        # point, and the only one on the Hold side.
+        if table is not None:
+            from rl.engine.chain import fire_watchers
+            from rl.engine.effects import TR_OPPONENT_SCORES
+            fire_watchers(state, table, 1 - seat, TR_OPPONENT_SCORES)
     state.winner = state.check_winner(cfg.victory_score)
     return gained
 
@@ -348,9 +376,17 @@ def start_turn(state: GameState, table: CardTable, cfg: Config) -> dict:
     log: dict = {}
     state.bf_scored[:] = 0   # rule 470 is per turn, and this is the new turn
     state.phase = AWAKEN
-    awaken(state)
+    awaken(state, table)
 
     state.phase = BEGINNING
+    # "At the start of your Beginning Phase" -- fired before the [Temporary]
+    # expiry and the Hold scoring, which is the order the phase runs in and the
+    # order Sprite Queen depends on: her token arrives, then anything that
+    # expires does.
+    from rl.engine.chain import fire_watchers
+    from rl.engine.effects import TR_BEGINNING
+    fire_watchers(state, table, int(state.active), TR_BEGINNING)
+
     # Order matters -- see module docstring.
     log["temporary_died"] = expire_temporary(state, table)
     log["control_lost"] = control_cleanup(state)
@@ -370,7 +406,15 @@ def start_turn(state: GameState, table: CardTable, cfg: Config) -> dict:
     return log
 
 
-def end_turn(state: GameState, cfg: Config) -> None:
+# TR_END_OF_TURN is DELIBERATELY not fired here. "At the end of your turn" is
+# a triggered ability, so it belongs on the Chain with a priority window -- but
+# `ending` runs straight into `compact_permanents`, which asserts no trigger is
+# queued (compaction repoints the rows a queued trigger holds). Firing it here
+# and draining it inline would skip the window; firing it and leaving it queued
+# trips the assert. Doing it properly needs a pending end-of-turn state so the
+# action layer can drain the Chain before the cleanup, which is a phase-machine
+# change rather than a card. Sona, Harmonious is the only card waiting on it.
+def end_turn(state: GameState, cfg: Config, table: CardTable | None = None) -> None:
     ending(state)
     control_cleanup(state)
     # Reclaim dead permanent rows. Only safe here: the turn ends in a Neutral

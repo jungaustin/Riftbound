@@ -40,10 +40,12 @@ from rl.engine.cardtable import CardTable
 from rl.engine.cost import plan_flow, plan_payment
 from rl.engine.effects import (TR_PLAY_UNIT,
                                SPEED_ACTION, SPEED_REACTION, abilities_for,
-                               spec_for)
-from rl.engine.state import (is_battlefield,  # noqa: F401
+                               bf_abilities_for, spec_for)
+from rl.engine.state import (is_battlefield, is_bf_src, bf_src_index,  # noqa: F401
+                             bf_loc,
                              C_REPEAT,  # noqa: F401
                              C_ABIL, C_SUBJ, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
+                             C_CTX2,
                              C_FINAL, C_COST, C_DEST, C_FROM_HAND, C_SRC,
                              C_UID, COST_PRINTED, DEST_TRASH, DEST_BANISH,
                              DEST_RECYCLE,
@@ -210,13 +212,19 @@ def flow_playable(state: GameState, table: CardTable, cfg: Config,
 def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
          bound_bf: int = -1, abil: int = -1, src: int = -1,
          ctx: int = -1, cost: int = COST_PRINTED,
-         dest: int = DEST_TRASH, subj: int = -1) -> int:
+         dest: int = DEST_TRASH, subj: int = -1, ctx2: int = -1) -> int:
     """Append a Pending Chain Item. Returns its index.
 
     `abil >= 0` makes it a Triggered Ability rather than a card (383.3).
     """
     i = state.n_chain
     assert i < MAX_CHAIN, "chain overflow"
+    if i == 0:
+        # 340.2.a asks whether the chain "was initiated by a triggered
+        # ability", which is a fact about the FIRST item on it. Recorded here
+        # because it has to outlive that item: the rule is read at the moment
+        # the chain empties again, when nothing is left to ask.
+        state.chain_from_trigger = int(abil >= 0)
     row = state.chain[i]
     row[C_CARD] = card
     row[C_CTRL] = ctrl
@@ -230,6 +238,7 @@ def push(state: GameState, card: int, ctrl: int, from_hand: bool = True,
     row[C_COST] = cost
     row[C_DEST] = dest
     row[C_SUBJ] = subj
+    row[C_CTX2] = ctx2
     state.chain_uid += 1
     state.chain_targets[i, :] = -1
     state.n_chain = i + 1
@@ -248,7 +257,11 @@ def item_spec(state: GameState, table: CardTable, item: int):
     abil = int(state.chain[item, C_ABIL])
     if abil < 0:
         return spec_for(table, card)
-    abilities = abilities_for(table, card)
+    # Which TABLE the index points into is a fact about the source, not about
+    # the card -- a battlefield's abilities are numbered in `BF_ABILITIES`.
+    src = int(state.chain[item, C_SRC])
+    abilities = (bf_abilities_for(table, card) if is_bf_src(src)
+                 else abilities_for(table, card))
     assert abil < len(abilities), f"ability {abil} missing on {table.names[card]!r}"
     return abilities[abil]
 
@@ -286,7 +299,7 @@ def has_trigger(table: CardTable, card: int, trigger: int) -> bool:
 
 
 def queue(state: GameState, trigger: int, src: int, ctx: int = -1,
-          subj: int = -1) -> None:
+          subj: int = -1, ctx2: int = -1, who: int = -1) -> None:
     """Record that a trigger condition was met. Drained by `flush`.
 
     **Not put on the Chain here, deliberately.** Trigger conditions are met
@@ -303,12 +316,19 @@ def queue(state: GameState, trigger: int, src: int, ctx: int = -1,
     """
     i = int(state.n_trig)
     assert i < MAX_TRIGGERS, "trigger queue overflow"
-    state.trig[i] = (trigger, src, ctx, subj)
+    # A battlefield source has no row to read a controller off, so one must be
+    # supplied. Asserted rather than defaulted: falling back to a permanent row
+    # lookup would index `perms[-101]`, which is a valid numpy index and would
+    # silently attribute the ability to whatever sits at the end of the array.
+    assert not is_bf_src(src) or who >= 0, (
+        "a battlefield-sourced trigger must carry its controlling seat")
+    state.trig[i] = (trigger, src, ctx, subj, ctx2, who)
     state.n_trig = i + 1
 
 
 def fire_watchers(state: GameState, table: CardTable, seat: int,
-                  trigger: int, subj: int = -1, exclude: int = -1) -> None:
+                  trigger: int, subj: int = -1, exclude: int = -1,
+                  by_spell: bool = False) -> None:
     """Queue `seat`'s permanents watching for `trigger` to happen elsewhere.
 
     The generalisation of `fire_play_unit`: a watcher fires because something
@@ -322,6 +342,19 @@ def fire_watchers(state: GameState, table: CardTable, seat: int,
             continue
         for ab in abilities_for(table, int(state.perms[w, P_CARD])):
             if ab.trigger != trigger:
+                continue
+            # "when you choose or ready ME" -- the watcher is the subject, not
+            # a bystander. Without this the card reads "...a friendly unit".
+            if ab.subject_is_self and subj != w:
+                continue
+            # "...with a SPELL" -- an ability that chooses is still a choice.
+            if ab.subject_by_spell and not by_spell:
+                continue
+            # "another NON-RECRUIT unit" -- a tag the SUBJECT must not carry.
+            # Viktor - Leader makes Recruits, so without this each token's
+            # death would make another one, forever.
+            if ab.subject_lacks_tag and subj >= 0 and ab.subject_lacks_tag in \
+                    table.tags[int(state.perms[subj, P_CARD])]:
                 continue
             # "The FIRST TIME ... each turn" -- one stamp per permanent per
             # turn, the same field Zilean's once-each-turn uses.
@@ -341,6 +374,10 @@ def fire_play_unit(state: GameState, table: CardTable, seat: int,
     `actions._resolve_play`, and as a token by `OP_CREATE_TOKEN`. A token is
     played, not conjured (187), so a watcher that only saw hand plays would
     miss the entire token deck it exists to reward.
+
+    Every PERMANENT play reaches here, gear included, so each watcher states
+    the type it wants via `subject_card_type` (default "Unit"). Pit Crew wants
+    gear; without the filter Lillia's kin fired on both.
     """
     is_token = table.is_token(card)
     for w in range(state.n_perms):
@@ -356,9 +393,16 @@ def fire_play_unit(state: GameState, table: CardTable, seat: int,
             # them -- when they fire, what they see -- is identical.
             if ab.subject_enemy == mine:
                 continue
+            # "When you play a UNIT" must not fire on a gear. Every permanent
+            # play arrives here, so the type is the watcher's business.
+            if not table.is_type(card, ab.subject_card_type):
+                continue
             if ab.subject_token and not is_token:
                 continue
             if ab.subject_not_self and w == perm:
+                continue
+            if ab.subject_lacks_tag and perm >= 0 and ab.subject_lacks_tag in \
+                    table.tags[int(state.perms[perm, P_CARD])]:
                 continue
             # Vex needs somewhere to point [Stun], and that is the permanent
             # just played -- not a target, so it rides as the subject the same
@@ -372,8 +416,25 @@ def fire_play_unit(state: GameState, table: CardTable, seat: int,
                   subj=perm)
 
 
+def trig_card(state: GameState, src: int) -> int:
+    """The card an ability source is printed on -- permanent row or battlefield."""
+    if is_bf_src(src):
+        return int(state.bf_card[bf_src_index(src)])
+    return int(state.perms[src, P_CARD])
+
+
 def trig_controller(state: GameState, i: int) -> int:
-    """Which seat controls queued trigger `i`."""
+    """Which seat controls queued trigger `i`.
+
+    A permanent's ability is controlled by whoever controls the permanent. A
+    BATTLEFIELD's is not: the battlefield has no controller of its own, and
+    "when you conquer here" belongs to the player who conquered even though
+    control of the battlefield can change again before the queue drains. That
+    seat is therefore carried on the queue entry rather than re-derived.
+    """
+    who = int(state.trig[i, 5])
+    if who >= 0:
+        return who
     return int(state.perms[int(state.trig[i, 1]), P_CTRL])
 
 
@@ -409,8 +470,8 @@ def orderable(state: GameState, table: CardTable, seat: int) -> list[int]:
         if trig_controller(state, i) != seat:
             continue
         src = int(state.trig[i, 1])
-        key = (int(state.perms[src, P_CARD]), int(state.trig[i, 0]),
-               int(state.trig[i, 2]))
+        key = (trig_card(state, src), int(state.trig[i, 0]),
+               int(state.trig[i, 2]), int(state.trig[i, 4]))
         if key in seen:
             continue
         seen.add(key)
@@ -424,8 +485,8 @@ def place(state: GameState, table: CardTable, cfg: Config, i: int) -> int:
     Always consumes the entry, even when `fire` declines to push anything
     (355.8, no legal targets) -- otherwise the drain loop would spin on it.
     """
-    trigger, src, ctx, subj = (int(x) for x in state.trig[i])
-    added = fire(state, table, cfg, trigger, src, ctx, subj)
+    trigger, src, ctx, subj, ctx2, who = (int(x) for x in state.trig[i])
+    added = fire(state, table, cfg, trigger, src, ctx, subj, ctx2, who)
     n = int(state.n_trig)
     if i < n - 1:
         state.trig[i:n - 1] = state.trig[i + 1:n]
@@ -435,7 +496,8 @@ def place(state: GameState, table: CardTable, cfg: Config, i: int) -> int:
 
 
 def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,
-         src: int, ctx: int = -1, subj: int = -1) -> int:
+         src: int, ctx: int = -1, subj: int = -1, ctx2: int = -1,
+         who: int = -1) -> int:
     """Put every matching Triggered Ability of `src` on the Chain (383.3).
 
     Returns how many were added. Nothing fires while `units_only` is set, which
@@ -450,10 +512,21 @@ def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,
     """
     if cfg.units_only:
         return 0
-    card = int(state.perms[src, P_CARD])
-    ctrl = int(state.perms[src, P_CTRL])
+    card = trig_card(state, src)
+    if card < 0:
+        return 0          # the battlefield slot is empty; nothing to fire
+    if is_bf_src(src):
+        # A battlefield's abilities live in their own table, for the same
+        # reason its statics do: it is not a permanent, and putting them in
+        # `ABILITIES` would make every permanent-side loop that walks a card's
+        # abilities start finding them.
+        ctrl = who
+        abils = bf_abilities_for(table, card)
+    else:
+        ctrl = int(state.perms[src, P_CTRL])
+        abils = abilities_for(table, card)
     n = 0
-    for k, ab in enumerate(abilities_for(table, card)):
+    for k, ab in enumerate(abils):
         if ab.trigger != trigger:
             continue
         # 355.8 -- "In order to put a spell or ability on the chain, valid
@@ -470,7 +543,7 @@ def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,
                                                 card):
             continue
         push(state, card, ctrl, from_hand=False, abil=k, src=src, ctx=ctx,
-             subj=subj)
+             subj=subj, ctx2=ctx2)
         n += 1
     return n
 
@@ -596,6 +669,7 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
     abil = int(state.chain[item, C_ABIL])
     src = int(state.chain[item, C_SRC])
     ctx = int(state.chain[item, C_CTX])
+    ctx2 = int(state.chain[item, C_CTX2])
     dest = int(state.chain[item, C_DEST])
     subj = int(state.chain[item, C_SUBJ])
     repeated = int(state.chain[item, C_REPEAT]) == 1
@@ -603,7 +677,8 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
 
     assert spec is not None, f"no spec for {table.names[card]!r} on the chain"
     log = rsv.resolve(state, table, cfg, spec, ctrl, targets[:spec.n_targets],
-                      bound, from_hand, source=src, ctx=ctx, subj=subj)
+                      bound, from_hand, source=src, ctx=ctx, subj=subj,
+                      ctx2=ctx2)
     if repeated:
         # 820.1.d -- "execute the instructions of this chain item one
         # additional time during resolution". One more pass over the SAME ops
@@ -612,7 +687,7 @@ def resolve_top(state: GameState, table: CardTable, cfg: Config) -> dict:
         # 820.1.c.3 makes it exactly one extra pass, never a loop.
         again = rsv.resolve(state, table, cfg, spec, ctrl,
                             targets[:spec.n_targets], bound, from_hand,
-                            source=src, ctx=ctx, subj=subj)
+                            source=src, ctx=ctx, subj=subj, ctx2=ctx2)
         log["repeated"] = again
     log["card"] = table.names[card]
 

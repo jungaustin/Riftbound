@@ -326,20 +326,35 @@ ok("811.1.d.2.a -- targets are bound to the battlefield it was hidden at")
 
 
 # ---------------------------------------------------------------------------
-print("\n[8] when the Chain empties into a staged Combat, the DEFENDER acts first")
-# 340.2.a. The opposite of 464.2.d, which gives the Attacker Focus when a Move
-# declaration opens the Showdown -- the two routes into a Showdown hand priority
-# to opposite players. This is the window in which a defender answers a spell
-# that dragged a unit in, before combat locks in.
+print("\n[8] a spell that drags a unit in opens a Showdown the defender can answer")
+# 464.2.d/345 give Focus to the player who applied Contested. 340.2.a's "focus
+# passes to the next player" does NOT apply here, and both of its conditions are
+# why: it is scoped to a Chain emptying *during* a Showdown, and this Showdown
+# does not exist until the Cleanup that follows opens it. The defender still
+# gets a window -- second rather than first -- which is what the window is for.
+#
+# **Seat 0 casts the spell and seat 1 ends up the Attacker**, which is worth
+# reading twice. 190.3.a applies Contested "when a Unit controlled by a Player
+# who does not currently Control that Battlefield ... becomes present there",
+# and 464.2.c.1 designates the player whose UNIT did so. Charm makes seat 1's
+# unit become present at a battlefield seat 1 does not control, so seat 1
+# applied Contested and seat 1 attacks -- the caster is the defender of their
+# own ground. That is not a quirk of this test; it is what makes drag effects
+# double-edged, since 466.1.a.2 then Recalls the dragged unit if the defender
+# survives. The engine used to answer "whoever moved last", which named seat 0
+# here and inverted [Assault]/[Shield] and the Recall with it.
 CHARM, GUST = T.id_of("Charm"), T.id_of("Gust")
-s = fresh(hand0=(CHARM,), hand1=(GUST,))
+# The Reaction sits in the CASTER's hand, because the caster is the defender
+# here -- see the note above.
+s = fresh(hand0=(CHARM, GUST), hand1=())
 s.n_deck[:] = 5
 s.deck[:, :5] = T.id_of("Stupefy")
 mine = s.add_permanent(unit(3), 0, bf_loc(0))
 s.bf_ctrl[0] = 0
 foe = s.add_permanent(unit(2), 1, base_loc(1))
 
-play = next(a for a in A.legal_actions(s, T, V1, 0) if a.kind == A.A_PLAY)
+play = next(a for a in A.legal_actions(s, T, V1, 0)
+            if a.kind == A.A_PLAY and int(s.hand[0, a.arg]) == CHARM)
 A.apply(s, T, V1, play)
 A.apply(s, T, V1, A.Action(A.A_TARGET, foe))
 A.apply(s, T, V1, A.Action(A.A_TARGET, bf_loc(0)))
@@ -348,12 +363,19 @@ A.apply(s, T, V1, A.PASS)                       # Charm resolves, chain empties
 
 if s.showdown_bf < 0:
     die("priority", "dragging an enemy in should stage a Combat (461)")
+if int(s.attacker) != 1:
+    die("priority", f"464.2.c.1 -- seat 1's unit applied Contested, so seat 1 "
+                    f"attacks; got seat {int(s.attacker)}")
 if A.acting_seat(s) != 1:
-    die("priority", f"340.2.a -- the defender should hold priority when the "
-                    f"chain empties, got seat {A.acting_seat(s)}")
-if not any(a.kind == A.A_PLAY for a in A.legal_actions(s, T, V1, 1)):
+    die("priority", f"464.2.d -- the Attacker gains Focus as the Showdown "
+                    f"opens, got seat {A.acting_seat(s)}")
+A.apply(s, T, V1, A.PASS)                       # the attacker declines
+if A.acting_seat(s) != 0:
+    die("priority", f"Focus should pass to the defender, got "
+                    f"seat {A.acting_seat(s)}")
+if not any(a.kind == A.A_PLAY for a in A.legal_actions(s, T, V1, 0)):
     die("priority", "the defender must be able to answer before combat locks in")
-ok("the defender gets Focus and Priority, and can answer with a Reaction")
+ok("the Attacker opens the window; the defender answers before combat locks in")
 
 # ---------------------------------------------------------------------------
 # [6] [A] -- Power of any Domain (135.2.e.5)
@@ -816,5 +838,87 @@ combat.open_showdown(s, T, 0, attacker=0)
 if rsv.legal_targets(s, T, _SPECS["Thwonk!"], 0, 1, [], -1) != [atk]:
     die("thwonk", "only the ATTACKER's units at the contested battlefield")
 ok("459 -- 'an attacking unit' needs a Showdown, and means the attacker's")
+
+# Piercing Light: "Deal 2 to a unit at a battlefield, then deal 2 to up to one
+# OTHER unit." The second slot is "up to one" (355.14, may be left empty) and
+# "other" -- a different UNIT, with no location clause of its own, so it can
+# reach a unit sitting safely in a base.
+#
+# `distinct_from`, not `rel`: every `rel` value ties the two slots' LOCATIONS
+# together, and REL_DIFFERENT_LOC means a different PLACE. Using it for
+# "another" is a mistake this codebase has made before.
+
+PL_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+at_bf_a = s.add_permanent(PL_BODY, 1, bf_loc(0))
+at_bf_b = s.add_permanent(PL_BODY, 1, bf_loc(0))
+in_base = s.add_permanent(PL_BODY, 1, base_loc(1))
+
+if in_base in rsv.legal_targets(s, T, _SPECS["Piercing Light"], 0, 0, [], -1):
+    die("piercing", "slot 0 says 'at a battlefield'")
+second = rsv.legal_targets(s, T, _SPECS["Piercing Light"], 1, 0, [at_bf_a], -1)
+if at_bf_a in second:
+    die("piercing", "'OTHER unit' excludes the one already chosen")
+if in_base not in second:
+    die("piercing", "...but carries no location clause, so a base unit qualifies")
+ok("'up to one other unit' is a different UNIT, not a different location")
+
+# Draws scaled by a board count.
+#
+# Right of Conquest: "Draw 1, then draw 1 FOR EACH battlefield you control."
+# Kadregrin: "draw 1 for each of your [Mighty] units" -- 5+ Might, and
+# EFFECTIVE Might, so statics and buffs count. Kadregrin is already on the
+# board when this resolves (359.2.b), so it counts itself if it qualifies.
+
+def _u_of(m):
+    return next(c for c in range(T.n) if T.is_type(c, "Unit")
+                and not T.is_token(c) and int(T.might[c]) == m)
+
+
+for n_bf in (0, 1, 2):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.n_deck[0] = 20
+    for i in range(n_bf):
+        s.bf_ctrl[i] = 0
+    rsv.resolve(s, T, V1, _SPECS["Right of Conquest"], 0, [], -1, True)
+    if int(s.n_hand[0]) != 1 + n_bf:
+        die("conquest", f"1 plus one per battlefield: {n_bf} should draw {1+n_bf}")
+ok("a draw scaled by battlefields controlled")
+
+KADREGRIN = T.id_of("Kadregrin the Infernal")
+s = GameState()
+s.phase, s.active, s.priority = MAIN, 0, 0
+s.n_deck[0] = 20
+k = s.add_permanent(KADREGRIN, 0, base_loc(0))
+for m in (2, 6, 5):
+    s.add_permanent(_u_of(m), 0, base_loc(0))
+rsv.resolve(s, T, V1, ABILITIES["Kadregrin the Infernal"][0], 0, [], -1, True,
+            source=k)
+# Mighty = 5+: Kadregrin itself, the 6 and the 5. The 2 does not count.
+want = 1 + sum(1 for m in (6, 5) if m >= 5)
+if int(s.n_hand[0]) != want:
+    die("kadregrin", f"[Mighty] is 5+ Might; expected {want} draws")
+ok("...and one by [Mighty] units, counting itself and excluding the small one")
+
+# Against the Odds: "+2 Might this turn FOR EACH enemy unit there." The count
+# MULTIPLIES `n` rather than replacing it, so `n` is the per-enemy rate --
+# and "there" is the chosen unit's location, not the caster's, so an enemy at
+# the other battlefield does not count.
+
+ATO_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit") and not T.is_token(c))
+for n_enemies in (0, 1, 3):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    friend = s.add_permanent(ATO_BODY, 0, bf_loc(0))
+    for _ in range(n_enemies):
+        s.add_permanent(ATO_BODY, 1, bf_loc(0))
+    s.add_permanent(ATO_BODY, 1, bf_loc(1))        # elsewhere: must not count
+    before = combat.might(s, T, friend)
+    rsv.resolve(s, T, V1, _SPECS["Against the Odds"], 0, [friend], -1, True)
+    if combat.might(s, T, friend) - before != 2 * n_enemies:
+        die("odds", f"{n_enemies} enemies there should give +{2*n_enemies}")
+ok("'for each enemy unit THERE' scales by the target's location, not the caster's")
 
 print("\n\033[32mall spell tests passed\033[0m")

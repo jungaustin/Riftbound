@@ -352,6 +352,13 @@ class CardTable:
 
         Attributes, never one-hot card ids -- so an unseen card gets a sensible
         embedding instead of an untrained row (brief §5, PLAN.md §5.2).
+
+        Two halves. The first is the card's BODY -- stats, type, domains,
+        keywords. The second is what it DOES, derived from its scripted ability
+        by `effects.ability_features`. The body alone was the whole matrix for a
+        long time, and it left every card's rules text invisible to the policy:
+        battlefields, which are nothing but rules text, were indistinguishable
+        from each other outright.
         """
         n = self.n
         cols = [
@@ -370,9 +377,14 @@ class CardTable:
         onehot_type[np.arange(n), self.type_id] = 1.0
         dom = ((self.domain_mask[:, None] >> np.arange(len(DOMAINS))) & 1)
         kw = ((self.kw_mask[:, None] >> np.arange(len(ALL_KEYWORDS))) & 1)
+        # Imported here rather than at module scope: `effects` reaches this
+        # module's vocabulary through `state`, and a top-level import would
+        # make the two mutually dependent at import time for one function.
+        from rl.engine.effects import ability_features
+        abil = np.array([ability_features(nm) for nm in self.names], np.float32)
         return np.concatenate(
             [np.stack(cols, 1), onehot_type, dom.astype(np.float32),
-             kw.astype(np.float32)], axis=1)
+             kw.astype(np.float32), abil], axis=1)
 
     def __post_init__(self):
         object.__setattr__(self, "_index", {n: i for i, n in enumerate(self.names)})

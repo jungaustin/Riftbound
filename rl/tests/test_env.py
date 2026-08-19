@@ -27,6 +27,7 @@ from rl.config import Config
 from rl.engine import actions as A
 from rl.engine import game
 from rl.engine.cardtable import full_table
+from rl.engine.effects import BF_STATICS
 from rl.engine.mirror import mirror
 from rl.engine.state import N_BF
 from rl.env import RiftboundEnv, play, random_policy, should_auto_pass
@@ -242,6 +243,111 @@ if np.array_equal(base.privileged, after.privileged):
                 "perturbation was a no-op and test [4] proves nothing")
 ok("the same perturbation does move the critic's privileged vector")
 
+# Scuttle Crab is the other way information can reach the policy, and it is a
+# different shape from Sabotage's: a STANDING permission rather than a choice.
+# Nothing is picked and nothing moves -- the entire card is that these two
+# holes in the observation are filled for a turn. So the test is exactly the
+# leak test above, run again with the permission granted, and it has to flip
+# from invisible to visible or the card does nothing at all.
+grant = s.clone()
+grant.saw_hand[0] = int(grant.turn)
+g_base = enc.encode(grant, 0, A.legal_actions(grant, T, CFG, 0)).public_bytes()
+g_hand = grant.clone()
+g_hand.hand[1, :int(g_hand.n_hand[1])] = [
+    pool[(i + 3) % len(pool)] for i in range(int(g_hand.n_hand[1]))]
+if g_base == enc.encode(g_hand, 0,
+                        A.legal_actions(g_hand, T, CFG, 0)).public_bytes():
+    die("leak", "'they reveal their hand' must put the opponent's hand into "
+                "the observation -- otherwise Scuttle Crab is a blank card")
+ok("a standing hand-reveal permission makes the opponent's hand visible")
+
+grant_fd = s.clone()
+grant_fd.saw_fd[0] = int(grant_fd.turn)
+f_base = enc.encode(grant_fd, 0,
+                    A.legal_actions(grant_fd, T, CFG, 0)).public_bytes()
+f_moved = grant_fd.clone()
+f_moved.fd_card[1] = pool[7]
+if f_base == enc.encode(f_moved, 0,
+                        A.legal_actions(f_moved, T, CFG, 0)).public_bytes():
+    die("leak", "'look at their facedown cards this turn' must fill in the "
+                "facedown identity 107.3.f otherwise hides")
+ok("...and a facedown permission fills in the identity, not just the slot")
+
+# The stamp is a TURN, so it lapses on its own rather than needing a reset.
+stale = s.clone()
+stale.saw_hand[0] = int(stale.turn) - 1
+stale.saw_fd[0] = int(stale.turn) - 1
+st_base = enc.encode(stale, 0, A.legal_actions(stale, T, CFG, 0)).public_bytes()
+st_moved = stale.clone()
+st_moved.hand[1, :int(st_moved.n_hand[1])] = [
+    pool[(i + 3) % len(pool)] for i in range(int(st_moved.n_hand[1]))]
+st_moved.fd_card[1] = pool[7]
+if st_base != enc.encode(st_moved, 0,
+                         A.legal_actions(st_moved, T, CFG, 0)).public_bytes():
+    die("leak", "a permission stamped for a PREVIOUS turn must not still see")
+ok("...and both lapse by turn stamp, with nothing having to clear them")
+
+# The permission belongs to one seat. Seat 0 holding it must not hand seat 1
+# a window into seat 0's own hand -- the reveal is one-directional.
+oneway = s.clone()
+oneway.saw_hand[0] = int(oneway.turn)
+oneway.saw_fd[0] = int(oneway.turn)
+o_base = enc.encode(oneway, 1, A.legal_actions(oneway, T, CFG, 1)).public_bytes()
+o_moved = oneway.clone()
+o_moved.hand[0, :int(o_moved.n_hand[0])] = [
+    pool[(i + 5) % len(pool)] for i in range(int(o_moved.n_hand[0]))]
+o_moved.fd_card[0] = pool[9]
+if o_base != enc.encode(o_moved, 1,
+                        A.legal_actions(o_moved, T, CFG, 1)).public_bytes():
+    die("leak", "the permission is one seat's -- it must not reveal the "
+                "GRANTING seat's own hand to the other player")
+ok("...and it is one-directional: only the seat that earned it may look")
+
+# **A_PICK's arg means something different at each of its three offer sites**,
+# and the encoder has to make the same choice `legal_actions` did. It did not:
+# it knew the look buffer and Sabotage's reveal but not Hwei's discard, so a
+# hand index was read into a five-card look buffer -- an IndexError when the
+# hand is longer, a silently wrong card when it is shorter. The fuzz cannot
+# see either, because it never builds an observation; the first training run
+# after Hwei landed died on it in 45 seconds.
+pick_pool = [c for c in range(T.n) if T.is_type(c, "Unit")
+             and not T.is_token(c)][:10]
+
+
+def pick_state(**kw):
+    st = s.clone()
+    st.pend_look, st.pend_discard = -1, -1
+    st.pend_reveal[:] = (-1, -1)
+    st.n_look, st.look_type_mask = 0, 0
+    for k, v in kw.items():
+        setattr(st, k, v)
+    return st
+
+
+# Hwei: eight cards in hand, nothing in the look buffer.
+disc = pick_state(pend_discard=0)
+disc.n_hand[0] = 8
+disc.hand[0, :8] = pick_pool[:8]
+acts = A.legal_actions(disc, T, CFG, 0)
+if len(acts) != 8:
+    die("pick", f"a discard choice offers one action per card, got {len(acts)}")
+enc.encode(disc, 0, acts)          # raised IndexError before the fix
+if A.pick_card(disc, 7) != pick_pool[7]:
+    die("pick", "a discard arg indexes the DISCARDING seat's own hand")
+ok("A_PICK from a discard names the right card, and encodes without crashing")
+
+rev = pick_state()
+rev.pend_reveal[:] = (0, 1)
+rev.n_hand[1] = 3
+rev.hand[1, :3] = pick_pool[3:6]
+if A.pick_card(rev, 2) != pick_pool[5]:
+    die("pick", "a reveal arg indexes the OPPONENT's hand")
+look = pick_state(pend_look=0, n_look=3)
+look.look_cards[:3] = pick_pool[6:9]
+if A.pick_card(look, 2) != pick_pool[8]:
+    die("pick", "a look arg indexes the look BUFFER")
+ok("...and the other two sites still index the hand they name, not each other")
+
 # Negative control: MY facedown card is mine to see, so changing it must show.
 seen = s.clone()
 seen.fd_card[0] = pool[9]
@@ -250,6 +356,53 @@ if base.public_bytes() == enc.encode(
     die("leak", "changing the seat's OWN facedown card was invisible too, so "
                 "the encoder is simply dropping the facedown zone")
 ok("negative control: the seat's own facedown card is visible to it")
+
+
+# ---------------------------------------------------------------------------
+print("\n[4b] a card's BEHAVIOUR reaches the observation, not just its body")
+# The failure this pins: the card feature matrix described stat lines, types,
+# domains and keywords -- the card's BODY -- and nothing about what its rules
+# text DOES. Battlefields have no stat line at all, so all 66 encoded
+# identically and the policy could not tell which one it was playing on.
+# Swapping one for another moved zero bits, which is the assertion below.
+scripted_bf = [c for c in range(T.n)
+               if T.is_type(c, "Battlefield") and T.names[c] in BF_STATICS]
+if len(scripted_bf) < 2:
+    die("behaviour", "this test needs two battlefields with encoded statics; "
+                     "it is meaningless once BF_STATICS shrinks below that")
+bf_a = s.clone()
+bf_a.bf_card[0] = scripted_bf[0]
+bf_b = s.clone()
+bf_b.bf_card[0] = scripted_bf[1]
+enc_a = enc.encode(bf_a, 0, A.legal_actions(bf_a, T, CFG, 0)).public_bytes()
+enc_b = enc.encode(bf_b, 0, A.legal_actions(bf_b, T, CFG, 0)).public_bytes()
+if enc_a == enc_b:
+    die("behaviour", f"{T.names[scripted_bf[0]]} and {T.names[scripted_bf[1]]} "
+                     "encode identically, so the policy cannot tell two "
+                     "battlefields apart -- Bo3 selection is unlearnable")
+ok("two battlefields with different statics no longer encode identically")
+
+# The honest other half. A battlefield nothing implements has no behaviour to
+# show, so it SHOULD still alias -- the features derive from the encoded
+# ability, and inventing a distinction the engine does not honour would be
+# worse than none. This asserts the limit rather than hiding it.
+plain_bf = [c for c in range(T.n)
+            if T.is_type(c, "Battlefield") and T.names[c] not in BF_STATICS]
+feats = T.features()
+if len(plain_bf) >= 2 and not np.array_equal(feats[plain_bf[0]],
+                                             feats[plain_bf[1]]):
+    die("behaviour", "two UNSCRIPTED battlefields differ, which means "
+                     "something other than encoded behaviour is leaking into "
+                     "the features -- a card id by another name")
+ok(f"...and the {len(plain_bf)} unscripted ones still alias, as they must")
+
+# The features must not be a constant column block either: a bug that returned
+# zeros for every card would pass the first assertion via the context block.
+n_distinct = len(np.unique(feats, axis=0))
+if n_distinct <= 642:
+    die("behaviour", f"{n_distinct} distinct card rows -- the behaviour block "
+                     "added nothing over the body-only 642")
+ok(f"{n_distinct} distinct card feature rows, up from 642 body-only")
 
 
 # ---------------------------------------------------------------------------

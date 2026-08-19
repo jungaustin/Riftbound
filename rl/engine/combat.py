@@ -50,8 +50,11 @@ from rl.engine.cardtable import CardTable
 from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH,
                                COND_EMPOWERED, COND_LEGION, COND_LEVEL,
                                COND_NONE,
+                               BF_STATICS, SC_UNITS_HERE, W_FRIENDLY,
                                SC_SELF, ST_KEYWORD, ST_MIGHT,
+                               ST_UNCHOOSABLE,
                                TR_ATTACK_OR_DEFEND, TR_OTHER_DIES,
+                               TR_OPPONENT_SCORES,
                                TR_DEATH, TR_MOVE, abilities_for,
                                statics_for)
 from rl.engine.state import (GRANT_IDX, P_MIGHT_MOD, F_BUFFED,
@@ -89,8 +92,6 @@ def static_might(state: GameState, table: CardTable, perm: int) -> int:
     row = state.perms[perm]
     if row[P_ALIVE] != 1:
         return 0
-    seat, loc = int(row[P_CTRL]), int(row[P_LOC])
-    is_token = table.is_token(int(row[P_CARD]))
     total = 0
     for i in range(state.n_perms):
         src = state.perms[i]
@@ -99,21 +100,19 @@ def static_might(state: GameState, table: CardTable, perm: int) -> int:
         for st in statics_for(table, int(src[P_CARD])):
             if st.kind != ST_MIGHT:
                 continue
-            src_seat = int(src[P_CTRL])
-            if st.scope == SC_SELF:
-                if i != perm:
-                    continue
-            else:                               # SC_FRIENDLY_UNITS
-                if src_seat != seat:
-                    continue
-                if st.scope_token and not is_token:
-                    continue
-                if not table.is_type(int(row[P_CARD]), "Unit"):
-                    continue
-            if not static_applies(state, st, src_seat, i):
+            # Shared with `static_keyword` rather than re-derived. This block
+            # used to be a second copy that silently ignored `scope_not_self`
+            # and `scope_same_loc`, so a Might static narrowed to "other units
+            # HERE" would have applied board-wide. No card in the pool used
+            # that combination, which is exactly why it would have gone
+            # unnoticed until one did.
+            if not static_reaches(state, table, st, i, perm):
                 continue
-            total += st.n * static_count(state, table, st, src_seat,
+            total += st.n * static_count(state, table, st, int(src[P_CTRL]),
                                          int(src[P_LOC]), int(src[P_CARD]))
+    for st in bf_statics_for(state, table, perm):
+        if st.kind == ST_MIGHT:
+            total += st.n
     return total
 
 
@@ -184,7 +183,8 @@ def static_count(state: GameState, table: CardTable, st, src_seat: int,
     return n
 
 
-def perm_kw(state: GameState, table: CardTable, perm: int, keyword: str) -> int:
+def perm_kw(state: GameState, table: CardTable, perm: int, keyword: str,
+            include_bf: bool = True) -> int:
     """A permanent's effective value for `keyword`: printed plus anything
     granted to it. 0 means it does not have the keyword at all.
 
@@ -198,7 +198,7 @@ def perm_kw(state: GameState, table: CardTable, perm: int, keyword: str) -> int:
     is 1, so any nonzero result means "has it".
     """
     printed = _printed_kw(table, int(state.perms[perm, P_CARD]), keyword)
-    granted = static_keyword(state, table, perm, keyword)
+    granted = static_keyword(state, table, perm, keyword, include_bf)
     idx = GRANT_IDX.get(keyword)
     if idx is None:
         return printed + granted    # nothing can grant it with an EFFECT
@@ -207,7 +207,7 @@ def perm_kw(state: GameState, table: CardTable, perm: int, keyword: str) -> int:
 
 
 def static_keyword(state: GameState, table: CardTable, perm: int,
-                   keyword: str) -> int:
+                   keyword: str, include_bf: bool = True) -> int:
     """Value of `keyword` granted to `perm` by statics on the board right now.
 
     Derived on every read, exactly like `static_might` and for the same reason:
@@ -218,36 +218,111 @@ def static_keyword(state: GameState, table: CardTable, perm: int,
     row = state.perms[perm]
     if row[P_ALIVE] != 1:
         return 0
-    seat, loc = int(row[P_CTRL]), int(row[P_LOC])
-    card = int(row[P_CARD])
-    is_token = table.is_token(card)
     total = 0
     for i in range(state.n_perms):
-        src = state.perms[i]
-        if src[P_ALIVE] != 1:
+        if state.perms[i, P_ALIVE] != 1:
             continue
-        for st in statics_for(table, int(src[P_CARD])):
+        for st in statics_for(table, int(state.perms[i, P_CARD])):
             if st.kind != ST_KEYWORD or st.keyword != keyword:
                 continue
-            src_seat = int(src[P_CTRL])
-            if not static_applies(state, st, src_seat, i):
-                continue
-            if st.scope == SC_SELF:
-                if i != perm:
-                    continue
-            else:
-                if src_seat != seat:
-                    continue
-                if st.scope_token and not is_token:
-                    continue
-                if st.scope_not_self and i == perm:
-                    continue
-                if st.scope_same_loc and int(src[P_LOC]) != loc:
-                    continue
-                if not table.is_type(card, "Unit"):
-                    continue
-            total += max(1, st.n)
+            if static_reaches(state, table, st, i, perm):
+                total += max(1, st.n)
+    if include_bf:
+        for st in bf_statics_for(state, table, perm):
+            if st.kind == ST_KEYWORD and st.keyword == keyword:
+                total += max(1, st.n)
     return total
+
+
+def bf_statics_for(state: GameState, table: CardTable, perm: int):
+    """(static, applies) for every static printed on the battlefield `perm` is
+    standing on.
+
+    A battlefield is not a permanent -- it has no row, no controller and cannot
+    die -- so it needs its own source loop rather than a row in the permanent
+    scan. What it CAN do is reach the units standing on it, which is the only
+    scope `SC_UNITS_HERE` has.
+    """
+    loc = int(state.perms[perm, P_LOC])
+    if not is_battlefield(loc):
+        return
+    card = int(state.bf_card[bf_index(loc)])
+    if card < 0:
+        return
+    row = state.perms[perm]
+    unit_card = int(row[P_CARD])
+    for st in BF_STATICS.get(table.names[card], ()):
+        if st.scope != SC_UNITS_HERE:
+            continue
+        if not table.is_type(unit_card, "Unit"):
+            continue
+        # "your units here" would narrow by owner; the unqualified form does
+        # not, and every battlefield in the pool prints the unqualified form.
+        if st.who == W_FRIENDLY and int(row[P_CTRL]) != int(state.bf_ctrl[
+                bf_index(loc)]):
+            continue
+        # "units here WITH [Temporary]" -- read through `perm_kw`, so a
+        # GRANTED [Temporary] qualifies exactly as a printed one does.
+        # `include_bf=False` is load-bearing, not an optimisation: this IS
+        # the battlefield layer, and asking `perm_kw` the unguarded question
+        # re-enters it and recurses until the stack dies. The requirement is
+        # therefore read from the printed value, permanent statics and grants
+        # -- so a unit GRANTED [Temporary] by Shadow's Call qualifies, while a
+        # battlefield cannot satisfy its own requirement.
+        if st.requires_keyword and not perm_kw(state, table, perm,
+                                               st.requires_keyword,
+                                               include_bf=False):
+            continue
+        yield st
+
+
+def static_reaches(state: GameState, table: CardTable, st, src_i: int,
+                   perm: int) -> bool:
+    """Does static `st`, printed on permanent `src_i`, apply to `perm`?
+
+    The scope reading shared by every kind of static, so "your token units
+    have [Tank]" and "I can't be chosen" answer the *same* question about who
+    a static reaches and differ only in what they then do. Kept in one place
+    because a second copy of this block would drift from the first exactly
+    once, silently, on whichever card was added last.
+    """
+    src = state.perms[src_i]
+    src_seat = int(src[P_CTRL])
+    if not static_applies(state, st, src_seat, src_i):
+        return False
+    if st.scope == SC_SELF:
+        return src_i == perm
+    row = state.perms[perm]
+    card = int(row[P_CARD])
+    if src_seat != int(row[P_CTRL]):
+        return False
+    if st.scope_token and not table.is_token(card):
+        return False
+    if st.scope_not_self and src_i == perm:
+        return False
+    if st.scope_same_loc and int(src[P_LOC]) != int(row[P_LOC]):
+        return False
+    return bool(table.is_type(card, "Unit"))
+
+
+def unchoosable_by(state: GameState, table: CardTable, perm: int,
+                   seat: int) -> bool:
+    """Ruin Runner -- "I can't be chosen by ENEMY spells and abilities".
+
+    A restriction on who may point at the unit, not on what may be done to it:
+    its own controller still targets it freely, and nothing here stops combat
+    damage or a board-wide sweep, neither of which chooses (355.10).
+    """
+    if seat == int(state.perms[perm, P_CTRL]):
+        return False
+    for i in range(state.n_perms):
+        if state.perms[i, P_ALIVE] != 1:
+            continue
+        for st in statics_for(table, int(state.perms[i, P_CARD])):
+            if st.kind == ST_UNCHOOSABLE and static_reaches(
+                    state, table, st, i, perm):
+                return True
+    return False
 
 
 def _printed_kw(table: CardTable, card: int, keyword: str) -> int:
@@ -594,16 +669,28 @@ def cancel_declaration(state: GameState) -> None:
 
 
 def queue_move_trigger(state: GameState, table: CardTable, perm: int,
-                       from_loc: int) -> None:
-    """"When I move from a location" -- ctx is the location LEFT (359.3.f.3).
+                       from_loc: int, to_loc: int = -1) -> None:
+    """A Move trigger captures BOTH ends of the move (359.3.f.3).
 
-    Captured at the moment of the move rather than read at resolution: by then
-    the unit is somewhere else, and Lillia's Sprite goes where she came from.
+    `ctx` is the location LEFT and `ctx2` the location ARRIVED AT, because
+    printed text distinguishes them by word and needs whichever it names to
+    outlive the unit. Lillia's "play a Sprite THERE" is the origin;
+    Irresistible Faefolk's "move an enemy unit to THAT battlefield" is the
+    destination. Both are captured at the moment of the move rather than read
+    at resolution -- by then the unit may have moved again, or been Gusted off
+    the board entirely by a response to this very trigger.
+
+    `to_loc` defaults to the unit's current row because every caller moves the
+    unit BEFORE queueing except `commit_declaration`, which queues first so
+    that `from_loc` is still readable.
     """
     from rl.engine.chain import queue as chain_queue   # cycle: chain -> resolve -> combat
     card = int(state.perms[perm, P_CARD])
+    if to_loc < 0:
+        to_loc = int(state.perms[perm, P_LOC])
     if any(a.trigger == TR_MOVE for a in abilities_for(table, card)):
-        chain_queue(state, TR_MOVE, int(perm), int(from_loc))
+        chain_queue(state, TR_MOVE, int(perm), int(from_loc),
+                    ctx2=int(to_loc))
 
 
 def commit_declaration(state: GameState, table: CardTable, cfg: Config) -> dict:
@@ -620,7 +707,7 @@ def commit_declaration(state: GameState, table: CardTable, cfg: Config) -> dict:
     assert moved, "cannot commit an empty declaration"
     for i in moved:
         row = state.perms[i]
-        queue_move_trigger(state, table, i, int(row[P_LOC]))
+        queue_move_trigger(state, table, i, int(row[P_LOC]), dst)
         row[P_LOC] = dst
         row[P_READY] = 0          # units arrive exhausted
         row[P_ARRIVED] = state.turn
@@ -637,7 +724,8 @@ def retreat(state: GameState, table: CardTable, cfg: Config, perm: int) -> dict:
     """
     row = state.perms[perm]
     assert is_battlefield(int(row[P_LOC])), "not at a battlefield"
-    queue_move_trigger(state, table, perm, int(row[P_LOC]))
+    queue_move_trigger(state, table, perm, int(row[P_LOC]),
+                       base_loc(int(row[P_CTRL])))
     row[P_LOC] = base_loc(int(row[P_CTRL]))
     row[P_READY] = 0
     return cleanup(state, table, cfg, mover=state.active, dst=-1)
@@ -660,12 +748,85 @@ def staged_combat(state: GameState) -> int:
     return -1
 
 
+def settle_contested(state: GameState, i: int) -> None:
+    """323.11 / 190.3 -- who, if anyone, currently has this Battlefield
+    Contested.
+
+    Contested is not "somebody is fighting here". 190.3.a.1 applies it when a
+    unit *becomes present at a battlefield its controller does not control*,
+    and it names the player who did so -- which is the whole reason it is
+    tracked rather than inferred: 464.2.c.1 designates that player the
+    Attacker, and no amount of looking at the board afterwards recovers who
+    arrived first.
+
+    Two clauses, in the order 323 runs them:
+
+      323.11   Contested is removed from a battlefield where the player who
+               applied it has no units left and nothing is ongoing. Gust the
+               lone attacker away and the ground stops being contested.
+      323.11.a If that removal leaves units belonging to somebody who does not
+               control the battlefield, THEIR controller applies Contested --
+               so the status hands off to whoever is still standing there.
+
+    That hand-off is exactly the Irresistible Faefolk line: she contests an
+    empty battlefield, is Gusted off it in response to her own move trigger,
+    and the enemy unit her trigger drags in inherits the Contested status and
+    with it the Attacker designation -- on the opponent's turn.
+
+    190.3.b freezes all of this while a Showdown or Combat is ongoing there:
+    the status persists until Control is established, whatever happens to the
+    units in the meantime.
+    """
+    if state.showdown_bf == i:
+        return
+    loc = bf_loc(i)
+    who = int(state.bf_contester[i])
+    if who >= 0 and not state.has_units_at(loc, who):
+        who = -1
+    if who < 0:
+        # Turn order (383.3.d.1's tie-break) decides if both players somehow
+        # qualify at once. That needs a battlefield the previous contester
+        # abandoned while both sides still had units on it, which no single
+        # move produces -- it takes an effect that removes one unit and adds
+        # another. Stated rather than assumed, because the alternative is an
+        # arbitrary row order deciding who attacks.
+        for seat in (int(state.active), 1 - int(state.active)):
+            if state.has_units_at(loc, seat) and int(state.bf_ctrl[i]) != seat:
+                who = seat
+                break
+    state.bf_contester[i] = who
+    state.bf_contested[i] = int(who >= 0)
+
+
+def staged_showdown(state: GameState) -> tuple[int, bool]:
+    """The next Showdown to open: `(battlefield, is_combat)`, or `(-1, False)`.
+
+    323.9 stages a Combat at a Contested battlefield holding units of opposing
+    players; 323.12 opens a plain Showdown only at Contested battlefields
+    *without* a Combat staged. So Combats are answered first, and a battlefield
+    one player walked onto alone still opens a Showdown -- it is that Showdown
+    closing that Conquers it (348.2.a), not the Move.
+    """
+    for i in range(N_BF):
+        if int(state.bf_contester[i]) < 0:
+            continue
+        a, b = state.seats_at(bf_loc(i))
+        if a and b:
+            return i, True
+    for i in range(N_BF):
+        if int(state.bf_contester[i]) >= 0:
+            return i, False
+    return -1, False
+
+
 def cleanup(state: GameState, table: CardTable, cfg: Config,
             mover: int = -1, dst: int = -1) -> dict:
-    """Perform a Cleanup, initiating Combat if one is staged (453, 460).
+    """Perform a Cleanup, opening whatever Showdown it stages (318, 344, 460).
 
-    `mover`/`dst` identify who just moved where, which decides the Attacker
-    designation (464.2.c.1) and who Conquers an undefended Battlefield.
+    `mover`/`dst` are retained for callers and logging only. **They no longer
+    decide the Attacker**: 464.2.c.1 names the player who applied Contested,
+    which `settle_contested` tracks, and "whoever moved last" is a different
+    player whenever the last arrival is a reinforcement.
     """
     log: dict = {}
     if not state.is_open:
@@ -694,34 +855,81 @@ def cleanup(state: GameState, table: CardTable, cfg: Config,
     # only thing that advances it is the pass that keeps restarting it.
     # `advance_combat` is what resumes this one; see the A_PASS branch in
     # `actions._apply_one`.
+    #
+    # The one thing that DOES change an ongoing Showdown is a unit arriving to
+    # face the player who opened it -- 344.1 turns a Non-Combat Showdown into a
+    # Combat Showdown in place, rather than opening a second one.
     if state.showdown_bf >= 0:
+        if escalate_to_combat(state, table, int(state.showdown_bf)):
+            log["escalated"] = int(state.showdown_bf)
         return log
 
-    # A Cleanup resolves EVERY staged Combat, not just the first. v0 could only
-    # ever stage one at a time -- a single Move declaration has one destination
-    # -- so a loop was unnecessary and its absence invisible. A spell that moves
-    # a unit can stage a second one at another battlefield, and stopping after
-    # the first left that one staged but never initiated.
+    # **A queued trigger is a Pending Chain Item, and that closes the State.**
+    # 323.6, 323.12 and 323.13 are all conditioned on "if the turn is in an
+    # Open State" (323.12 on a Neutral Open one), and 309.2 makes the State
+    # Open only while no Chain exists. A trigger waiting in `state.trig` is one
+    # that 320.1 will add to the Chain during this very Cleanup, so none of
+    # those tasks happen yet -- 344.2 says the Showdown "is opened during the
+    # next Cleanup" instead, once the Chain has emptied again.
+    #
+    # This is the whole timing of the Irresistible Faefolk line. She moves onto
+    # empty ground; if the Showdown opened now, it would be HER Showdown, with
+    # her controller Contesting and holding Focus, and the enemy unit her
+    # trigger drags in would be joining a Showdown somebody else opened. It
+    # does not: her move trigger closes the State, the Chain plays out (she
+    # gets Gusted, the trigger still resolves), and the Showdown that finally
+    # opens belongs to the unit left standing there -- the enemy's. That is
+    # what makes the opponent the Attacker on your own turn.
+    if state.n_trig:
+        return log
+
+    # 323.6 / 190.4.c -- a player with no Units at a Battlefield they control
+    # loses it. This half of Control settlement still belongs in every Cleanup;
+    # the other half, *establishing* Control, does not -- 190.4 only grants it
+    # "at the end of a Showdown or Combat", so it moved to the close of one.
+    for i in range(N_BF):
+        _release_control(state, i)
+
+    # 323.11, and it runs AFTER the release above so that 323.11.a sees the
+    # battlefields that just went uncontrolled. It decides both which Showdowns
+    # are staged (323.8/323.9) and who the Attacker will be (464.2.c.1), so it
+    # has to be current at every battlefield before either is read.
+    for i in range(N_BF):
+        settle_contested(state, i)
+
+    # A Cleanup resolves EVERY staged Showdown, not just the first. v0 could
+    # only ever stage one at a time -- a single Move declaration has one
+    # destination -- so a loop was unnecessary and its absence invisible. A
+    # spell that moves a unit can stage a second one at another battlefield,
+    # and stopping after the first left that one staged but never opened.
     for _ in range(N_BF + 1):
-        bf = staged_combat(state)
+        bf, is_combat = staged_showdown(state)
         if bf < 0:
             break
-        # The mover applied Contested; if this fired from something other than a
-        # move, the turn player is the aggressor by default.
-        attacker = mover if mover >= 0 else state.active
-        log.update(run_combat(state, table, cfg, bf, attacker))
+        log.update(run_showdown(state, table, cfg, bf,
+                                int(state.bf_contester[bf]), is_combat))
         if state.showdown_bf >= 0:
-            return log       # combat yielded for a response; resume later
+            return log       # yielded for a response; resume later
     else:
-        raise AssertionError("more staged combats than battlefields")
-    if staged_combat(state) >= 0:
-        return log
-
-    # No combat: settle Control everywhere (190.4, 466.5).
-    log["scored"] = []
-    for i in range(N_BF):
-        log["scored"].extend(_establish_control(state, table, cfg, i))
+        raise AssertionError("more staged showdowns than battlefields")
     return log
+
+
+def _release_control(state: GameState, i: int) -> None:
+    """323.6 / 190.4.c -- lose a Battlefield you have no Units at.
+
+    Runs in every Cleanup, unlike establishing Control. The asymmetry is in the
+    rules: 190.4.a maintains Control "for as long as they have Units at that
+    Battlefield" and 190.4.c takes it away in the following Cleanup once they
+    do not, while 190.4 grants it only "at the end of a Showdown or Combat".
+    Empty ground goes neutral immediately; taking ground takes a Showdown.
+    """
+    if state.showdown_bf == i:
+        return                             # 190.4.b: frozen while one is ongoing
+    prev = int(state.bf_ctrl[i])
+    if prev >= 0 and not state.has_units_at(bf_loc(i), prev):
+        state.bf_ctrl[i] = -1
+        _clear_foreign_hidden(state, i, -1)
 
 
 def _establish_control(state: GameState, table: CardTable, cfg: Config,
@@ -731,6 +939,13 @@ def _establish_control(state: GameState, table: CardTable, cfg: Config,
     Rule 466.5: the player with Units remaining Establishes Control if they did
     not already have it; 466.5.b: no Units at all means Uncontrolled; 466.5.d:
     establishing Control is a Conquer, subject to the once-per-turn cap (470).
+    348.2.a says the same for a Non-Combat Showdown, and 348.2.a.1 that it too
+    is a Conquer -- which is why this is called from the close of both.
+
+    **Only ever called when a Showdown or Combat ENDS.** It used to run in
+    every Cleanup, which made a Move onto empty ground score instantly and with
+    no window: the point was banked before the opponent could answer, and the
+    Showdown 344.2 opens for exactly that purpose did not exist.
     """
     scored: list[tuple[int, str]] = []
     if state.showdown_bf == i:
@@ -749,9 +964,13 @@ def _establish_control(state: GameState, table: CardTable, cfg: Config,
             state.bf_ctrl[i] = -1
             _clear_foreign_hidden(state, i, -1)
         state.bf_contested[i] = 0
+        state.bf_contester[i] = -1
         return scored
 
+    # 190.3.b -- Contested lasts "until Control is established or
+    # re-established", which is here and nowhere else.
     state.bf_contested[i] = 0
+    state.bf_contester[i] = -1
     if holder == prev:
         return scored                      # 190.4.a: already theirs, nothing happens
 
@@ -771,13 +990,38 @@ def _establish_control(state: GameState, table: CardTable, cfg: Config,
         state.points[holder] += POINTS_PER_CONQUER
         state.winner = state.check_winner(cfg.victory_score)
         scored.append((holder, "conquer"))
+        from rl.engine.chain import fire_watchers as _fire_watchers
+        _fire_watchers(state, table, 1 - holder, TR_OPPONENT_SCORES)
         # "When I conquer" fires for the units that took the ground.
         from rl.engine.chain import has_trigger, queue as chain_queue
         from rl.engine.effects import TR_CONQUER
         for u in state.units_at(loc, holder):
             if has_trigger(table, int(state.perms[u, P_CARD]), TR_CONQUER):
                 chain_queue(state, TR_CONQUER, int(u), loc)
+        # ...and for the BATTLEFIELD itself. "When you conquer here" is printed
+        # on the ground, not on a unit, so it fires whether or not anything
+        # standing there cares -- and it fires exactly once, where the unit
+        # version fires once per unit.
+        _queue_bf_trigger(state, table, TR_CONQUER, i, holder)
     return scored
+
+
+def _queue_bf_trigger(state: GameState, table: CardTable, trigger: int,
+                      i: int, seat: int) -> None:
+    """Queue battlefield slot `i`'s abilities on `trigger`, for `seat`.
+
+    The seat has to be passed: a battlefield has no controller of its own, and
+    the one that matters is whoever the trigger fired FOR -- the conqueror, the
+    holder, the player taking the turn.
+    """
+    from rl.engine.chain import queue as chain_queue
+    from rl.engine.effects import bf_abilities_for
+    from rl.engine.state import bf_src
+    card = int(state.bf_card[i])
+    if card < 0:
+        return
+    if any(a.trigger == trigger for a in bf_abilities_for(table, card)):
+        chain_queue(state, trigger, bf_src(i), bf_loc(i), who=seat)
 
 
 def _final_point_blocked(state: GameState, cfg: Config, seat: int) -> bool:
@@ -808,23 +1052,67 @@ def _clear_foreign_hidden(state: GameState, i: int, holder: int) -> None:
 # The Steps of Combat (463-466)
 # ---------------------------------------------------------------------------
 
-def run_combat(state: GameState, table: CardTable, cfg: Config,
-               bf: int, attacker: int) -> dict:
-    """Initiate Combat at `bf` and run it as far as the rules allow unattended.
+def run_showdown(state: GameState, table: CardTable, cfg: Config,
+                 bf: int, attacker: int, is_combat: bool) -> dict:
+    """Open a Showdown at `bf` and run it as far as the rules allow unattended.
 
-    Combat is a *resumable* state machine, not a function that plays itself out.
-    It runs forward until either the Combat ends or a player has a real decision
+    A Showdown is a *resumable* state machine, not a function that plays itself
+    out. It runs forward until either it closes or a player has a real decision
     to make, and in the second case it returns with `state.showdown_bf >= 0` so
     the action layer can ask them. `advance_combat` picks it back up.
 
-    That structure exists for one reason: the Combat Showdown Step is where
+    That structure exists for one reason: the Showdown Step is where
     `[Reaction]` cards and every live `[Hidden]` card are played, and that window
     is the entire interactive layer of the game (PLAN.md §5.3 gotcha 3). A
     version that resolves Combat in one call cannot represent a combat trick.
+
+    **Both kinds of Showdown come through here.** 344.1 opens one as the first
+    step of Combat when both players have units at the Contested battlefield;
+    344.2 opens a Non-Combat Showdown when only one does. The second is not a
+    formality -- it is the window in which a lone attacker gets Gusted off the
+    ground it just walked onto, and the one in which an [Ambush] unit arrives
+    to answer it. 348.2 then closes it by establishing Control, so the Conquer
+    happens at the *end* of that window rather than on arrival.
     """
-    log: dict = {"combat_at": bf}
-    open_showdown(state, table, bf, attacker)
+    log: dict = {"combat_at" if is_combat else "showdown_at": bf}
+    open_showdown(state, table, bf, attacker, is_combat)
     return advance_combat(state, table, cfg, log)
+
+
+def run_combat(state: GameState, table: CardTable, cfg: Config,
+               bf: int, attacker: int) -> dict:
+    """Initiate a Combat Showdown at `bf`. Kept for callers and tests."""
+    return run_showdown(state, table, cfg, bf, attacker, True)
+
+
+def escalate_to_combat(state: GameState, table: CardTable, bf: int) -> bool:
+    """344.1 -- an ongoing Non-Combat Showdown becomes a Combat Showdown.
+
+    "If a Showdown is already ongoing at that Battlefield, it will become a
+    Combat Showdown and a Combat will initiate there." The Attacker does NOT
+    change: 464.2.c.1 reads the Contested status, which 190.3.b has held frozen
+    since the Showdown opened, so the player who walked in alone stays the
+    Attacker and the unit that just arrived to face them is a Defender.
+
+    That is the whole point of the window. Playing an [Ambush] unit into the
+    battlefield an enemy just took makes you the Defender, with [Shield] rather
+    than [Assault] and with the 466.1.a.2 Recall working for you instead of
+    against you -- and the engine used to hand the Attacker designation to
+    whoever moved most recently, which is the opposite answer.
+    """
+    if state.showdown_bf != bf or state.showdown_combat:
+        return False
+    a, b = state.seats_at(bf_loc(bf))
+    if not (a and b):
+        return False
+    state.showdown_combat = 1
+    # 464.2.a's tasks, in order: designate, then the Attacker gains Focus.
+    _designate(state, table, bf, int(state.attacker))
+    state.showdown_step = SD_PRIORITY
+    state.priority = int(state.attacker)      # 464.2.d
+    state.focus = int(state.attacker)
+    state.passes = 0
+    return True
 
 
 def window_is_live(state: GameState, table: CardTable, cfg: Config) -> bool:
@@ -869,11 +1157,47 @@ def advance_combat(state: GameState, table: CardTable, cfg: Config,
                 return log                 # yield; the action layer takes over
             state.passes = 0
 
+            if not state.showdown_combat:
+                # 348 -- every player passed without acting, so the Showdown
+                # closes. 348.2 rather than 348.1: there is no damage step,
+                # only Control, and 348.2.a.1 makes that a Conquer.
+                close_noncombat_showdown(state, table, cfg, log)
+                return log
+
         bf, attacker = state.showdown_bf, int(state.attacker)
         # Steps 2-3, repeating while the result is "No Result" (466.3.d.1).
         log.setdefault("rounds", []).append(damage_step(state, table, cfg, bf))
         resolution_step(state, table, cfg, bf, attacker, log)
     return log
+
+
+def close_noncombat_showdown(state: GameState, table: CardTable, cfg: Config,
+                             log: dict) -> None:
+    """348.2 -- close a Non-Combat Showdown and settle Control.
+
+    "If only one player's Units remain at the Battlefield, and if that player
+    does not already Control the Battlefield, that player establishes Control
+    over the Battlefield", and 348.2.a.1 makes that a Conquer. `_establish_
+    control` already says all of that for the Combat case and says it the same
+    way here -- the two endings differ in what precedes them, not in what
+    Control means.
+
+    The "if only one player's Units remain" guard is `_establish_control`'s own
+    `a and b` early return: a unit that arrived during the window without
+    escalating this to a Combat cannot exist (`escalate_to_combat` fires on
+    exactly that), so in practice the branch is the empty-battlefield one --
+    everybody left, and nobody Conquers.
+    """
+    bf = int(state.showdown_bf)
+    state.showdown_bf = -1
+    state.showdown_step = SD_NONE
+    state.showdown_combat = 0
+    state.attacker = -1
+    state.priority = int(state.active)
+    state.focus = -1
+    state.passes = 0
+    log.setdefault("scored", []).extend(
+        _establish_control(state, table, cfg, bf))
 
 
 def is_alone(state: GameState, perm: int) -> bool:
@@ -897,15 +1221,26 @@ def is_alone(state: GameState, perm: int) -> bool:
 
 
 def open_showdown(state: GameState, table: CardTable, bf: int,
-                  attacker: int) -> None:
+                  attacker: int, is_combat: bool = True) -> None:
+    """344/345 -- open a Showdown at `bf`. `attacker` is the Contesting seat."""
     state.bf_contested[bf] = 1
     state.showdown_bf = bf
     state.showdown_step = SD_PRIORITY
+    state.showdown_combat = int(is_combat)
     state.attacker = attacker
-    state.priority = attacker              # 464.2.d: the Attacker gains Focus
+    # 345 for a Non-Combat Showdown, 464.2.d for a Combat one -- the same seat
+    # either way, because both name the player who applied Contested.
+    state.priority = attacker
     state.focus = attacker
     state.passes = 0
+    if is_combat:
+        _designate(state, table, bf, attacker)
 
+
+def _designate(state: GameState, table: CardTable, bf: int,
+               attacker: int) -> None:
+    """464.2.c.3 -- hand out the Attacker/Defender designations and fire what
+    they trigger."""
     # 459 designates every unit at the battlefield as an Attacker or a Defender
     # the moment the Combat begins, so this is when an attack/defend trigger's
     # condition is met -- and every part of that condition is checked HERE
@@ -953,15 +1288,39 @@ def open_showdown(state: GameState, table: CardTable, bf: int,
 
 def showdown_responses(state: GameState, table: CardTable, cfg: Config,
                        seat: int) -> list:
-    """Hand indices this seat could play into the current window.
+    """Everything this seat could play into the current window.
 
-    Delegates to the Chain, because a Showdown window is not a separate
-    mechanism -- 342.1: a spell played in a Showdown creates a Chain as normal.
-    Imported here rather than at module scope only to keep the dependency one
-    way: `chain` reaches into `resolve`, which must not reach back into combat.
+    Mostly delegation, because a Showdown window is not a separate mechanism --
+    342.1: a spell played in a Showdown creates a Chain as normal. Imported
+    inside the function rather than at module scope only to keep the dependency
+    one way: `chain` reaches into `resolve`, which must not reach back into
+    combat, and `actions` imports this module.
+
+    **It must list the same four sources `actions.legal_actions` offers**, not
+    just Reaction-speed spells from hand. `window_is_live` is the only thing
+    standing between a real decision and a window that is silently auto-passed,
+    so anything it cannot see is a play the game will never let you make:
+
+        [Reaction] spells      chain.playable_hand_indices
+        [Ambush] units         822.1.b grants Reaction speed while being played
+                               to a battlefield you control units at
+        [Hidden] cards         811.6 -- facedown cards have [Reaction]
+        [Flow] cards           829, played from the trash at Reaction speed
+
+    Only the first was checked. The three that were not are precisely the ones
+    that answer a battlefield you have just lost -- and with the Non-Combat
+    Showdown of 344.2 now opening on every lone arrival, an [Ambush] unit is
+    the *whole* point of that window. Skipping it made the window close before
+    anyone could use it, which looks exactly like the window not existing.
+
+    Returns a list only so callers can test it for emptiness; the entries are
+    hand indices from four different namespaces and are not interchangeable.
     """
-    from rl.engine import chain
-    return chain.playable_hand_indices(state, table, cfg, seat)
+    from rl.engine import actions, chain
+    return (chain.playable_hand_indices(state, table, cfg, seat)
+            + actions.ambush_playable(state, table, cfg, seat)
+            + chain.hidden_playable(state, table, cfg, seat)
+            + chain.flow_playable(state, table, cfg, seat))
 
 
 def showdown_pass(state: GameState) -> bool:
@@ -1162,12 +1521,16 @@ def resolution_step(state: GameState, table: CardTable, cfg: Config,
     # 466.5 -- Combat is over, so Control settles and a change of hands Conquers.
     state.showdown_bf = -1
     state.showdown_step = SD_NONE
+    state.showdown_combat = 0
     state.attacker = -1
     state.priority = state.active
     state.focus = -1
+    # Only THIS battlefield. 190.4 grants Control "at the end of a Showdown or
+    # Combat", and the one that just ended was here -- a second battlefield
+    # somebody happens to be standing alone on has had no Showdown, so it is
+    # not theirs yet. It used to be settled here too, which was the same
+    # instant-Conquer-without-a-window bug that `cleanup` had, hiding in the
+    # Combat path. The Cleanup that follows this one opens its Showdown.
     log.setdefault("scored", []).extend(
         _establish_control(state, table, cfg, bf))
-    for i in range(N_BF):
-        if i != bf:
-            log["scored"].extend(_establish_control(state, table, cfg, i))
     return True

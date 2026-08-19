@@ -114,7 +114,7 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_SCORE, OP_EACH_KILLS_OWN, OP_NO_MOVE,
  OP_ANY_DAMAGE_KILLS, OP_SWAP_MIGHT,
  OP_READY_RUNES, OP_DISCARD_CHOOSE,
- OP_RECYCLE_SELF) = range(43)
+ OP_RECYCLE_SELF, OP_SEE_HAND, OP_SEE_FACEDOWN) = range(45)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
@@ -125,7 +125,19 @@ OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "grant_keyword", "look_top", "empower", "channel",
             "death_guard", "reveal_hand", "score", "each_kills_own",
             "no_move", "any_damage_kills", "swap_might",
-            "ready_runes", "discard_choose", "recycle_self")
+            "ready_runes", "discard_choose", "recycle_self", "see_hand", "see_facedown")
+
+# What an op's "for each ..." clause counts, for `Op.n_from_count`. Distinct
+# from the CNT_* used by a Static's scaling: these are per-OP, and they are
+# defined up here because SPECS below references them.
+(CT_MY_BATTLEFIELDS, CT_MY_MIGHTY_UNITS, CT_ENEMIES_AT_TARGET,
+ CT_MY_OTHER_BATTLEFIELDS) = range(4)
+
+# CT_MY_OTHER_BATTLEFIELDS is Seat of Power's "for each OTHER battlefield you
+# control". Its own is excluded by LOCATION rather than by subtracting one: a
+# battlefield ability fires while its own control is being established, and
+# "count then subtract" would be off by one in whichever direction the write
+# had not happened yet.
 
 # --- pseudo target slots --------------------------------------------------
 # A spell's ops address targets by slot index. A unit's ability also has to say
@@ -145,6 +157,14 @@ T_MY_BASE = -6
 # Mask of Foresight watches from a base while another unit attacks: T_SELF is
 # the gear, T_SUBJECT is the attacker, and "give IT +1 Might" means the latter.
 T_SUBJECT = -7
+# The location a Move ENDED at, captured when the trigger fired. `T_CTX` is the
+# other end of the same Move -- where the unit came from -- and printed text
+# picks between them by word: Lillia's "play a Sprite THERE" is the origin,
+# Irresistible Faefolk's "move an enemy unit to THAT battlefield" is the
+# destination. Neither is `T_HERE`, which re-reads the source's own row and so
+# means "this battlefield" -- true only while the source is still standing on
+# it. See `state.C_CTX2` for why all three exist.
+T_CTX2 = -8
 
 # --- conditions, checked at resolution ------------------------------------
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
@@ -153,7 +173,8 @@ T_SUBJECT = -7
  COND_PLAYED_TRIO,
  COND_FEW_RUNES,
  COND_NOT_DIED_ALONE, COND_CTX_BATTLEFIELD, COND_SELF_AT_BF,
- COND_N_OTHERS_HERE, COND_OTHERS_MIGHT) = range(16)
+ COND_N_OTHERS_HERE, COND_OTHERS_MIGHT,
+ COND_READY_ENEMY_HERE, COND_CTX2_BATTLEFIELD) = range(18)
 
 # COND_PLAYED_TRIO is Swain's "if you've played a non-token unit, a non-token
 # gear, and a spell this turn" -- all three kinds, in one turn. Read off
@@ -171,6 +192,15 @@ T_SUBJECT = -7
 #
 # COND_SELF_AT_BF is Mischievous Marai's "when you play me TO a battlefield" --
 # about the source's own location, which for a play trigger is where it landed.
+#
+# COND_CTX2_BATTLEFIELD is the same question asked of the OTHER end of a Move:
+# Irresistible Faefolk's "when I move TO a battlefield" is about where she
+# arrived, so a retreat to base must not fire it. `ctx2` rather than her row,
+# because the trigger has to survive her being removed in response to it.
+
+# COND_READY_ENEMY_HERE is Dune Drake's "if there is a READY enemy unit
+# here" -- an exhausted enemy does not count, which is what makes the card
+# reward attacking into a board that can still answer.
 
 # COND_N_OTHERS_HERE is Shen's "if there is EXACTLY ONE other unit you
 # control here" -- an exact count, not a threshold, so `level` is the
@@ -219,7 +249,17 @@ class TargetSpec(NamedTuple):
     locality: int = LOC_BOUND
     rel: int = REL_NONE
     rel_to: int = -1          # index of the earlier slot `rel` refers to
+    # "up to one OTHER unit" -- must differ from the unit already chosen in
+    # slot N, with NO location clause. Distinct from `rel`, whose every
+    # value ties the two slots' LOCATIONS together; REL_DIFFERENT_LOC in
+    # particular means a different place, not a different unit, and using
+    # it for "another" is a mistake this codebase has made before.
+    distinct_from: int = -1
     max_might: int = -1       # 355.9.b "with N might or less"; -1 = no limit
+    # "an enemy unit with LESS Might than it" (Public Execution) -- the index
+    # of an earlier slot to compare against, rather than a printed number.
+    # Strictly less, and both sides read effective Might.
+    less_might_than: int = -1
     at_battlefield: bool = False   # must be at a Battlefield, not a base
     # The mirror: "Deal 4 to a unit in a base", "Deal 3 to a unit at a base".
     # Unqualified, so it reaches EITHER base -- narrow it with `who` to get
@@ -314,6 +354,15 @@ class Op(NamedTuple):
     # -- so the number is whatever that unit is worth at resolution, statics
     # and buffs included, which is why it cannot be baked into `n`.
     n_from_might: int = -1
+    # "draw 1 FOR EACH battlefield you control" / "for each of your Mighty
+    # units" -- the amount is a board count rather than a printed number.
+    # -1 is none; otherwise one of the CT_* kinds, and the amount is
+    # `n * count` -- so `n` is the per-unit rate, not a flat number.
+    n_from_count: int = -1
+    # Destination = the LOCATION of the unit chosen in slot N. Zenith Blade
+    # moves a friendly unit to "that enemy unit's battlefield", which is
+    # neither `T_HERE` (the source's) nor a location slot the player picked.
+    loc_of_target: int = -1
     # For OP_GRANT_KEYWORD: which keyword, and whether the grant expires. The
     # pool grants both ways -- Cleave's "[Assault 3] this turn" against Shadow's
     # Call's [Temporary], which lasts until the unit leaves. `n` carries the
@@ -408,10 +457,37 @@ class CardSpec(NamedTuple):
 (TR_PLAY_ME, TR_DEATH, TR_MOVE, TR_HOLD, TR_CONQUER,
  TR_PLAY_SPELL, TR_ACTIVATED, TR_ATTACK_OR_DEFEND,
  TR_PLAY_UNIT, TR_OTHER_DIES, TR_GEAR_ABILITY,
- TR_DISCARD) = range(12)
+ TR_DISCARD, TR_BEGINNING, TR_END_OF_TURN,
+ TR_OPPONENT_SCORES, TR_READIED, TR_CHOSEN) = range(17)
 TRIGGER_NAMES = ("play_me", "death", "move", "hold", "conquer", "play_spell",
                  "activated", "attack_or_defend", "play_unit",
-                 "other_dies", "gear_ability", "discard")
+                 "other_dies", "gear_ability", "discard",
+                 "beginning", "end_of_turn", "opponent_scores",
+                 "readied", "chosen")
+
+# TR_READIED fires on the exhausted -> ready TRANSITION, not on every write of
+# P_READY. The Awaken Phase readies the turn player's whole board at once
+# (315.1.b) and that DOES count as readying -- so a wide board fires it several
+# times a turn, which is the card's intent -- but a unit that was already ready
+# has not become ready and fires nothing. A unit ENTERING ready never was
+# exhausted, so it is not a readying either.
+#
+# TR_CHOSEN fires when a target slot is filled with a permanent (355.7), from
+# the one site where that happens. "You" is the card's controller throughout
+# this family, which is why the cards reward targeting your OWN units --
+# [Deflect] exists precisely because an opponent choosing you is a different
+# event, and no card in the pool watches for that one.
+
+# TR_OPPONENT_SCORES is a watcher on the OTHER seat's points, so it fires from
+# every site that awards one -- Hold in `phases.score_holds`, Conquer in
+# `combat._establish_control`, and `OP_SCORE` for the cards that grant a point
+# outright. Three sites rather than one because the engine has no single
+# "award a point" primitive; if a fourth ever appears it has to fire here too.
+
+# TR_BEGINNING and TR_END_OF_TURN are phase-timed: they fire for the TURN
+# PLAYER's permanents at a point in their own turn, not off any game event.
+# "at the start of YOUR Beginning Phase" and "at the end of YOUR turn" are
+# both about the controller's turn, so neither fires on the opponent's.
 
 # TR_OTHER_DIES and TR_GEAR_ABILITY are WATCHER triggers: they fire for a
 # permanent because something happened to a DIFFERENT one. TR_DEATH fires
@@ -503,6 +579,22 @@ class Ability(NamedTuple):
     # grows on "a token unit"; a watcher for any unit would be a different and
     # much stronger card, and no rules text distinguishes them for free.
     subject_token: bool = False
+    # For TR_READIED / TR_CHOSEN: the event's subject must be the watcher
+    # itself. "When you choose or ready ME" is a different card from "when you
+    # ready a friendly unit" (Pirate's Haven), and `fire_watchers` walks every
+    # permanent its controller owns -- so without this, Irelia would grow every
+    # time anything of yours was readied.
+    subject_is_self: bool = False
+    # "When you choose me WITH A SPELL" (Jae Medarda). An ability that chooses
+    # is still a choice (355.7), so the narrowing has to be stated.
+    subject_by_spell: bool = False
+    # For TR_PLAY_UNIT: which card TYPE the played card must be. Every play of
+    # a permanent comes through one firing site, gear included, so without this
+    # "when you play another unit" fired on a gear -- Reluctant Leader grew off
+    # a Cull, and Vex would stun one. A multi-type card satisfies each of its
+    # types (a gear unit answers both watchers), so this is a membership test
+    # and never an elif over types.
+    subject_card_type: str = "Unit"
     # For TR_PLAY_UNIT: watch the OPPONENT's plays instead of your own.
     # Vex - Apathetic stuns what an opponent plays; Lillia grows on what
     # you play. Same trigger, opposite side.
@@ -511,6 +603,10 @@ class Ability(NamedTuple):
     # was just played. Reluctant Leader grows on the rest of the board and
     # not on its own arrival.
     subject_not_self: bool = False
+    # "When another NON-RECRUIT unit you control dies" -- a tag the subject
+    # must NOT carry. Viktor makes Recruits, so without this he would feed
+    # on his own tokens and never stop.
+    subject_lacks_tag: str | None = None
     # "The FIRST TIME ... each turn" -- gated on `state.once_used`, the same
     # per-permanent turn stamp Zilean's once-each-turn uses. Spent when the
     # trigger fires, so a second death in the same turn does nothing.
@@ -537,6 +633,12 @@ class Ability(NamedTuple):
     # pays it; declining removes the ability (383.3.a.2) and costs nothing.
     opt_cost_energy: int = 0
     opt_cost_power: int = 0
+    # 383.3.b again, paid in a body rather than in runes: "you may KILL ME to
+    # ...". Always affordable -- the source is on the board or the ability
+    # never triggered -- so unlike a rune cost it needs no offer-time check.
+    # It is a cost, so it is paid at finalization and the source is a corpse
+    # by the time the effect resolves; nothing in the ops may reference it.
+    opt_cost_kill_self: bool = False
     subject_alone: bool = False       # "...attacks or defends ALONE" (740.2.a)
     subject_role: int = ROLE_EITHER   # attacker-only / defender-only / either
     # Whose attack this watches. "When I attack" (the common case) fires only
@@ -593,7 +695,12 @@ GOLD_TOKEN = "Gold // Buff"
 #                  makes "play me to an open battlefield" a free claim.
 #   PERM_ENEMY  -- at least one ENEMY unit there. Rengar's whole card is
 #                  dropping onto a battlefield the opponent is holding.
-PERM_NONE, PERM_OPEN, PERM_ENEMY = range(3)
+#   PERM_ATTACK -- the battlefield you are currently attacking: the contested
+#                  one (459) where you hold the Attacker designation. Unlike
+#                  the other two this is a COMBAT-scoped permission, so it is
+#                  empty outside a Showdown and the card is then an ordinary
+#                  base play.
+PERM_NONE, PERM_OPEN, PERM_ENEMY, PERM_ATTACK = range(4)
 
 # Cards that replace a token-unit play with "that token and an additional copy
 # of it". Keyed by name for the same reason PLAY_PERMISSIONS is: there is one
@@ -624,9 +731,10 @@ DB_HWEI = 0
 # reach `GameState`, and the key is stored there while the decision is pending.
 FU_DIANA_REVEAL = 0
 FU_GUARDS_READY = 1
+FU_DRAW_1 = 2
 
 # Populated below, once the ops they reference are defined.
-FOLLOWUPS: list[tuple] = [(), ()]
+FOLLOWUPS: list[tuple] = [(), (), ()]
 # [FU_DIANA_REVEAL] "...then reveal the top card of your Main Deck. If it's a
 # spell, draw it." A second look at N=1: the spell goes to hand, anything else
 # goes back on top. `pick_optional` because a type-restricted pick must always
@@ -658,6 +766,13 @@ DISCARD_BRANCHES: tuple[dict[str, tuple], ...] = (
 # about him, and the donor is untouched.
 ABILITY_BORROWERS: frozenset[str] = frozenset({"Heimerdinger - Inventor"})
 
+# "I can't be chosen by enemy spells and abilities unless I'm in combat."
+# Absolute untargetability with a condition, unlike [Deflect]'s surcharge --
+# there is no price that makes it legal. Keyed by name like the other bespoke
+# registries; `resolve._matches` enforces it for every slot at once, so it
+# covers spells and abilities without either having to opt in.
+SAFE_UNLESS_IN_COMBAT: frozenset[str] = frozenset({"Akali, Silent"})
+
 TEMPORARY_SUPPRESSORS: frozenset[str] = frozenset(
     {"LeBlanc - Everywhere At Once"})
 
@@ -682,6 +797,12 @@ PLAY_PERMISSIONS: dict[str, int] = {
     "Ocean Drake": PERM_OPEN,
     "Sneaky Deckhand": PERM_OPEN,
     "Sai Scout": PERM_OPEN,
+    # [Reaction] [Assault 2] I can be played to a battlefield you're attacking.
+    # Its own reminder text spells the timing out -- "play any time, even
+    # before spells and abilities resolve" -- so unlike the Trophy Hunter this
+    # is a Reaction rather than an Ambush, and it reinforces an attack you have
+    # already committed to rather than starting one.
+    "Rengar - Pouncing": PERM_ATTACK,
 }
 
 
@@ -953,6 +1074,17 @@ SPECS: dict[str, CardSpec] = {
         ops=(Op(OP_KILL, target=0),),
     ),
 
+    # Choose a friendly unit. Kill an enemy unit with less Might than it.
+    # The bar is a unit you picked rather than a printed number, so the card
+    # scales with your own board -- and both readings are effective Might, so
+    # pumping your chosen unit in response widens what it can kill.
+    "Public Execution": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(who=W_FRIENDLY),
+                 TargetSpec(who=W_ENEMY, less_might_than=0)),
+        ops=(Op(OP_KILL, target=1),),
+    ),
+
     # Kill a unit at a battlefield with 3 Might or less.
     "Soul Harvest": CardSpec(
         speed=SPEED_MAIN,
@@ -1159,6 +1291,74 @@ SPECS: dict[str, CardSpec] = {
         speed=SPEED_ACTION,
         targets=(TargetSpec(who=W_ANY, attacking=True),),
         ops=(Op(OP_STUN, target=0),),
+    ),
+
+    # [Repeat] {2 energy}{Fury rune}. Deal 2 to a unit at a battlefield, then
+    # deal 2 to up to one OTHER unit.
+    # The second slot is "up to one" (355.14, so it may be left empty) and
+    # "other" (not the first) -- but carries no location clause of its own, so
+    # it can reach a unit sitting in a base.
+    "Piercing Light": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(who=W_ANY, at_battlefield=True),
+                 TargetSpec(who=W_ANY, optional=True, distinct_from=0)),
+        ops=(Op(OP_DAMAGE, target=0, n=2),
+             Op(OP_DAMAGE, target=1, n=2)),
+    ),
+
+    # Draw 1, then draw 1 for each battlefield you or allies control.
+    # Two ops: the flat draw, then the counted one. At two seats "you or
+    # allies" is just you.
+    "Right of Conquest": CardSpec(
+        speed=SPEED_MAIN,
+        ops=(Op(OP_DRAW, n=1),
+             Op(OP_DRAW, n=1, n_from_count=CT_MY_BATTLEFIELDS)),
+    ),
+
+    # [Action] Stun an enemy unit at a battlefield. You may move a friendly
+    # unit to that enemy unit's battlefield.
+    # The destination is slot 0's LOCATION -- not the caster's, and not a place
+    # the player picks -- which is what `loc_of_target` says.
+    "Zenith Blade": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ENEMY, at_battlefield=True),
+                 TargetSpec(who=W_FRIENDLY, optional=True)),
+        ops=(Op(OP_STUN, target=0),
+             Op(OP_MOVE_TO, target=1, loc_of_target=0)),
+    ),
+
+    # Buff a friendly unit in your base, then move it to a battlefield.
+    # Two slots: the unit (restricted to YOUR base by `at_base` plus
+    # W_FRIENDLY) and the battlefield it goes to. `Op.target_b` points at the
+    # location slot, so the destination is the one the player chose.
+    "Showstopper": CardSpec(
+        speed=SPEED_MAIN,
+        targets=(TargetSpec(who=W_FRIENDLY, at_base=True),
+                 TargetSpec(kind=TK_LOCATION, who=W_FRIENDLY,
+                            locality=LOC_FREE)),
+        ops=(Op(OP_BUFF, target=0),
+             Op(OP_MOVE_TO, target=0, target_b=1)),
+    ),
+
+    # [Reaction] Give a friendly unit at a battlefield +2 Might this turn FOR
+    # EACH enemy unit there.  `n` is the rate and the count multiplies it, so
+    # this is +2 per enemy rather than a flat +2.
+    "Against the Odds": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_FRIENDLY, at_battlefield=True),),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=2,
+                n_from_count=CT_ENEMIES_AT_TARGET),),
+    ),
+
+    # [Reaction] Return a friendly unit to its owner's hand. Its owner channels
+    # 1 rune exhausted.
+    # The slot is friendly, so "its owner" is the caster -- the two only come
+    # apart on a card that can bounce an enemy unit, and this one cannot.
+    "Retreat": CardSpec(
+        speed=SPEED_REACTION,
+        targets=(TargetSpec(who=W_FRIENDLY),),
+        ops=(Op(OP_RETURN_TO_HAND, target=0),
+             Op(OP_CHANNEL, n=1)),
     ),
 
     # [Reaction] Draw 3.
@@ -1590,11 +1790,15 @@ SPECS: dict[str, CardSpec] = {
 # check ("if a Unit EVER has damage equalling or exceeding its Might"), a static
 # going away can kill. Killing Soul Shepherd shrinks every token she was pumping
 # and any of them already carrying damage dies with her.
-ST_MIGHT, ST_COST_ENERGY, ST_KEYWORD = range(3)
-ST_NAMES = ("might", "cost_energy", "keyword")
+ST_MIGHT, ST_COST_ENERGY, ST_KEYWORD, ST_UNCHOOSABLE = range(4)
+ST_NAMES = ("might", "cost_energy", "keyword", "unchoosable")
 
 # Who a static applies to.
-SC_SELF, SC_FRIENDLY_UNITS = range(2)
+#   SC_UNITS_HERE -- printed on a BATTLEFIELD, reaching units standing on it.
+#                    "Units here" carries no ownership clause, so it reaches
+#                    BOTH players (targets scope by omission); narrow with
+#                    `who` when a card says "your".
+SC_SELF, SC_FRIENDLY_UNITS, SC_UNITS_HERE = range(3)
 
 # What a "for each ..." clause COUNTS. The board is the obvious source and was
 # the only one; a zone is the other, and it is a different kind of number --
@@ -1622,6 +1826,13 @@ class Static(NamedTuple):
     # For ST_KEYWORD: which keyword this grants, and its value. `n` carries the
     # value the same way it carries a Might amount, so a bare keyword is n=1.
     keyword: str | None = None
+    # "Units here WITH [Temporary] have [Shield]" (Black Flame Altar) -- a
+    # keyword the AFFECTED unit must already have. Distinct from `keyword`
+    # (what is granted) and from `per_keyword` (what is counted).
+    requires_keyword: str | None = None
+    # SC_UNITS_HERE only: whose units. W_ANY is the unqualified "units here",
+    # which reaches both players.
+    who: int = W_ANY
     # Counting clause. `per_same_loc` is "at my battlefield"; `per_friendly`
     # is the "of your units" in the same sentence.
     per_keyword: str | None = None
@@ -1644,6 +1855,83 @@ class Static(NamedTuple):
     # which for a cost discount means the card simply costs its printed price.
     cond: int = COND_NONE
     level: int = 0            # the N in COND_LEVEL's "[Level N]"
+
+
+# Statics printed on a BATTLEFIELD rather than on a permanent. Kept in its own
+# table because a battlefield is not a permanent: it occupies a slot
+# (`state.bf_card`), has no row, no controller of its own, and cannot be killed
+# -- so it can never be the SUBJECT of a static, only the source of one.
+#
+# Every one of these is SC_UNITS_HERE, which is the only scope a battlefield
+# has: the units standing on it. "Units here" prints no ownership clause, so it
+# reaches both players.
+BF_STATICS: dict[str, tuple[Static, ...]] = {
+
+    # Units here have +1 Might. (This includes attackers.)
+    "Trifarian War Camp": (
+        Static(ST_MIGHT, n=1, scope=SC_UNITS_HERE),
+    ),
+
+    # Units here have [Ganking].
+    "Windswept Hillock": (
+        Static(ST_KEYWORD, keyword="Ganking", n=1, scope=SC_UNITS_HERE),
+    ),
+
+    # Units here with [Temporary] have [Shield].
+    # The requirement is on the AFFECTED unit, which is what makes this a
+    # narrow reward for a token board rather than a blanket buff.
+    "Black Flame Altar": (
+        Static(ST_KEYWORD, keyword="Shield", n=1, scope=SC_UNITS_HERE,
+               requires_keyword="Temporary"),
+    ),
+
+    # Units here with [Tank] have +1 Might.
+    # The same shape as Black Flame Altar with a different kind: the
+    # requirement is on the affected unit either way, so nothing new was
+    # needed to express it.
+    "Kinkou Temple": (
+        Static(ST_MIGHT, n=1, scope=SC_UNITS_HERE, requires_keyword="Tank"),
+    ),
+}
+
+
+# Triggered abilities printed on a BATTLEFIELD. Separate from `ABILITIES` for
+# the reason `BF_STATICS` is separate from `STATICS`: a battlefield is not a
+# permanent, so it has no row for `T_SELF` to name and no controller of its own.
+# Both facts are handled at the firing site (`combat._queue_bf_trigger`, which
+# carries the seat) and in `resolve._slot` (which fizzles `T_SELF` and answers
+# `T_HERE` with the battlefield's own location).
+#
+# **These fire ONCE, for the player, where a unit's fire once per unit.** "When
+# you conquer here" on the ground is one trigger no matter how many units took
+# it; the same words on a unit are one per unit standing there. Getting that
+# backwards is the easy mistake, and it is invisible in a test with one unit.
+BF_ABILITIES: dict[str, tuple[Ability, ...]] = {
+
+    # When you conquer here, draw 1 for each other battlefield you or allies
+    # control. ("Or allies" is a multiplayer clause; in a two-player game it
+    # reads as "you".)
+    "Seat of Power": (
+        Ability(TR_CONQUER, ops=(
+            Op(OP_DRAW, n=1, n_from_count=CT_MY_OTHER_BATTLEFIELDS),)),
+    ),
+
+    # When you hold here, draw 1.
+    "Grove of the God-Willow": (
+        Ability(TR_HOLD, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # When you conquer here, discard 1, then draw 1.
+    # The draw is a FOLLOW-UP, not a second op: ops after a discard run before
+    # the player has picked, so writing it plainly would let them pitch the
+    # card they just drew. "Then" is sequencing and not a condition, so an
+    # empty hand still draws -- which `OP_DISCARD_CHOOSE` handles by running
+    # the follow-up inline when there is nothing to discard.
+    "Zaun Warrens": (
+        Ability(TR_CONQUER, ops=(
+            Op(OP_DISCARD_CHOOSE, n=1, then_key=FU_DRAW_1),)),
+    ),
+}
 
 
 STATICS: dict[str, tuple[Static, ...]] = {
@@ -1784,6 +2072,22 @@ STATICS: dict[str, tuple[Static, ...]] = {
     # base, which is a different and much better card.
     "Captain Farron": (
         Static(ST_KEYWORD, keyword="Assault", n=1, scope=SC_FRIENDLY_UNITS,
+               scope_not_self=True, scope_same_loc=True),
+    ),
+
+    # I can't be chosen by enemy spells and abilities.
+    # Not [Deflect], which prices the choice -- this removes it. Nothing here
+    # protects against damage or a sweep, neither of which chooses (355.10),
+    # so a board wipe still answers it.
+    "Ruin Runner": (
+        Static(ST_UNCHOOSABLE, scope=SC_SELF),
+    ),
+
+    # Other friendly units here have [Shield]. Farron's shape on the defending
+    # side: his own printed [Shield] and [Tank] are engine keywords and need no
+    # entry, so the granted one is the whole card.
+    "Taric - Protector": (
+        Static(ST_KEYWORD, keyword="Shield", n=1, scope=SC_FRIENDLY_UNITS,
                scope_not_self=True, scope_same_loc=True),
     ),
 
@@ -2504,6 +2808,68 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
                 ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=2),)),
     ),
 
+    # When you play me, draw 1.
+    # [Deathknell] Choose an opponent. They reveal their hand. You can look at
+    # their facedown cards this turn. Gain 1 XP.
+    #
+    # The first card whose payload is PURE INFORMATION -- nothing moves, no
+    # choice is carried, and its whole value is what the policy can see
+    # afterwards. "Choose an opponent" is not a choice in a two-player game
+    # (there is one), so it is resolved rather than offered, the same way
+    # Sabotage does it. The 0-Might reminder needs no entry: 469/470 never
+    # asked about Might, so a 0-Might unit already conquers and holds.
+    "Scuttle Crab": (
+        Ability(TR_PLAY_ME, ops=(Op(OP_DRAW, n=1),)),
+        Ability(TR_DEATH, ops=(Op(OP_SEE_HAND),
+                               Op(OP_SEE_FACEDOWN),
+                               Op(OP_GAIN_XP, n=1))),
+    ),
+
+    # When you choose or ready me, give me +1 Might this turn.
+    # Two triggers on one card, both narrowed to the card itself. Awaken counts
+    # as readying, so she grows once a turn for free on top of anything you
+    # point at her -- and [Deflect] is an engine keyword, so it needs no entry.
+    "Irelia, Fervent": (
+        Ability(TR_READIED, subject_is_self=True,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=1),)),
+        Ability(TR_CHOSEN, subject_is_self=True,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=1),)),
+    ),
+
+    # When you ready a friendly unit, give IT +1 Might this turn.
+    # The other side of the same trigger: the subject is whatever was readied,
+    # not the watcher. On a wide board Awaken fires this once per exhausted
+    # unit, which is what makes it a payoff for attacking with everything.
+    "Pirate's Haven": (
+        Ability(TR_READIED, ops=(Op(OP_MODIFY_MIGHT, target=T_SUBJECT, n=1),)),
+    ),
+
+    # When you choose me with a spell, draw 1. An ability that chooses is still
+    # a choice (355.7), so "with a spell" is a real narrowing rather than
+    # flavour text.
+    "Jae Medarda": (
+        Ability(TR_CHOSEN, subject_is_self=True, subject_by_spell=True,
+                ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # [Reaction] [Temporary] When an OPPONENT scores, draw 1.
+    # A gear rather than a unit, which the watcher does not care about --
+    # `fire_watchers` walks permanents, and only statics restrict themselves to
+    # units. [Temporary] caps it at one turn, so it reads the opponent's next
+    # scoring window and then dies before your own Beginning Phase scores.
+    "Sumpworks Map": (
+        Ability(TR_OPPONENT_SCORES, ops=(Op(OP_DRAW, n=1),)),
+    ),
+
+    # When you play a GEAR, ready me. The same watcher Reluctant Leader uses,
+    # pointed at the other card type -- and the card that made the missing
+    # `subject_card_type` filter visible, since without it every unit watcher
+    # was already firing on gear.
+    "Pit Crew": (
+        Ability(TR_PLAY_UNIT, subject_card_type="Gear",
+                ops=(Op(OP_READY, target=T_SELF),)),
+    ),
+
     # When another friendly unit dies, give me +2 Might this turn.
     "Spectral Centaur": (
         Ability(TR_OTHER_DIES,
@@ -2584,11 +2950,24 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     # When I move to a battlefield, you may move an enemy unit to that
     # battlefield.  A free "you may" (383.3.a), decided at finalization -- no
     # cost, unlike Icevale Archer directly above.
+    #
+    # **"THAT battlefield", not "this" -- so the destination is `T_CTX2`, the
+    # one captured when she moved, and the ability does not need her alive.**
+    # Written first as `T_HERE` + `COND_SELF_AT_BF`, which read her row at
+    # resolution and so was really "move an enemy unit to wherever I am
+    # standing". Both halves of that fail to the same response: Gust her in
+    # answer to the trigger (she is 1 Might, so she is always a legal Gust) and
+    # the ability resolved doing nothing. 383.2.c.2 says an ability whose
+    # source has left resolves WITHOUT it -- it does not fizzle -- and 359.3.f.3
+    # says the battlefield it names was pinned when it triggered. Compare
+    # Noxian Drummer two entries down, whose "play a Recruit token HERE" is
+    # genuinely a live read of her own square and IS meant to do nothing once
+    # she is gone.
     "Irresistible Faefolk": (
         Ability(TR_MOVE, optional=True,
                 targets=(TargetSpec(who=W_ENEMY),),
-                ops=(Op(OP_MOVE_TO, target=0, target_b=T_HERE,
-                        cond=COND_SELF_AT_BF),)),
+                ops=(Op(OP_MOVE_TO, target=0, target_b=T_CTX2,
+                        cond=COND_CTX2_BATTLEFIELD),)),
     ),
 
     # When I hold, if there is exactly one other unit you control here, draw 1.
@@ -2605,6 +2984,113 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
     "Kinkou Initiate": (
         Ability(TR_PLAY_ME,
                 ops=(Op(OP_DRAW, n=1, cond=COND_OTHERS_MIGHT, level=5),)),
+    ),
+
+    # When you play me, you may kill a gear with Energy cost no more than
+    # {1 energy}. If you do, play a Gold gear token exhausted.
+    # A free "you may" (383.3.a) decided at finalization, so "if you do" needs
+    # no separate condition -- declining removes the whole ability, and
+    # accepting performs both halves.
+    "Pickpocket": (
+        Ability(TR_PLAY_ME, optional=True,
+                targets=(TargetSpec(who=W_ANY, card_type=("Gear",),
+                                    max_energy=1),),
+                ops=(Op(OP_KILL, target=0),
+                     Op(OP_CREATE_TOKEN, target=T_MY_BASE, n=1,
+                        token=GOLD_TOKEN))),
+    ),
+
+    # When you play me, draw 1 for each of your [Mighty] units.
+    # 5+ Might is Mighty, and it is EFFECTIVE Might -- statics and buffs count,
+    # which is what the player sees on the board. Kadregrin is on the board by
+    # the time this resolves (359.2.b), so it counts itself if it qualifies.
+    "Kadregrin the Infernal": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_DRAW, n=1, n_from_count=CT_MY_MIGHTY_UNITS),)),
+    ),
+
+    # When you play me, give a unit +8 Might this turn.
+    "Whiteflame Protector": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=8),)),
+    ),
+
+    # When I attack, you may pay {1 energy} to move an enemy unit here to its
+    # base.  383.3.b optional cost; "here" is my battlefield, and "ITS base"
+    # is the moved unit's owner's, not mine.
+    "Sinister Poro": (
+        Ability(TR_ATTACK_OR_DEFEND, subject_role=ROLE_ATTACK,
+                optional=True, opt_cost_energy=1,
+                targets=(TargetSpec(who=W_ENEMY, same_loc_as_source=True),),
+                ops=(Op(OP_MOVE_TO, target=0, target_b=T_OWNER_BASE),)),
+    ),
+
+    # When I DEFEND, you may kill me to move an attacking unit to its base.
+    # Sinister Poro's shape from the other side of the fight, and the first
+    # ability whose optional cost is a body rather than runes. "An attacking
+    # unit" carries no ownership clause, but 459 only designates the Attacker's
+    # units as attacking, so `attacking` already scopes it to the enemy side
+    # and to the contested battlefield.
+    "Overzealous Fan": (
+        Ability(TR_ATTACK_OR_DEFEND, subject_role=ROLE_DEFEND,
+                optional=True, opt_cost_kill_self=True,
+                targets=(TargetSpec(who=W_ANY, attacking=True),),
+                ops=(Op(OP_MOVE_TO, target=0, target_b=T_OWNER_BASE),)),
+    ),
+
+    # [Hidden] When you play me, you may return ANOTHER unit at a battlefield
+    # with 3 Might or less to its owner's hand.
+    # `max_might` is a restriction (355.9.b) read against EFFECTIVE Might and
+    # re-checked at resolution (359.3.e), so growing the target during the
+    # response window takes it out of range and this does nothing to it.
+    "Windsinger": (
+        Ability(TR_PLAY_ME, optional=True,
+                targets=(TargetSpec(who=W_ANY, at_battlefield=True,
+                                    not_self=True, max_might=3),),
+                ops=(Op(OP_RETURN_TO_HAND, target=0),)),
+    ),
+
+    # When another NON-RECRUIT unit you control dies, play a 1 Might Recruit
+    # unit token into your base.
+    # The tag exclusion is load-bearing: Viktor makes Recruits, so without it
+    # each token's death would make another one, forever.
+    "Viktor - Leader": (
+        Ability(TR_OTHER_DIES, subject_lacks_tag="Recruit",
+                ops=(Op(OP_CREATE_TOKEN, target=T_MY_BASE, n=1,
+                        token=RECRUIT_TOKEN),)),
+    ),
+
+    # When you play me OR at the start of your Beginning Phase, play a ready
+    # 3 Might Sprite unit token with [Temporary] to your base.
+    # "or" is two triggers on one effect, which is two entries. The token
+    # carries [Temporary] itself, so it expires through the existing path.
+    "Sprite Queen": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_CREATE_TOKEN, target=T_MY_BASE, n=1,
+                        token=SPRITE_TOKEN, ready=True),)),
+        Ability(TR_BEGINNING,
+                ops=(Op(OP_CREATE_TOKEN, target=T_MY_BASE, n=1,
+                        token=SPRITE_TOKEN, ready=True),)),
+    ),
+
+    # When I attack, give me +2 Might this turn if there is a READY enemy unit
+    # here.  Exhausted enemies do not count -- the card pays you for attacking
+    # into something that can still fight back.
+    "Dune Drake": (
+        Ability(TR_ATTACK_OR_DEFEND, subject_role=ROLE_ATTACK,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=2,
+                        cond=COND_READY_ENEMY_HERE),)),
+    ),
+
+    # I can't be chosen by enemy spells and abilities unless I'm in combat.
+    # When I move to a battlefield, give me +2 Might this turn.
+    # The first clause is a targeting restriction and lives in
+    # SAFE_UNLESS_IN_COMBAT; only the trigger is written here.
+    "Akali, Silent": (
+        Ability(TR_MOVE,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=2,
+                        cond=COND_SELF_AT_BF),)),
     ),
 
     # [Ambush] When I attack, [Stun] an enemy unit here.
@@ -3033,6 +3519,18 @@ def abilities_for(table, card: int) -> tuple[Ability, ...]:
             + _vision_abilities(table, card))
 
 
+def bf_abilities_for(table, card: int) -> tuple[Ability, ...]:
+    """Every triggered ability printed on a BATTLEFIELD card id.
+
+    A separate table and a separate lookup, for the reason `BF_STATICS` is
+    separate: a battlefield is not a permanent. Every loop in the engine that
+    walks "this permanent's abilities" would otherwise start finding these, and
+    the failure would be silent -- a battlefield has no row for `T_SELF` to
+    point at, so an op that referenced its source would read permanent 0.
+    """
+    return BF_ABILITIES.get(table.names[card], ())
+
+
 def implemented(table) -> list[int]:
     """Card ids with a spec. The v1 spell pool grows by extending SPECS."""
     return [c for c in range(table.n) if table.names[c] in SPECS]
@@ -3144,3 +3642,129 @@ FOLLOWUPS[FU_DIANA_REVEAL] = (
     Op(OP_LOOK_TOP, n=1, pick_optional=True, pick_types=("Spell",),
        pick_dest=DEST_HAND, rest_dest=DEST_TOP),
 )
+
+# "...then draw 1." The plainest follow-up there is, and it exists because
+# ORDER is the whole point: a draw written as a second op runs before the
+# player has chosen what to pitch, which lets the card they just drew be the
+# card they discard.
+FOLLOWUPS[FU_DRAW_1] = (Op(OP_DRAW, n=1),)
+
+
+# --- behaviour features, for the observation encoder ------------------------
+# `obs.py` encodes a card as its **attributes, never its id** (PLAN.md §5.2), so
+# that a card the net never saw still gets a usable embedding. Stats, type,
+# domains and keywords carried that alone -- and they describe the card's BODY,
+# not what it DOES. Everything a card's rules text does was therefore invisible:
+# 937 cards produced 642 distinct rows, and all 66 battlefields -- whose entire
+# content IS rules text, with no energy, power or might to tell them apart --
+# collapsed to 3.
+#
+# This block derives features from the SCRIPTED ABILITY ITSELF: which triggers
+# it watches, which ops it runs, what its statics grant. That keeps the rule
+# intact -- these are still attributes, just attributes of behaviour rather than
+# of the stat line -- and it is self-maintaining, because a card scripted
+# tomorrow becomes visible the moment its entry lands, with no table to update.
+#
+# **The visibility a card gets is exactly the behaviour that is encoded.** An
+# unscripted card scores all zeros here and is still aliased against every other
+# unscripted card, which is correct: the engine does not run its text either, so
+# there is genuinely nothing to see. `has_scripted` is the one bit that says
+# which of the two a zero row is -- a vanilla body, or text nothing executes.
+
+_N_TRIGGERS = len(TRIGGER_NAMES)
+_N_OPS = len(OP_NAMES)
+_N_ST = len(ST_NAMES)
+_N_SCOPE = 3
+
+# 3 counts + triggers + ops + static kinds + static scopes
+# + 2 static magnitudes + 2 static shape bits
+# + 5 activation costs + optional + targets + enemy-target + is_bf
+ABIL_DIM = 3 + _N_TRIGGERS + _N_OPS + _N_ST + _N_SCOPE + 2 + 2 + 5 + 1 + 1 + 1 + 1
+
+
+def _clip(x: float, lo: float = -2.0, hi: float = 2.0) -> float:
+    return lo if x < lo else hi if x > hi else x
+
+
+def ability_features(name: str) -> list[float]:
+    """[ABIL_DIM] behaviour attributes for one card, by name.
+
+    Every card in the pool goes through here, scripted or not -- an unscripted
+    one simply comes back all zeros. Magnitudes are scaled to roughly unit range
+    and clipped, since a single outlier column would otherwise dominate the
+    embedding's input scale.
+    """
+    bf_abils = BF_ABILITIES.get(name, ())
+    abils = ABILITIES.get(name, ()) + bf_abils
+    bf_statics = BF_STATICS.get(name, ())
+    all_statics = STATICS.get(name, ()) + bf_statics
+    on_bf = bool(bf_abils or bf_statics)
+
+    v = [0.0] * ABIL_DIM
+    if not abils and not all_statics:
+        return v
+
+    o = 0
+    v[o] = 1.0                                    # has_scripted
+    v[o + 1] = _clip(len(abils) / 3.0)
+    v[o + 2] = _clip(len(all_statics) / 3.0)
+    o += 3
+
+    for a in abils:
+        v[o + a.trigger] = 1.0
+    o += _N_TRIGGERS
+
+    for a in abils:
+        for op in a.ops:
+            v[o + op.op] = 1.0
+    o += _N_OPS
+
+    for s in all_statics:
+        v[o + s.kind] = 1.0
+    o += _N_ST
+
+    for s in all_statics:
+        v[o + s.scope] = 1.0
+    o += _N_SCOPE
+
+    # Signed on purpose: a static that SUBTRACTS Might (Vex's aura) is the
+    # opposite card from one that adds it, and a magnitude-only column would
+    # make the two identical.
+    might_n = [s.n for s in all_statics if s.kind == ST_MIGHT]
+    disc_n = [s.n for s in all_statics if s.kind == ST_COST_ENERGY]
+    v[o] = _clip(max(might_n, key=abs) / 3.0) if might_n else 0.0
+    v[o + 1] = _clip(max(disc_n, key=abs) / 3.0) if disc_n else 0.0
+    o += 2
+
+    # A scaled static is a different kind of number from a flat one -- it grows
+    # with the board or a trash and cannot be read off the card -- and a gated
+    # one may contribute nothing at all right now.
+    v[o] = float(any(s.per != CNT_NONE or s.per_keyword is not None
+                     for s in all_statics))
+    v[o + 1] = float(any(s.cond != COND_NONE for s in all_statics))
+    o += 2
+
+    act = [a for a in abils if a.trigger == TR_ACTIVATED]
+    if act:
+        v[o] = _clip(max(a.cost_energy for a in act) / 3.0)
+        v[o + 1] = _clip(max(a.cost_power for a in act) / 3.0)
+        v[o + 2] = float(any(a.cost_exhaust for a in act))
+        v[o + 3] = float(any(a.cost_kill_self for a in act))
+        v[o + 4] = _clip(max(a.cost_xp for a in act) / 5.0)
+    o += 5
+
+    v[o] = float(any(a.optional for a in abils))
+    o += 1
+    v[o] = _clip(max((len(a.targets) for a in abils), default=0) / 3.0)
+    o += 1
+    v[o] = float(any(t.who == W_ENEMY for a in abils for t in a.targets))
+    o += 1
+    # A battlefield's abilities come from tables of their own: its statics
+    # reach BOTH players' units standing there, and its triggers fire once for
+    # a player rather than once per permanent. Neither is true of anything
+    # printed on a card that goes to the board.
+    v[o] = float(on_bf)
+    o += 1
+
+    assert o == ABIL_DIM, f"{o} != {ABIL_DIM}"
+    return v

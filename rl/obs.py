@@ -71,7 +71,7 @@ BOARD_SLOTS = MAX_PERMS
 
 # 5*N_DOMAINS: runes_ready + runes_spent for both seats (4), plus this seat's
 # pool_power (1). The +1 is pool_power's [A] column -- see state.D_ANY.
-GLOBAL_DIM = 39 + 5 * N_DOMAINS + 1
+GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1
 
 # Action-row layout after the kind one-hot and card block.
 ACT_EXTRA = 4 + 1 + 3 + 1 + 1 + 1 + 1 + 2 + 1
@@ -139,22 +139,53 @@ class Encoder:
         return r
 
     def _hand(self, state: GameState, seat: int):
+        """Cards in hands this seat may see.
+
+        Normally that is its own hand alone. A card that reveals the opponent's
+        hand (Scuttle Crab) adds THEIR cards to the same zone rather than a new
+        one: the rows already carry `CX_MINE`, so ownership is a feature the
+        net reads rather than a shape it has to be rebuilt for. That keeps the
+        observation shape -- and every checkpoint -- valid.
+        """
         z = np.zeros((HAND_SLOTS, self.row_dim), np.float32)
         m = np.zeros(HAND_SLOTS, bool)
-        n = int(state.n_hand[seat])
-        assert n <= HAND_SLOTS, f"hand of {n} exceeds HAND_SLOTS={HAND_SLOTS}"
-        for j in range(n):
-            card = int(state.hand[seat, j])
-            r = self._row(card, CX_ZONE_HAND)
-            r[self.card_dim + CX_MINE] = 1.0
-            # Affordability is a genuine feature, not a shortcut: it is the
-            # single fact that most changes what a hand card means right now,
-            # and the net would otherwise have to rederive max(energy, power)
-            # against the rune board from scratch.
-            r[self.card_dim + CX_AFFORD] = float(
-                A.plan_payment(state, self.table, seat, card) is not None)
-            z[j] = r
-            m[j] = True
+        seats = [seat]
+        if int(state.saw_hand[seat]) == int(state.turn):
+            seats.append(1 - seat)
+        k = 0
+        for owner in seats:
+            n = int(state.n_hand[owner])
+            if owner == seat:
+                # The seat's OWN hand must always fit -- MAX_HAND == HAND_SLOTS
+                # by construction, so this is a real invariant.
+                assert n <= HAND_SLOTS, (
+                    f"hand of {n} exceeds HAND_SLOTS={HAND_SLOTS}")
+            else:
+                # The revealed half is EXTRA information the policy would not
+                # have at all without the card, so if two hands somehow cannot
+                # both fit, showing fewer revealed cards is strictly better
+                # than an assertion that takes down a training run. Measured
+                # peak for both hands together is 15 against 60 slots, so this
+                # is headroom rather than a live cap -- but MAX_HAND is 60, and
+                # hand-picked capacities in this engine have a history of being
+                # overtaken.
+                n = min(n, HAND_SLOTS - k)
+            for j in range(n):
+                card = int(state.hand[owner, j])
+                r = self._row(card, CX_ZONE_HAND)
+                r[self.card_dim + CX_MINE] = float(owner == seat)
+                # Affordability is a genuine feature, not a shortcut: it is the
+                # single fact that most changes what a hand card means right
+                # now, and the net would otherwise have to rederive
+                # max(energy, power) against the rune board from scratch.
+                # Read against the card's OWNER -- for your own hand that is
+                # you, and for a revealed one "can they actually cast it" is
+                # the question worth asking.
+                r[self.card_dim + CX_AFFORD] = float(
+                    A.plan_payment(state, self.table, owner, card) is not None)
+                z[k] = r
+                m[k] = True
+                k += 1
         return z, m
 
     def _board(self, state: GameState, seat: int):
@@ -215,7 +246,11 @@ class Encoder:
             if owner < 0:
                 continue
             mine = owner == seat
-            r = self._row(int(state.fd_card[i]) if mine else -1, CX_ZONE_FD)
+            # "You can look at their facedown cards this turn" fills exactly
+            # this hole -- the slot was already public (107.3.f), only the
+            # identity was not.
+            seen = mine or int(state.saw_fd[seat]) == int(state.turn)
+            r = self._row(int(state.fd_card[i]) if seen else -1, CX_ZONE_FD)
             c = self.card_dim
             r[c + CX_MINE] = float(mine)
             r[c + CX_FD_PRESENT] = 1.0
@@ -248,6 +283,12 @@ class Encoder:
             float(state.priority == seat),
             float(state.is_open),
             float(state.showdown_bf >= 0),
+            # ...and WHICH kind. A Combat Showdown ends in the damage step; the
+            # Non-Combat one 344.2 opens ends in somebody Conquering (348.2.a).
+            # Both present as "a showdown is open with me holding priority",
+            # and the right play in them is completely different -- answer the
+            # damage, or answer the Conquer -- so the policy needs the bit.
+            float(bool(state.showdown_combat)),
             float(state.attacker == seat),
             float(state.attacker == foe),
             float(state.showdown_bf == 0),
@@ -343,19 +384,19 @@ class Encoder:
             # offered this action, and they know what they hid.
             card = int(state.fd_card[act.arg])
             loc = bf_loc(act.arg)
-        elif k == A.A_PICK and int(state.pend_reveal[0]) >= 0:
-            # Sabotage's pick, out of the opponent's REVEALED hand. Naming the
-            # card is what the card does -- they revealed it, and only the
-            # chooser is offered this action.
-            card = int(state.hand[int(state.pend_reveal[1]), act.arg])
         elif k == A.A_PICK:
-            # "Look at the top N... put 1 into your hand." The whole decision
-            # is WHICH card, so naming it is the only feature that could
-            # discriminate between the candidates -- and it leaks nothing: the
-            # effect is that this player is looking at these cards, and only
-            # they are ever offered the action. No row and no location; the
-            # cards are off the deck and in no zone.
-            card = int(state.look_cards[act.arg])
+            # The whole decision is WHICH card, so naming it is the only
+            # feature that could discriminate between the candidates -- and it
+            # leaks nothing in any of the three cases: the look buffer is this
+            # player's own cards off their own deck, the revealed hand was
+            # revealed to them by a card that says so, and a discard is out of
+            # their own hand. Only the deciding seat is ever offered the
+            # action.
+            #
+            # Which of the three the arg indexes is `pick_card`'s business, not
+            # this encoder's -- see the note there for why that must be one
+            # shared answer.
+            card = A.pick_card(state, act.arg)
         elif k == A.A_TARGET:
             # **`arg` means whatever the open slot's KIND says it means**: a
             # permanent row, a location, or a Chain Item uid. This read

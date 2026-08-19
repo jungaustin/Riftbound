@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from rl.engine.state import (C_CTRL, C_CTX, N_SEATS, P_CTRL, P_LOC,
+from rl.engine.state import (C_CTRL, C_CTX, C_CTX2, N_SEATS, P_CTRL, P_LOC,
                              GameState, base_loc, is_battlefield)
 
 # Rows are per-seat: swap axis 0.
@@ -33,6 +33,9 @@ SEAT_AXIS = (
     "pool_energy", "pool_power", "bf_scored", "points", "burned_out",
     "legend", "champion", "no_spells", "cards_played", "xp",
     "played_types", "died_in_beginning",
+    # Turn stamps indexed BY the seat that may look, so the permission follows
+    # its owner across a swap.
+    "saw_hand", "saw_fd",
     # Rows into `perms`, which mirroring leaves in place, so the VALUES
     # stay valid -- only which seat owns the guard swaps.
     "death_guard",
@@ -45,12 +48,13 @@ SEAT_VALUED_SCALAR = ("active", "priority", "attacker", "focus", "winner",
                       # seat-agnostic (it lists card ids) while this names who
                       # is looking -- the same split as pend_mull.
                       "pend_look", "pend_cull", "pend_discard")
-SEAT_VALUED_ARRAY = ("bf_ctrl", "fd_owner")
+SEAT_VALUED_ARRAY = ("bf_ctrl", "fd_owner", "bf_contester")
 
 # Seat-agnostic: battlefield identities, phase, counters, the RNG.
 UNCHANGED = (
     "n_perms", "bf_card", "bf_contested", "fd_card", "n_chain", "turn",
-    "phase", "showdown_bf", "showdown_step", "passes", "decl_dst",
+    "phase", "showdown_bf", "showdown_step", "showdown_combat",
+    "passes", "decl_dst",
     "decl_mask", "pend_play", "truncated", "rng", "mull_mask",
     # Affects BOTH players' units, so a seat swap leaves it alone.
     "any_damage_kills", "pend_discard_ops",
@@ -81,7 +85,7 @@ UNCHANGED = (
     "kw_grant", "kw_grant_turn",
     # `fd_ply` and `ply` are turn counters, and `pend_hide` is a hand index
     # in the acting seat's own hand -- none of them names a seat.
-    "fd_ply", "ply", "pend_hide", "chain_uid",
+    "fd_ply", "ply", "pend_hide", "chain_uid", "chain_from_trigger",
     # A chain INDEX, not a seat: which pending item is waiting on a "you may".
     "pend_may", "n_trig",
 )
@@ -142,14 +146,24 @@ def mirror(state: GameState) -> GameState:
         c[:, C_CTRL] = np.where(c[:, C_CTRL] >= 0,
                                 N_SEATS - 1 - c[:, C_CTRL], c[:, C_CTRL])
         # C_SRC is a permanent row and rows keep their order under mirroring.
-        # C_CTX is a captured LOCATION, so it moves with the bases (359.3.f.3).
+        # C_CTX and C_CTX2 are captured LOCATIONS -- the two ends of a Move --
+        # so both move with the bases (359.3.f.3).
         c[:, C_CTX] = [mirror_loc(int(x)) for x in c[:, C_CTX]]
+        c[:, C_CTX2] = [mirror_loc(int(x)) for x in c[:, C_CTX2]]
 
     if s.n_trig:
-        # [trigger kind, source ROW, captured LOCATION]. The row survives
-        # mirroring untouched (rows keep their order); the location does not.
+        # [trigger kind, source ROW, captured LOCATION, subject ROW, second
+        # captured LOCATION, controlling SEAT]. Rows survive mirroring untouched
+        # (they keep their order); locations and seats do not.
+        #
+        # The source column is left alone even when it is a battlefield
+        # sentinel: battlefield SLOTS are shared ground and are not mirrored
+        # (see `obs._battlefields`), so the slot index means the same thing to
+        # both seats -- unlike the seat in the last column, which does not.
         t = s.trig[:s.n_trig]
         t[:, 2] = [mirror_loc(int(x)) for x in t[:, 2]]
+        t[:, 4] = [mirror_loc(int(x)) for x in t[:, 4]]
+        t[:, 5] = np.where(t[:, 5] >= 0, N_SEATS - 1 - t[:, 5], t[:, 5])
 
     if int(s.pend_reveal[0]) >= 0:
         s.pend_reveal[:] = [N_SEATS - 1 - int(x) for x in s.pend_reveal]

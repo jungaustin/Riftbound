@@ -67,6 +67,35 @@ def bf_index(loc: int) -> int:
     return loc - N_SEATS
 
 
+# --- a battlefield as an ability SOURCE -------------------------------------
+# Everywhere in the engine, "the source of this ability" is a permanent row
+# index. A battlefield is not a permanent -- it has no row, no controller of
+# its own and cannot die -- but it does print triggered abilities ("when you
+# conquer here, draw 1 for each other battlefield you control"), and those need
+# to reach the Chain through the same machinery everything else uses.
+#
+# So a battlefield source is encoded as a row index no permanent can ever hold:
+# a sentinel far below any valid row and below the -1 that means "no source".
+# `fire` and `trig_controller` branch on it; nothing else has to know, because
+# an index is an index. The alternative -- a parallel field marking what kind
+# of source this is -- would need threading through every call site that passes
+# one, and every site that forgot would silently read permanent row 0.
+BF_SRC0 = -101
+
+
+def bf_src(index: int) -> int:
+    """The ability-source encoding for battlefield slot `index`."""
+    return BF_SRC0 - index
+
+
+def is_bf_src(src: int) -> bool:
+    return src <= BF_SRC0
+
+
+def bf_src_index(src: int) -> int:
+    return BF_SRC0 - src
+
+
 # Permanent columns. One int16 matrix so a clone is a single copy.
 (P_CARD, P_CTRL, P_LOC, P_READY, P_DMG, P_ALIVE, P_ARRIVED, P_FLAGS,
  P_MIGHT_MOD) = range(9)
@@ -205,6 +234,18 @@ RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 #           trigger references is captured WHEN IT TRIGGERS, not when it
 #           resolves, so Lillia's "play a Sprite there" remembers where she
 #           moved from even if she has moved again by the time it resolves.
+#   C_CTX2  a SECOND captured location, because a Move has two of them and
+#           card text distinguishes them by word. On a move trigger C_CTX is
+#           the location LEFT and C_CTX2 the location ARRIVED AT:
+#               "there"           -> C_CTX   (Lillia's Sprite, the origin)
+#               "that battlefield"-> C_CTX2  (Irresistible Faefolk)
+#               "here"/"this"     -> T_HERE, a live read of the source's own
+#                                    row, which is the destination while the
+#                                    source is still standing on it
+#           The first two survive the source being removed mid-Chain; the
+#           third does not, and 383.2.c.2 says that is correct -- "this
+#           battlefield" has no referent once the permanent naming it is gone,
+#           while "that battlefield" was pinned when the trigger fired.
 #   C_COST  which cost this play pays -- see COST_* below
 #   C_DEST  where the card goes when it leaves the Chain -- see DEST_* below
 #
@@ -217,8 +258,8 @@ RUNE_RING = 16   # >= rune_deck_size; recycled runes cycle back through it
 # produces. One flag would have had to become an enum of whole card behaviours,
 # which is the shape that stops composing at exactly four cards.
 C_CARD, C_CTRL, C_FINAL, C_FROM_HAND, C_BOUND_BF, C_UID, C_ABIL, C_SRC, \
-    C_CTX, C_COST, C_DEST, C_SUBJ, C_REPEAT = range(13)
-N_CHAIN_COLS = 13
+    C_CTX, C_COST, C_DEST, C_SUBJ, C_REPEAT, C_CTX2 = range(14)
+N_CHAIN_COLS = 14
 
 # C_REPEAT: 1 if this item's [Repeat] cost was paid as it was played (820).
 # Orthogonal to C_COST, which says WHICH cost was paid (printed, Flow, free):
@@ -288,22 +329,25 @@ class GameState:
         "hand", "n_hand", "deck", "deck_ptr", "n_deck", "trash", "n_trash",
         "runes_ready", "runes_spent", "rune_deck", "rune_head", "rune_left",
         "pool_energy", "pool_power",
-        "bf_card", "bf_ctrl", "bf_contested", "fd_owner", "fd_card", "fd_ply",
+        "bf_card", "bf_ctrl", "bf_contested", "bf_contester",
+        "fd_owner", "fd_card", "fd_ply",
         "bf_scored",
         "banished", "n_banished",
         "chain", "n_chain", "chain_targets", "pend_slot", "chain_uid",
-        "pend_may", "trig", "n_trig", "pend_order",
+        "pend_may", "trig", "n_trig", "pend_order", "chain_from_trigger",
         "points", "burned_out", "no_spells", "cards_played", "xp",
         "kw_grant", "kw_grant_turn",
         "legend", "champion",
         "turn", "ply", "active", "phase", "priority", "focus",
-        "showdown_bf", "showdown_step", "attacker", "passes",
+        "showdown_bf", "showdown_step", "showdown_combat",
+        "attacker", "passes",
         "decl_dst", "decl_mask", "pend_play", "pend_play_seat",
         "pend_hide", "pend_mull", "mull_mask",
         "look_cards", "n_look", "pend_look",
         "look_pick_dest", "look_rest_dest", "look_optional",
         "look_type_mask", "death_guard",
         "once_used", "pend_double", "pend_reveal", "played_types",
+        "saw_hand", "saw_fd",
         "pend_cull", "died_in_beginning", "any_damage_kills",
         "pend_discard", "pend_discard_ops", "pend_discard_src",
         "pend_then",
@@ -348,6 +392,16 @@ class GameState:
         self.bf_card = np.full(N_BF, -1, np.int16)
         self.bf_ctrl = np.full(N_BF, -1, np.int8)      # -1 = uncontrolled
         self.bf_contested = np.zeros(N_BF, np.int8)
+        # 190.3.a -- the SEAT that applied Contested to each battlefield, or -1.
+        # `bf_contested` is the same fact as a bool and is kept in lock step
+        # with it; this column exists because 464.2.c.1 designates the Attacker
+        # as "the player whose unit(s) applied the Contested status", which a
+        # flag cannot answer. The engine used to answer it with "whoever moved
+        # most recently", which inverts the roles whenever the second arrival
+        # is a reinforcement rather than the aggressor -- an [Ambush] unit
+        # dropped in to defend ground the opponent just took became the
+        # Attacker, and took [Assault] and the 466.1.a.2 Recall with it.
+        self.bf_contester = np.full(N_BF, -1, np.int8)
         # Facedown Zone: max occupancy 1 (107.3.b); public zone, private card
         # (107.3.f). Only the battlefield's controller may occupy it (107.3.c).
         self.fd_owner = np.full(N_BF, -1, np.int8)
@@ -375,13 +429,25 @@ class GameState:
         # Chain index of an optional Triggered Ability awaiting its controller's
         # yes/no at finalization (383.3.a). -1 when nothing is waiting.
         self.pend_may = -1
-        # [trigger kind, source permanent row, captured context int]
-        self.trig = np.full((MAX_TRIGGERS, 4), -1, np.int16)
+        # [trigger kind, source permanent row, captured context int,
+        #  subject permanent row, second captured context int,
+        #  controlling seat or -1]
+        #
+        # The source is USUALLY a permanent row, and then the last column stays
+        # -1 and the controller is read off that row. A BATTLEFIELD has no row
+        # (see `bf_src`), so for one of those the seat has to be carried: "when
+        # you conquer here" belongs to the conqueror, and by the time the queue
+        # drains, `bf_ctrl` may already have moved on.
+        self.trig = np.full((MAX_TRIGGERS, 6), -1, np.int16)
         self.n_trig = 0
         # Seat currently choosing the order to place its simultaneous triggers
         # on the Chain (383.3.d). -1 when nobody is being asked.
         self.pend_order = -1
         self.chain_uid = 0        # monotone; next id for a chain item
+        # 340.2.a -- was the CURRENT chain started by a triggered ability?
+        # The rule turns on how the chain began, and by the time it empties the
+        # item that began it is gone, so it is recorded as the chain is opened.
+        self.chain_from_trigger = 0
 
         self.points = np.zeros(N_SEATS, np.int16)
         self.burned_out = np.zeros(N_SEATS, np.int8)
@@ -418,6 +484,11 @@ class GameState:
         self.focus = -1
         self.showdown_bf = -1
         self.showdown_step = SD_NONE
+        # 1 while the open Showdown is a Combat Showdown, 0 while it is the
+        # plain kind 344.2 opens at a battlefield only one player has units at.
+        # They share every mechanism except the ending: 348.1 sends one on to
+        # the damage step, 348.2 closes the other by establishing Control.
+        self.showdown_combat = 0
         self.attacker = -1   # seat that applied Contested (464.2.c.1)
         self.passes = 0      # consecutive passes in the current priority loop
 
@@ -494,6 +565,17 @@ class GameState:
         # modelled; see the note on Scuttle Crab, which is pure information and
         # therefore needs the observation to change rather than the board.
         self.pend_reveal = np.full(2, -1, np.int16)
+        # Standing permission to see hidden information, as a TURN STAMP per
+        # seat: `saw_hand[s] == turn` means seat s may read its opponent's
+        # hand right now. A stamp rather than a flag, so nothing has to
+        # remember to clear it at end of turn -- the same idiom `once_used`
+        # and `kw_grant_turn` use.
+        #
+        # These are the only two things that widen what the POLICY may see.
+        # Everything else the observation hides stays hidden, and the critic
+        # is unaffected either way -- it already sees the whole state.
+        self.saw_hand = np.full(N_SEATS, -1, np.int16)
+        self.saw_fd = np.full(N_SEATS, -1, np.int16)
 
         # Which KINDS of card each seat has played this turn -- Swain asks for
         # "a non-token unit, a non-token gear, and a spell this turn", which

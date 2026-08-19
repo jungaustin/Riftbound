@@ -635,6 +635,33 @@ the project owner:**
 > unit, resolve combat, then move another unit in and resolve again. That is a
 > *choice*, not a requirement.
 >
+
+**Correction — a Showdown also opens when the destination is EMPTY.** The model
+above reads as though an uncontested Move just takes the ground, and the engine
+implemented it that way: `combat.cleanup` established Control inline, so walking
+onto an empty battlefield scored a point immediately with no window. 344.2 and
+348.2 say otherwise. A **Non-Combat Showdown** opens at any Contested
+battlefield only one player has units at, and Control — and therefore the
+Conquer (348.2.a.1) — happens when *that Showdown closes*. Three things follow,
+and none of them are reachable without it:
+
+- The lone attacker can be answered. Gust it off the ground it just walked onto
+  and nobody Conquers, because Control was never established.
+- 344.1/323.14 lets that window escalate: an [Ambush] unit arriving turns the
+  Non-Combat Showdown into a Combat Showdown **in place**.
+- Which fixes who attacks. 464.2.c.1 designates the player who applied
+  Contested, and 190.3.b freezes that status for the life of the Showdown — so
+  the unit that walked in alone stays the Attacker and the Ambushed answer is a
+  **Defender**, with [Shield] and with the 466.1.a.2 Recall working for it. The
+  engine used to designate "whoever moved most recently", which is the opposite
+  answer in every reinforcement case, and also made a spell that drags an enemy
+  unit onto your own battlefield designate *you* the Attacker rather than them.
+
+`state.bf_contester` is what tracks it, because 464.2.c.1 asks a question a
+boolean `bf_contested` cannot answer. Costs nothing in v0: `window_is_live`
+skips any window neither player can act in, so the units-only golden replay is
+byte-identical.
+>
 > **Damage:** each side **sums the Might of all its units in the Showdown into a
 > single damage pool**, then deals it out among the opposing units however they
 > see fit. Assignment happens **at the end** — after all Actions and Reactions,

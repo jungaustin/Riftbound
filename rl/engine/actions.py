@@ -49,9 +49,16 @@ from rl.engine.effects import (ABILITY_BORROWERS, CardSpec, FOLLOWUPS,
                                SPEED_MAIN,
                                ER_TWO_OTHERS_AT_BASE,
                                OP_EMPOWER, PERM_ENEMY, PERM_NONE,
+                               PERM_ATTACK,
                                PERM_OPEN, PLAY_PERMISSIONS, TR_ACTIVATED,
+                               TK_UNIT, TR_CHOSEN,
                                TR_PLAY_ME, TR_PLAY_SPELL, abilities_for,
                                spec_for)
+
+# Which target-slot kinds hold a PERMANENT ROW. TK_UNIT covers units and gear
+# alike (a `card_type` on the spec narrows it); every other kind holds a
+# location, a Chain uid, or a packed card id, none of which is a row.
+_PERM_SLOT_KINDS = frozenset({TK_UNIT})
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
                              F_EMPOWERED, F_LEGION, P_FLAGS,
                              PT_GEAR, PT_SPELL, PT_UNIT,
@@ -136,12 +143,7 @@ def play_destinations(state: GameState, table: CardTable, cfg: Config,
     ambush = [bf_loc(i) for i in range(N_BF)
               if table.has(card, "Ambush")
               and state.units_at(bf_loc(i), seat).size]
-    if ambush_only:
-        # The Reaction half of 822.1.b is conditional: "I have [Reaction] as
-        # long as I'm being played to a battlefield where you control Units."
-        # So a unit played in a response window may ONLY go to an Ambush
-        # destination -- it has no timing permission to reach its own base.
-        return ambush
+
     # Printed exceptions to 806.3, one per card -- see `effects.PLAY_PERMISSIONS`
     # for what "open" and "occupied" are taken to mean, since neither is a
     # defined rules term. These ADD destinations exactly as [Ambush] does; they
@@ -155,6 +157,33 @@ def play_destinations(state: GameState, table: CardTable, cfg: Config,
             extra.append(loc)
         elif perm == PERM_ENEMY and state.units_at(loc, 1 - seat).size:
             extra.append(loc)
+        elif perm == PERM_ATTACK and int(state.showdown_bf) == i \
+                and int(state.attacker) == seat:
+            extra.append(loc)
+
+    if ambush_only:
+        # The Reaction half of 822.1.b is conditional: "I have [Reaction] as
+        # long as I'm being played to a battlefield where you control Units."
+        # So a unit played in a response window may ONLY go to an Ambush
+        # destination -- it has no timing permission to reach its own base.
+        #
+        # **A printed permission on a card that HAS Ambush widens that window
+        # too.** 822.1.d: Ambush also appears as a verb, and "in such a case
+        # the verb is taken to mean 'play with the permissions of the Ambush
+        # keyword'" -- the rulebook's own worked example is Rengar, Trophy
+        # Hunter, whose text "expands the normal permissions of the Ambush
+        # keyword to include battlefields where there are enemy units". The
+        # timing rides along with the destination, because it is one keyword
+        # being widened rather than a separate grant.
+        #
+        # Gated on the card actually having Ambush, which is what keeps this
+        # from handing Reaction speed to Ocean Drake and the two Scouts: their
+        # permissions are ordinary 806.3 exceptions with no timing clause, so
+        # they stay main-phase plays. Rengar is the only one of the four that
+        # has the keyword.
+        if not table.has(card, "Ambush"):
+            return []
+        return sorted(set(ambush + extra))
 
     own = [bf_loc(i) for i in range(N_BF) if int(state.bf_ctrl[i]) == seat]
     return [base_loc(seat)] + sorted(set(own + ambush + extra))
@@ -218,6 +247,38 @@ def pack_activate(perm: int, donor: int) -> int:
     if donor == perm:
         return perm
     return MAX_PERMS * (donor + 1) + perm
+
+
+def pick_card(state: GameState, arg: int) -> int:
+    """The card an `A_PICK` arg names right now, or -1 if nothing is pending.
+
+    **`A_PICK` has three offer sites and its arg means something different at
+    each**: an index into the look buffer, into the OPPONENT's hand, or into
+    your own. `legal_actions` picks between them by which `pend_*` is live, and
+    anything decoding the arg has to make the identical choice -- so it is made
+    once, here, and the order below mirrors `legal_actions` exactly.
+
+    This is the same failure `open_slot_kind` exists to prevent, and it landed
+    a third time: the observation encoder knew about the look buffer and the
+    reveal but not about Hwei's discard, so it read a hand index into a
+    five-card look buffer. That is an IndexError when the hand is longer and a
+    silently wrong card when it is shorter -- and the fuzz cannot see either,
+    because it never builds an observation.
+    """
+    if arg < 0:
+        return -1
+    if state.pend_look >= 0:
+        assert arg < int(state.n_look), "pick arg past the look buffer"
+        return int(state.look_cards[arg])
+    if int(state.pend_reveal[0]) >= 0:
+        foe = int(state.pend_reveal[1])
+        assert arg < int(state.n_hand[foe]), "pick arg past the revealed hand"
+        return int(state.hand[foe, arg])
+    if state.pend_discard >= 0:
+        who = int(state.pend_discard)
+        assert arg < int(state.n_hand[who]), "pick arg past the discarding hand"
+        return int(state.hand[who, arg])
+    return -1
 
 
 def unpack_activate(arg: int) -> tuple[int, int]:
@@ -665,22 +726,49 @@ def _settle(state: GameState, table: CardTable, cfg: Config) -> dict:
             or state.pend_discard >= 0 or is_terminal(state)):
         return {}
     log: dict = {}
-    # Every queued trigger goes on the Chain BEFORE any of them is finalized:
-    # 383.3.d is about the order they are *placed*, and 337.1.b then finalizes
-    # oldest-first once they are all there.
+    # **Drain, clean up, and drain again.** The Cleanup at the bottom is itself
+    # a trigger site -- 323.4 queues Deathknells and 383.4.c.2.a the Conquer
+    # abilities of the units that just took the ground -- so a single pass
+    # leaves whatever the Cleanup fired sitting in the queue with nothing left
+    # to place it. `end_turn` then trips `compact_permanents`, which refuses to
+    # renumber rows a queued trigger still points at.
+    #
+    # It converges in two passes: once a trigger is on the Chain the state is
+    # Closed, `_settle_after_decision` declines to clean up, and nothing new is
+    # queued. The bound is generous rather than 2 so that a genuine cycle
+    # announces itself instead of looping.
     for _ in range(MAX_TRIGGERS + 1):
+        # Every queued trigger goes on the Chain BEFORE any of them is
+        # finalized: 383.3.d is about the order they are *placed*, and 337.1.b
+        # then finalizes oldest-first once they are all there.
+        for _ in range(MAX_TRIGGERS + 1):
+            if not state.n_trig:
+                break
+            seat = chain.next_placer(state)
+            opts = chain.orderable(state, table, seat)
+            if len(opts) > 1:
+                state.pend_order = seat
+                return log
+            chain.place(state, table, cfg, opts[0])
+        else:
+            raise AssertionError("the trigger queue is not draining")
+    # ...and then a Cleanup, for the same "one central place" reason. 319.3-319.5
+    # owe one after a Pending Item is added to the Chain, after it is finalized,
+    # and after any item leaves the Chain "for any reason" -- and DECLINING a
+    # "you may" is one of those reasons (383.3.a.2). The A_PASS path runs a
+    # Cleanup after it resolves something, so every route that ends by
+    # resolving was covered and every route that ends by *removing* an item
+    # was not: declining the last trigger on the Chain left the board in an
+    # Open State with a staged Combat and nothing to initiate it.
+    #
+    # It only surfaced once `cleanup` started deferring while triggers are
+    # queued (323.12 needs a Neutral Open State). Before that, the Move's own
+    # Cleanup had already opened the Showdown before the trigger existed, so
+    # the missing one had nothing left to do.
+        log.update(_settle_after_decision(state, table, cfg))
         if not state.n_trig:
-            break
-        seat = chain.next_placer(state)
-        opts = chain.orderable(state, table, seat)
-        if len(opts) > 1:
-            state.pend_order = seat
             return log
-        chain.place(state, table, cfg, opts[0])
-    else:
-        raise AssertionError("the trigger queue is not draining")
-    log.update(_advance_pending(state, table, cfg))
-    return log
+    raise AssertionError("the Cleanup keeps queueing triggers")
 
 
 def _apply_one(state: GameState, table: CardTable, cfg: Config,
@@ -706,9 +794,11 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
                 # resolution (321: "while Chain Items are Resolving, a Cleanup
                 # cannot occur"), so a spell that moved a unit onto an enemy
                 # staged a Combat that nothing had yet initiated.
+                showdown_before = int(state.showdown_bf)
+                from_trigger = bool(state.chain_from_trigger)
                 log.update(combat.cleanup(state, table, cfg,
                                           mover=int(state.active), dst=-1))
-                if state.showdown_bf >= 0:
+                if showdown_before >= 0 and not from_trigger:
                     # 340.2.a -- when the Chain empties, Focus and Priority pass
                     # to the next player, so the DEFENDER acts first. That is
                     # the opposite of 464.2.d, which gives the Attacker Focus
@@ -719,6 +809,26 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
                     # defender answers a spell that dragged a unit in -- Gust it
                     # away, or Stupefy the blocker -- before combat locks in.
                     # Confirmed with the project owner.
+                    #
+                    # **Both of 340.2.a's own conditions are now checked, and
+                    # each of them was letting Focus pass when the rule says it
+                    # does not.**
+                    #
+                    #   "If this occurs DURING a Showdown" -- one that was
+                    #   already running when the Chain emptied. A Showdown that
+                    #   the following Cleanup *opens* is beginning, not
+                    #   continuing, so 345/464.2.d applies instead and Focus
+                    #   goes to the player who applied Contested. Testing
+                    #   `showdown_bf` after the Cleanup could not tell those
+                    #   apart, so every newly-opened Showdown started with the
+                    #   wrong player holding Focus.
+                    #
+                    #   "and the chain wasn't initiated by a triggered ability"
+                    #   -- the Irresistible Faefolk line is exactly that: her
+                    #   move trigger opened the Chain, so Focus does not pass at
+                    #   all. (The rule's other exemption, an ability that Adds
+                    #   resources, is not modelled -- no [Add] ability is
+                    #   scripted yet. This is where it goes.)
                     d = 1 - int(state.attacker)
                     state.focus = d
                     state.priority = d
@@ -833,7 +943,7 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
         return combat.retreat(state, table, cfg, action.arg)
 
     if k == A_END_TURN:
-        phases.end_turn(state, cfg)
+        phases.end_turn(state, cfg, table)
         if not is_terminal(state):
             return phases.start_turn(state, table, cfg)
         return {}
@@ -916,6 +1026,16 @@ def _choose_target(state: GameState, table: CardTable, cfg: Config,
                    perm: int) -> dict:
     item = chain.oldest_pending(state)
     assert item >= 0 and state.pend_slot >= 0, "no slot open"
+    # 355.7 -- this is the moment something is CHOSEN, and the only one, so it
+    # is where "when you choose ..." watchers fire. Gated on the slot's kind:
+    # the arg is a permanent row only for a permanent slot, and reading a
+    # location or a Chain uid as a row is the mistake `open_slot_kind` exists
+    # to prevent. A declined optional slot (-1) chooses nothing.
+    kind = chain.open_slot_kind(state, table)
+    if perm >= 0 and kind in _PERM_SLOT_KINDS:
+        chain.fire_watchers(state, table, int(state.chain[item, C_CTRL]),
+                            TR_CHOSEN, subj=int(perm),
+                            by_spell=int(state.chain[item, C_ABIL]) < 0)
     chain.set_target(state, item, int(state.pend_slot), perm)
 
     spec = chain.item_spec(state, table, item)
@@ -1115,6 +1235,13 @@ def _accept_may(state: GameState, table: CardTable, cfg: Config) -> dict:
         assert recycle is not None, "unaffordable optional cost was offered"
         pay_ability_cost(state, table, seat_of, spec.opt_cost_energy, recycle,
                          spec.opt_cost_power, card)
+    # "You may KILL ME to ..." -- paid here, before targets are chosen, because
+    # it is a cost and not the first op. The source is dead for the rest of the
+    # ability, which 383.2.c.2 already handles.
+    if spec.opt_cost_kill_self:
+        src = int(state.chain[item, C_SRC])
+        assert src >= 0, "an optional kill-self cost with no source to kill"
+        combat.destroy(state, table, src)
     if spec.n_targets:
         state.pend_slot = 0
         return {}
@@ -1335,7 +1462,7 @@ def _resolve_double(state: GameState, table: CardTable, cfg: Config,
         # 187 -- the copy is PLAYED like any other token, so a watcher for
         # "when you play a token unit" sees it too. Lillia counts both.
         chain.fire_play_unit(state, table, seat, card, row)
-    log.update(_advance_pending(state, table, cfg))
+    log.update(_settle_after_decision(state, table, cfg))
     return log
 
 
@@ -1362,7 +1489,37 @@ def _cull_one(state: GameState, table: CardTable, cfg: Config,
     _advance_cull(state, table, seat)
     log = {"culled": perm}
     if state.pend_cull < 0:
-        log.update(_advance_pending(state, table, cfg))
+        log.update(_settle_after_decision(state, table, cfg))
+    return log
+
+
+def _settle_after_decision(state: GameState, table: CardTable,
+                           cfg: Config) -> dict:
+    """Finish a deferred decision: drain pending items, then CLEAN UP.
+
+    The cleanup is the part that is easy to miss. `_advance_pending` only
+    finalizes Chain items; the Cleanup that initiates a staged Combat lives on
+    the A_PASS path, which runs after IT resolves something. A decision
+    resolving is a different path -- and a decision can absolutely put a unit
+    on contested ground: Zilean's extra token arrives at a battlefield where
+    the opponent already stands.
+
+    Without this, 460/461 is violated -- units from both seats at a battlefield
+    in an Open State with no Combat -- which is exactly what the invariant
+    caught in a real-deck fuzz at victory 8.
+
+    Only once everything else has settled: a follow-up decision may still be
+    open, and a Cleanup during one would be premature.
+    """
+    log = _advance_pending(state, table, cfg)
+    if (state.n_chain == 0 and state.n_trig == 0
+            and state.pend_look < 0 and state.pend_discard < 0
+            and state.pend_cull < 0 and state.pend_may < 0
+            and int(state.pend_double[0]) < 0
+            and int(state.pend_reveal[0]) < 0
+            and not is_terminal(state)):
+        log.update(combat.cleanup(state, table, cfg,
+                                  mover=int(state.active), dst=-1))
     return log
 
 
@@ -1418,7 +1575,11 @@ def _finish_discard(state: GameState, table: CardTable, cfg: Config,
         log.setdefault("branches", []).append(type_name)
         rsv.resolve(state, table, cfg, CardSpec(speed=SPEED_MAIN, ops=ops),
                     seat, [], -1, True, source=src)
-    log.update(_advance_pending(state, table, cfg))
+    # "Discard 1, THEN draw 1" -- the part that must not run until the card is
+    # actually gone. A type-keyed branch cannot express it, because it happens
+    # whatever was discarded.
+    log.update(_run_followup(state, table, cfg, seat))
+    log.update(_settle_after_decision(state, table, cfg))
     return log
 
 
@@ -1442,7 +1603,7 @@ def _finish_reveal(state: GameState, table: CardTable, cfg: Config,
         state.n_hand[foe] = n - 1
         state.recycle_card(foe, card)
         log["sabotaged"] = table.names[card]
-    log.update(_advance_pending(state, table, cfg))
+    log.update(_settle_after_decision(state, table, cfg))
     return log
 
 
@@ -1508,7 +1669,7 @@ def _finish_look(state: GameState, table: CardTable, cfg: Config,
     # A follow-up may be queued -- and may suspend again, in which case
     # `_advance_pending` below correctly does nothing until it resolves.
     log.update(_run_followup(state, table, cfg, seat))
-    log.update(_advance_pending(state, table, cfg))
+    log.update(_settle_after_decision(state, table, cfg))
     return log
 
 

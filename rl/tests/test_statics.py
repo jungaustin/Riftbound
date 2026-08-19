@@ -31,9 +31,7 @@ from rl.engine.effects import SPECS
 from rl.engine.cardtable import full_table
 from rl.engine.cost import card_domains, plan_payment
 from rl.engine.state import (F_EMPOWERED, MAIN, P_ALIVE, P_DMG, P_LOC,
-                             GameState, base_loc,
-                             bf_loc,
-                             bf_loc)
+                             GameState, base_loc, bf_loc)
 
 T = full_table()
 CFG = replace(Config().at_victory_score(3), units_only=False)
@@ -427,6 +425,47 @@ if combat.perm_kw(s, T, here, "Assault"):
 ok("...and it is continuous: moving or killing the source changes it at once")
 
 
+# A GRANTED keyword has to reach the same read path a printed one does, or the
+# grant is silently inert. Taric - Protector gives "other friendly units here"
+# [Shield], which is worth testing precisely because nothing about the grant is
+# visible on the unit that receives it -- it shows up only as Might during a
+# Combat, through `combat_role_bonus`.
+
+TARIC = T.id_of("Taric - Protector")
+_PLAIN = next(c for c in range(T.n) if T.is_type(c, "Unit") and T.might[c] == 2
+              and not T.residual_text(c) and not T.is_token(c)
+              and not any(T.has(c, k) for k in ("Tank", "Backline",
+                                                "Temporary")))
+
+
+def taric_board():
+    """Seat 0 defends bf0 with Taric and a friend; seat 1 attacks it."""
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.showdown_bf, s.attacker = 0, 1
+    return s, (s.add_permanent(TARIC, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, base_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 1, bf_loc(0), is_unit=True))
+
+
+s, (tar, mate, away, foe) = taric_board()
+if combat.perm_kw(s, T, mate, "Shield") != 1:
+    die("taric", "a friendly unit at Taric's battlefield must have [Shield]")
+if combat.perm_kw(s, T, away, "Shield") != 0:
+    die("taric", "'HERE' -- a unit in the base is not at his battlefield")
+if combat.perm_kw(s, T, foe, "Shield") != 0:
+    die("taric", "'FRIENDLY' -- the enemy standing on him gets nothing")
+ok("Taric grants [Shield] to friendly units at his location, and only those")
+
+# Falsified rather than merely asserted: a static that reads as present because
+# the CARD prints [Shield] itself would pass the check above without granting
+# anything at all.
+s.perms[tar, P_ALIVE] = 0
+if combat.perm_kw(s, T, mate, "Shield") != 0:
+    die("taric", "the grant must be Taric's -- it has to stop when he dies")
+ok("...and it is his: the grant lapses the moment he leaves the board")
+
 print("\n\033[32mall static tests passed\033[0m")
 
 # ---------------------------------------------------------------------------
@@ -537,6 +576,47 @@ if [a for a in A.legal_actions(s, T, CFG, 0) if a.kind == A.A_ACTIVATE]:
                    "ability once the status is held")
 ok("827.1.c.1/441.1.b -- an Empowered permanent cannot be Empowered again")
 
+# A GRANTED keyword has to reach the same read path a printed one does, or the
+# grant is silently inert. Taric - Protector gives "other friendly units here"
+# [Shield], which is worth testing precisely because nothing about the grant is
+# visible on the unit that receives it -- it shows up only as Might during a
+# Combat, through `combat_role_bonus`.
+
+TARIC = T.id_of("Taric - Protector")
+_PLAIN = next(c for c in range(T.n) if T.is_type(c, "Unit") and T.might[c] == 2
+              and not T.residual_text(c) and not T.is_token(c)
+              and not any(T.has(c, k) for k in ("Tank", "Backline",
+                                                "Temporary")))
+
+
+def taric_board():
+    """Seat 0 defends bf0 with Taric and a friend; seat 1 attacks it."""
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.showdown_bf, s.attacker = 0, 1
+    return s, (s.add_permanent(TARIC, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, base_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 1, bf_loc(0), is_unit=True))
+
+
+s, (tar, mate, away, foe) = taric_board()
+if combat.perm_kw(s, T, mate, "Shield") != 1:
+    die("taric", "a friendly unit at Taric's battlefield must have [Shield]")
+if combat.perm_kw(s, T, away, "Shield") != 0:
+    die("taric", "'HERE' -- a unit in the base is not at his battlefield")
+if combat.perm_kw(s, T, foe, "Shield") != 0:
+    die("taric", "'FRIENDLY' -- the enemy standing on him gets nothing")
+ok("Taric grants [Shield] to friendly units at his location, and only those")
+
+# Falsified rather than merely asserted: a static that reads as present because
+# the CARD prints [Shield] itself would pass the check above without granting
+# anything at all.
+s.perms[tar, P_ALIVE] = 0
+if combat.perm_kw(s, T, mate, "Shield") != 0:
+    die("taric", "the grant must be Taric's -- it has to stop when he dies")
+ok("...and it is his: the grant lapses the moment he leaves the board")
+
 print("\n\033[32mall static tests passed\033[0m")
 
 
@@ -601,6 +681,47 @@ if int(s.pend_double[0]) >= 0:
     die("zilean", "'while I'm at a battlefield' -- a Zilean at base does nothing")
 ok("...and it only applies while Zilean is AT A BATTLEFIELD")
 
+# A GRANTED keyword has to reach the same read path a printed one does, or the
+# grant is silently inert. Taric - Protector gives "other friendly units here"
+# [Shield], which is worth testing precisely because nothing about the grant is
+# visible on the unit that receives it -- it shows up only as Might during a
+# Combat, through `combat_role_bonus`.
+
+TARIC = T.id_of("Taric - Protector")
+_PLAIN = next(c for c in range(T.n) if T.is_type(c, "Unit") and T.might[c] == 2
+              and not T.residual_text(c) and not T.is_token(c)
+              and not any(T.has(c, k) for k in ("Tank", "Backline",
+                                                "Temporary")))
+
+
+def taric_board():
+    """Seat 0 defends bf0 with Taric and a friend; seat 1 attacks it."""
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.showdown_bf, s.attacker = 0, 1
+    return s, (s.add_permanent(TARIC, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, base_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 1, bf_loc(0), is_unit=True))
+
+
+s, (tar, mate, away, foe) = taric_board()
+if combat.perm_kw(s, T, mate, "Shield") != 1:
+    die("taric", "a friendly unit at Taric's battlefield must have [Shield]")
+if combat.perm_kw(s, T, away, "Shield") != 0:
+    die("taric", "'HERE' -- a unit in the base is not at his battlefield")
+if combat.perm_kw(s, T, foe, "Shield") != 0:
+    die("taric", "'FRIENDLY' -- the enemy standing on him gets nothing")
+ok("Taric grants [Shield] to friendly units at his location, and only those")
+
+# Falsified rather than merely asserted: a static that reads as present because
+# the CARD prints [Shield] itself would pass the check above without granting
+# anything at all.
+s.perms[tar, P_ALIVE] = 0
+if combat.perm_kw(s, T, mate, "Shield") != 0:
+    die("taric", "the grant must be Taric's -- it has to stop when he dies")
+ok("...and it is his: the grant lapses the moment he leaves the board")
+
 print("\n\033[32mall static tests passed\033[0m")
 
 
@@ -645,6 +766,47 @@ ok("...only at HER battlefield, and never from a base")
 if not expires(bf_loc(0), lb_seat=1, temp_loc=bf_loc(0)):
     die("leblanc", "'YOUR effects' -- an enemy LeBlanc spares nothing of mine")
 ok("...and only for its own controller's units")
+
+# A GRANTED keyword has to reach the same read path a printed one does, or the
+# grant is silently inert. Taric - Protector gives "other friendly units here"
+# [Shield], which is worth testing precisely because nothing about the grant is
+# visible on the unit that receives it -- it shows up only as Might during a
+# Combat, through `combat_role_bonus`.
+
+TARIC = T.id_of("Taric - Protector")
+_PLAIN = next(c for c in range(T.n) if T.is_type(c, "Unit") and T.might[c] == 2
+              and not T.residual_text(c) and not T.is_token(c)
+              and not any(T.has(c, k) for k in ("Tank", "Backline",
+                                                "Temporary")))
+
+
+def taric_board():
+    """Seat 0 defends bf0 with Taric and a friend; seat 1 attacks it."""
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.showdown_bf, s.attacker = 0, 1
+    return s, (s.add_permanent(TARIC, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, base_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 1, bf_loc(0), is_unit=True))
+
+
+s, (tar, mate, away, foe) = taric_board()
+if combat.perm_kw(s, T, mate, "Shield") != 1:
+    die("taric", "a friendly unit at Taric's battlefield must have [Shield]")
+if combat.perm_kw(s, T, away, "Shield") != 0:
+    die("taric", "'HERE' -- a unit in the base is not at his battlefield")
+if combat.perm_kw(s, T, foe, "Shield") != 0:
+    die("taric", "'FRIENDLY' -- the enemy standing on him gets nothing")
+ok("Taric grants [Shield] to friendly units at his location, and only those")
+
+# Falsified rather than merely asserted: a static that reads as present because
+# the CARD prints [Shield] itself would pass the check above without granting
+# anything at all.
+s.perms[tar, P_ALIVE] = 0
+if combat.perm_kw(s, T, mate, "Shield") != 0:
+    die("taric", "the grant must be Taric's -- it has to stop when he dies")
+ok("...and it is his: the grant lapses the moment he leaves the board")
 
 print("\n\033[32mall static tests passed\033[0m")
 
@@ -718,5 +880,46 @@ if b & _PT_SPELL:
 if _bits(_AllThree(), 0) != (_PT_UNIT | _PT_GEAR | _PT_SPELL):
     die("swain", "a card of all three kinds completes the trio by itself")
 ok("...while a multi-type card counts for every kind it has, not just one")
+
+# A GRANTED keyword has to reach the same read path a printed one does, or the
+# grant is silently inert. Taric - Protector gives "other friendly units here"
+# [Shield], which is worth testing precisely because nothing about the grant is
+# visible on the unit that receives it -- it shows up only as Might during a
+# Combat, through `combat_role_bonus`.
+
+TARIC = T.id_of("Taric - Protector")
+_PLAIN = next(c for c in range(T.n) if T.is_type(c, "Unit") and T.might[c] == 2
+              and not T.residual_text(c) and not T.is_token(c)
+              and not any(T.has(c, k) for k in ("Tank", "Backline",
+                                                "Temporary")))
+
+
+def taric_board():
+    """Seat 0 defends bf0 with Taric and a friend; seat 1 attacks it."""
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.showdown_bf, s.attacker = 0, 1
+    return s, (s.add_permanent(TARIC, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, bf_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 0, base_loc(0), is_unit=True),
+               s.add_permanent(_PLAIN, 1, bf_loc(0), is_unit=True))
+
+
+s, (tar, mate, away, foe) = taric_board()
+if combat.perm_kw(s, T, mate, "Shield") != 1:
+    die("taric", "a friendly unit at Taric's battlefield must have [Shield]")
+if combat.perm_kw(s, T, away, "Shield") != 0:
+    die("taric", "'HERE' -- a unit in the base is not at his battlefield")
+if combat.perm_kw(s, T, foe, "Shield") != 0:
+    die("taric", "'FRIENDLY' -- the enemy standing on him gets nothing")
+ok("Taric grants [Shield] to friendly units at his location, and only those")
+
+# Falsified rather than merely asserted: a static that reads as present because
+# the CARD prints [Shield] itself would pass the check above without granting
+# anything at all.
+s.perms[tar, P_ALIVE] = 0
+if combat.perm_kw(s, T, mate, "Shield") != 0:
+    die("taric", "the grant must be Taric's -- it has to stop when he dies")
+ok("...and it is his: the grant lapses the moment he leaves the board")
 
 print("\n\033[32mall static tests passed\033[0m")

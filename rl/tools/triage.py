@@ -114,7 +114,12 @@ MECHANISMS = [
     ("Discard",     r"discards? (their|your) hand|discarded card"),
     ("Replacement", r"if you would|would be|instead"),
     ("Points",      r"\d+ points?\b"),
-    ("Channel",     r"[Cc]hannel"),
+    # Plain "channel N rune(s)" is `OP_CHANNEL` and has been since Mobilize.
+    # What is NOT implemented is channelling to a place other than the board,
+    # or a channel whose count is itself conditional. Matching the bare word
+    # kept Retreat filed here after both of its halves existed -- the same
+    # correction MissingToken and Discard needed.
+    ("Channel",     r"[Cc]hannel .*(instead|from|into)"),
     ("Control",     r"[Tt]ake control"),
 ]
 

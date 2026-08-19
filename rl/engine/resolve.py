@@ -36,8 +36,12 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                COND_FROM_HAND,
                                COND_EMPOWERED, COND_PLAYED_TRIO,
                                COND_FEW_RUNES, COND_NOT_DIED_ALONE,
-                               COND_CTX_BATTLEFIELD, COND_SELF_AT_BF,
+                               COND_CTX_BATTLEFIELD, COND_CTX2_BATTLEFIELD,
+                               COND_SELF_AT_BF,
                                COND_N_OTHERS_HERE, COND_OTHERS_MIGHT,
+                               CT_MY_BATTLEFIELDS, CT_MY_MIGHTY_UNITS,
+                               CT_MY_OTHER_BATTLEFIELDS,
+                               CT_ENEMIES_AT_TARGET, COND_READY_ENEMY_HERE,
                                COND_LEGION, COND_LEVEL, COND_NONE,
                                COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
@@ -65,9 +69,11 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                OP_EACH_KILLS_OWN, OP_NO_MOVE,
                                OP_ANY_DAMAGE_KILLS, OP_SWAP_MIGHT,
                                OP_READY_RUNES, OP_DISCARD_CHOOSE,
+                               FOLLOWUPS, SPEED_MAIN,
                                OP_RECYCLE_SELF,
+                               OP_SEE_HAND, OP_SEE_FACEDOWN,
                                OP_GRANT_KEYWORD,
-                               TR_PLAY_ME, T_CTX, T_HERE, T_MY_BASE,
+                               TR_PLAY_ME, T_CTX, T_CTX2, T_HERE, T_MY_BASE,
                                T_OWNER_BASE, T_SELF, T_SUBJECT,
                                TOKEN_DOUBLERS,
                                CardSpec, Op, pack_trash, unpack_trash,
@@ -84,6 +90,7 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
                              P_CARD, P_CTRL, P_DMG, P_LOC, P_MIGHT_MOD,
                              P_READY, GameState,
                              base_loc, bf_index, bf_loc,
+                             bf_src_index, is_bf_src,
                              is_battlefield)
 
 
@@ -145,6 +152,11 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
     row = state.perms[perm]
     if row[P_ALIVE] != 1:
         return False
+    # "I can't be chosen by enemy spells and abilities" (Ruin Runner). A
+    # prohibition rather than a surcharge -- [Deflect] makes you pay, this
+    # makes the unit not a legal choice at all, so it never reaches the slot.
+    if combat.unchoosable_by(state, table, perm, seat):
+        return False
     card = int(row[P_CARD])
     # `card_type` overrides the kind's default. A TK_UNIT slot means "a unit"
     # unless the card says otherwise -- Salvage kills a GEAR, and gear are
@@ -187,7 +199,25 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
     # "your base" and Rocket Barrage could never hit anything worth hitting.
     if spec.at_base and is_battlefield(loc):
         return False
-    if spec.max_might >= 0 and int(table.might[int(row[P_CARD])]) > spec.max_might:
+    # "with 3 Might or less" asks what the unit's Might IS, not what its corner
+    # prints -- `combat.might` is the single read path, and reading the table
+    # here let a 2-Might body pumped to 7 stay a legal choice. Because
+    # `_matches` runs again at resolution (359.3.e), the effective reading also
+    # makes the restriction re-check correctly: pumping the target during the
+    # response window takes it out of range.
+    if spec.max_might >= 0 and combat.might(state, table, perm) > spec.max_might:
+        return False
+    # "an enemy unit with LESS Might than" an earlier slot's choice. Strictly
+    # less, and both sides effective, so a static or a buff on either unit
+    # moves the line. Re-checked at resolution like any other restriction.
+    if 0 <= spec.less_might_than < len(chosen):
+        other = chosen[spec.less_might_than]
+        if other < 0 or combat.might(state, table, perm) >= combat.might(
+                state, table, other):
+            return False
+    # "a gear with Energy cost no more than {1 energy}" -- the same restriction
+    # `_trash_card_ok` already applied to a card in a pile, now on the board.
+    if spec.max_energy >= 0 and int(table.energy[card]) > spec.max_energy:
         return False
     # "an enemy Chaos unit or gear" -- the target's own printed domain.
     if spec.domain >= 0 and not (int(table.domain_mask[card]) >> spec.domain & 1):
@@ -205,6 +235,10 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
     # hidden at. `bound_bf` is -1 when the card was not played from hiding, in
     # which case locality never applies.
     if bound_bf >= 0 and spec.locality == LOC_BOUND and loc != bf_loc(bound_bf):
+        return False
+
+    # "another unit" relative to an earlier SLOT, with no location clause.
+    if 0 <= spec.distinct_from < len(chosen) and perm == chosen[spec.distinct_from]:
         return False
 
     if spec.rel != REL_NONE and 0 <= spec.rel_to < len(chosen):
@@ -626,7 +660,7 @@ def can_be_cast(state: GameState, table: CardTable, spec: CardSpec, seat: int,
 def _condition_holds(state: GameState, table: CardTable, op: Op,
                      targets: list[int], from_hand: bool, seat: int = -1,
                      source: int = -1, ctx: int = -1,
-                     dead_source: int = -1) -> bool:
+                     dead_source: int = -1, ctx2: int = -1) -> bool:
     if op.cond == COND_NONE:
         return True
     if op.cond == COND_LEVEL:
@@ -655,9 +689,22 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
             int(state.perms[dead_source, P_FLAGS]) & F_DIED_ALONE)
     if op.cond == COND_CTX_BATTLEFIELD:
         return ctx >= 0 and is_battlefield(ctx)
+    if op.cond == COND_CTX2_BATTLEFIELD:
+        return ctx2 >= 0 and is_battlefield(ctx2)
     if op.cond == COND_SELF_AT_BF:
         who = source if source >= 0 else dead_source
         return who >= 0 and is_battlefield(int(state.perms[who, P_LOC]))
+    if op.cond == COND_READY_ENEMY_HERE:
+        who = source if source >= 0 else dead_source
+        if who < 0:
+            return False
+        loc, mine = int(state.perms[who, P_LOC]), int(state.perms[who, P_CTRL])
+        return any(state.perms[i, P_ALIVE] == 1
+                   and int(state.perms[i, P_CTRL]) != mine
+                   and int(state.perms[i, P_LOC]) == loc
+                   and state.perms[i, P_READY] == 1
+                   and table.is_type(int(state.perms[i, P_CARD]), "Unit")
+                   for i in range(state.n_perms))
     if op.cond == COND_N_OTHERS_HERE:
         who = source if source >= 0 else dead_source
         if who < 0:
@@ -732,7 +779,7 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
 
 def _sweep(state: GameState, table: CardTable, op: Op, seat: int,
            still_legal: list[int], source: int, ctx: int,
-           subj: int = -1) -> list[int]:
+           subj: int = -1, ctx2: int = -1) -> list[int]:
     """Live unit rows a board-wide op reaches, after its scoping clauses.
 
     The mass effects in the pool are rarely as broad as "all units": they say
@@ -748,10 +795,11 @@ def _sweep(state: GameState, table: CardTable, op: Op, seat: int,
     and belongs to the card rather than to the op. Defaulting to battlefields
     would have quietly spared every unit sitting at a base.
     """
-    where = (_slot(state, still_legal, op.at, source, ctx, seat, subj)
+    where = (_slot(state, still_legal, op.at, source, ctx,
+                   seat, subj, ctx2)
              if op.at != -1 else -1)
     spare = (_slot(state, still_legal, op.except_target, source, ctx,
-                   seat, subj)
+                   seat, subj, ctx2)
              if op.except_target != -1 else -1)
     out = []
     for i in range(state.n_perms):
@@ -776,7 +824,7 @@ def _sweep(state: GameState, table: CardTable, op: Op, seat: int,
 
 
 def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
-          ctx: int, seat: int = -1, subj: int = -1) -> int:
+          ctx: int, seat: int = -1, subj: int = -1, ctx2: int = -1) -> int:
     """Decode an op's target index, including the pseudo-slots.
 
     A spell's ops address chosen targets by slot. A unit ability also has to
@@ -785,11 +833,21 @@ def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
     understands them without knowing they exist.
     """
     if idx == T_SELF:
-        return source
+        # A battlefield IS the source but has no permanent row, so "me" is not
+        # a thing an op can point at. -1 rather than the sentinel: every op
+        # downstream treats -1 as "no target" and fizzles, which is the right
+        # answer, where the sentinel would be read as a row index.
+        return -1 if is_bf_src(source) else source
     if idx == T_HERE:
+        # "Here" for a battlefield is the battlefield itself -- and unlike a
+        # permanent's, it cannot move or die, so this never fizzles.
+        if is_bf_src(source):
+            return bf_loc(bf_src_index(source))
         return int(state.perms[source, P_LOC]) if source >= 0 else -1
     if idx == T_CTX:
         return ctx
+    if idx == T_CTX2:
+        return ctx2
     if idx == T_MY_BASE:
         return base_loc(seat) if seat >= 0 else -1
     if idx == T_SUBJECT:
@@ -801,7 +859,7 @@ def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
 def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             seat: int, targets: list[int], bound_bf: int,
             from_hand: bool, source: int = -1, ctx: int = -1,
-            subj: int = -1) -> dict:
+            subj: int = -1, ctx2: int = -1) -> dict:
     """Apply a finalized card's or ability's ops. Returns a log dict.
 
     Targets are re-checked here, not trusted from finalization: the window
@@ -810,6 +868,11 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
     `source` and `ctx` are the two things a triggered ability knows and a spell
     does not: the permanent it is printed on, and the location captured when it
     triggered (359.3.f.3). Both are -1 for a card.
+
+    `ctx2` is the second captured location a Move produces. `ctx` is where the
+    unit came FROM and `ctx2` where it went TO, and printed text picks between
+    them by word -- see `state.C_CTX2`. Neither is a live read, so both outlive
+    the source; `T_HERE` is the live one and is meant to fizzle.
     """
     log: dict = {"resolved": [], "fizzled": []}
 
@@ -870,16 +933,35 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
 
     for op in spec.ops:
         if not _condition_holds(state, table, op, still_legal, from_hand,
-                                seat, source, ctx, dead_source):
+                                seat, source, ctx, dead_source, ctx2):
             log["fizzled"].append(op.op)
             continue
 
         if op.op == OP_DRAW:
-            log["drew"] = phases.draw(state, op.n)
+            n = op.n
+            if op.n_from_count == CT_MY_BATTLEFIELDS:
+                n = op.n * sum(1 for i in range(N_BF)
+                               if int(state.bf_ctrl[i]) == seat)
+            elif op.n_from_count == CT_MY_OTHER_BATTLEFIELDS:
+                # "Other" than the source's own. `source` is a battlefield here
+                # (Seat of Power), so exclude its slot directly.
+                mine = bf_src_index(source) if is_bf_src(source) else -1
+                n = op.n * sum(1 for i in range(N_BF)
+                               if i != mine and int(state.bf_ctrl[i]) == seat)
+            elif op.n_from_count == CT_MY_MIGHTY_UNITS:
+                # 5+ Might is Mighty, read as EFFECTIVE Might so statics and
+                # buffs count -- the number on the board, not the corner.
+                n = op.n * sum(1 for i in range(state.n_perms)
+                               if state.perms[i, P_ALIVE] == 1
+                               and int(state.perms[i, P_CTRL]) == seat
+                               and table.is_type(int(state.perms[i, P_CARD]), "Unit")
+                               and combat.might(state, table, i) >= 5)
+            log["drew"] = phases.draw_for(state, seat, n) if n else []
             log["resolved"].append(op.op)
             continue
 
-        a = _slot(state, still_legal, op.target, source, ctx, seat, subj)
+        a = _slot(state, still_legal, op.target, source, ctx,
+                  seat, subj, ctx2)
         if op.target != -1 and a < 0:
             log["fizzled"].append(op.op)      # this target specifically is gone
             continue
@@ -888,6 +970,16 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
         # so it counts buffs and statics rather than the printed number, and it
         # must be read before any op in this same card kills that unit.
         amount = op.n
+        if op.n_from_count == CT_ENEMIES_AT_TARGET and a >= 0:
+            # "+2 Might FOR EACH enemy unit there" -- `n` is the rate, and
+            # "there" is the chosen unit's location, not the source's.
+            loc = int(state.perms[a, P_LOC])
+            amount = op.n * sum(
+                1 for i in range(state.n_perms)
+                if state.perms[i, P_ALIVE] == 1
+                and int(state.perms[i, P_CTRL]) != seat
+                and int(state.perms[i, P_LOC]) == loc
+                and table.is_type(int(state.perms[i, P_CARD]), "Unit"))
         if op.n_from_might >= 0:
             ref = _slot(state, still_legal, op.n_from_might, source, ctx, seat,
                         subj)
@@ -945,20 +1037,35 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             owner = int(state.perms[a, P_CTRL])
             log["drew_opponent"] = phases.draw_for(state, owner, op.n)
         elif op.op == OP_MOVE_TO:
-            if op.target_b == T_OWNER_BASE:
+            if op.loc_of_target >= 0:
+                # "that enemy unit's battlefield" -- the LOCATION of a unit
+                # chosen in another slot. Reading the slot as a destination
+                # directly would use its permanent ROW as a location id.
+                ref = _slot(state, still_legal, op.loc_of_target, source, ctx,
+                            seat, subj, ctx2)
+                dst = int(state.perms[ref, P_LOC]) if ref >= 0 else -1
+            elif op.target_b == T_OWNER_BASE:
                 # "to its base" -- the base of whoever controls THIS op's own
                 # target, so an enemy unit goes home rather than to ours, and
                 # a card moving two units sends each to the right place.
                 dst = base_loc(int(state.perms[a, P_CTRL])) if a >= 0 else -1
             else:
-                dst = _slot(state, still_legal, op.target_b, source, ctx, seat, subj)
+                dst = _slot(state, still_legal, op.target_b, source, ctx,
+                            seat, subj, ctx2)
             if dst < 0:
                 log["fizzled"].append(op.op)
                 continue
-            combat.queue_move_trigger(state, table, a, int(state.perms[a, P_LOC]))
+            combat.queue_move_trigger(state, table, a,
+                                      int(state.perms[a, P_LOC]), dst)
             state.perms[a, P_LOC] = dst
             if op.then_ready:
+                woke = int(state.perms[a, P_READY]) == 0
                 state.perms[a, P_READY] = 1
+                if woke:
+                    from rl.engine.effects import TR_READIED
+                    chain.fire_watchers(state, table,
+                                        int(state.perms[a, P_CTRL]),
+                                        TR_READIED, subj=a)
             log["moved"] = (a, dst)
             # Staged, not initiated -- see the note in OP_CREATE_TOKEN.
         elif op.op == OP_RETURN_TO_HAND:
@@ -1043,7 +1150,8 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             if not can_play_from_trash(state, table, seat, card, op.cost):
                 log["fizzled"].append(op.op)
                 continue
-            dst = _slot(state, still_legal, op.target_b, source, ctx, seat, subj)
+            dst = _slot(state, still_legal, op.target_b, source, ctx,
+                        seat, subj, ctx2)
             # The destination was chosen at finalization and a response window
             # has passed since. If that Battlefield is no longer this seat's,
             # 806.3 no longer permits it -- but the base always does, and the
@@ -1176,16 +1284,34 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                         log["recycled_self"] = table.names[card]
                         break
         elif op.op == OP_DISCARD_CHOOSE:
-            # Suspend for the player to pick WHICH card. Must be the card's
-            # last op -- resolution returns here and the branch is applied by
-            # `actions._finish_discard` once the type is known.
+            # Suspend for the player to pick WHICH card. The branch its type
+            # selects is applied by `actions._finish_discard`.
+            #
+            # **Anything that must happen AFTER the discard goes in `then_key`,
+            # not in a following op.** Resolution does not stop here -- it sets
+            # the pending decision and carries on down the op list -- so Zaun
+            # Warrens' "discard 1, THEN draw 1" written as two ops drew first
+            # and made the fresh card discardable, which is the opposite of
+            # what it says. The follow-up runs from `_finish_discard`, once the
+            # card is actually gone.
             if int(state.n_hand[seat]) > 0:
                 state.pend_discard = seat
                 state.pend_discard_ops = op.branch_key
                 state.pend_discard_src = source
+                if op.then_key >= 0:
+                    state.pend_then[:] = (op.then_key, source)
                 log["discard_choice"] = seat
             else:
-                log["discard_choice"] = -1   # empty hand: nothing to pitch
+                # An empty hand discards nothing -- but "then draw 1" is
+                # sequencing, not a condition, so the follow-up still runs.
+                # Inline rather than deferred: there is no decision to wait for.
+                log["discard_choice"] = -1
+                if op.then_key >= 0 and FOLLOWUPS[op.then_key]:
+                    _sub = resolve(state, table, cfg,
+                                   CardSpec(speed=SPEED_MAIN,
+                                            ops=FOLLOWUPS[op.then_key]),
+                                   seat, [], -1, True, source=source)
+                    log["resolved"].extend(_sub["resolved"])
         elif op.op == OP_READY_RUNES:
             # "Ready up to N runes." A rune readies by moving from spent back
             # to ready -- the same direction the Awaken Phase moves them, just
@@ -1203,7 +1329,8 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                 left -= take
             log["readied_runes"] = op.n - left
         elif op.op == OP_SWAP_MIGHT:
-            b = _slot(state, still_legal, op.target_b, source, ctx, seat, subj)
+            b = _slot(state, still_legal, op.target_b, source, ctx,
+                      seat, subj, ctx2)
             if b < 0 or a == b or state.perms[b, P_ALIVE] != 1:
                 log["fizzled"].append(op.op)
                 continue
@@ -1250,6 +1377,8 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # is a Cleanup concern (194.2) and happens on its own.
             state.points[seat] += op.n
             log["scored_points"] = op.n
+            from rl.engine.effects import TR_OPPONENT_SCORES
+            chain.fire_watchers(state, table, 1 - seat, TR_OPPONENT_SCORES)
         elif op.op == OP_REVEAL_HAND:
             # The opponent reveals; the caster then chooses. Nothing is copied
             # out of the hand -- `pend_reveal` names the two seats and the
@@ -1262,6 +1391,26 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             for _t in op.pick_types:
                 state.look_type_mask |= LOOK_TYPE_BIT[_t]
             log["revealed"] = int(state.n_hand[foe])
+        elif op.op == OP_SEE_HAND:
+            # "They reveal their hand." A standing permission rather than a
+            # choice, so unlike OP_REVEAL_HAND nothing is picked and nothing
+            # moves -- the only effect is on what the observation shows.
+            #
+            # **This is an approximation, and a deliberate one.** A reveal is
+            # instantaneous in the rules; the information then lives in the
+            # opponent's MEMORY, which the engine has no concept of. Modelled
+            # as visibility for the rest of the turn: less than perfect recall
+            # (a human remembers past this turn) and slightly more within it
+            # (a card drawn after the reveal is also seen). The alternative --
+            # snapshotting the revealed ids -- models a memory nothing else in
+            # the engine has, and would still have to pick a duration.
+            state.saw_hand[seat] = int(state.turn)
+            log["saw_hand"] = 1 - seat
+        elif op.op == OP_SEE_FACEDOWN:
+            # "You can look at their facedown cards this turn" -- explicitly
+            # turn-scoped on the card itself, so no approximation here.
+            state.saw_fd[seat] = int(state.turn)
+            log["saw_facedown"] = 1 - seat
         elif op.op == OP_DEATH_GUARD:
             # Register the delayed replacement on its controller. One at a
             # time: a second Zhonya's simply overwrites, which is right because
@@ -1355,7 +1504,7 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # an already-chosen unit, which is what Crescent Strike's "1 to
             # each OTHER enemy unit there" needs.
             for i in _sweep(state, table, op, seat, still_legal, source, ctx,
-                            subj):
+                            subj, ctx2):
                 if combat.mark_damage(state, table, i, op.n):
                     log.setdefault("killed", []).append(i)
         elif op.op == OP_MODIFY_MIGHT_ALL:
@@ -1363,20 +1512,26 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             # not targets (355.10) and no slot. Each unit it reaches gets the
             # same 143.2.a re-check a single Might change would.
             for i in _sweep(state, table, op, seat, still_legal, source, ctx,
-                            subj):
+                            subj, ctx2):
                 if combat.set_might_mod(state, table, i, op.n, op.floor):
                     log.setdefault("killed_by_might", []).append(i)
         elif op.op == OP_READY:
+            woke = int(state.perms[a, P_READY]) == 0
             state.perms[a, P_READY] = 1
             log.setdefault("readied", []).append(a)
+            if woke:
+                from rl.engine.effects import TR_READIED
+                chain.fire_watchers(state, table, int(state.perms[a, P_CTRL]),
+                                    TR_READIED, subj=a)
         elif op.op == OP_SWAP_LOC:
-            b = _slot(state, still_legal, op.target_b, source, ctx, seat, subj)
+            b = _slot(state, still_legal, op.target_b, source, ctx,
+                      seat, subj, ctx2)
             if b < 0:
                 log["fizzled"].append(op.op)
                 continue
             la, lb = int(state.perms[a, P_LOC]), int(state.perms[b, P_LOC])
-            combat.queue_move_trigger(state, table, a, la)
-            combat.queue_move_trigger(state, table, b, lb)
+            combat.queue_move_trigger(state, table, a, la, lb)
+            combat.queue_move_trigger(state, table, b, lb, la)
             state.perms[a, P_LOC], state.perms[b, P_LOC] = lb, la
             log["swapped"] = (a, b)
         else:

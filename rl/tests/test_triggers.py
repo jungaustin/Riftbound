@@ -265,16 +265,22 @@ covered = sum(1 for n in ABILITIES if plays_as_printed(T, T.id_of(n)))
 ok(f"{covered}/{len(ABILITIES)} ability specs fully covered; the rest wait "
    f"only on an unread keyword")
 
-# Scuttle Crab has an ETB *and* a Deathknell; only one is expressible, so it
-# must not be in ABILITIES at all -- a half-implemented card played as if whole
-# is worse than one honestly substituted.
+# Scuttle Crab has an ETB *and* a Deathknell, and for a long time only the ETB
+# was expressible -- so the card was deliberately kept out of ABILITIES, since
+# a half-implemented card played as if whole is worse than an honest
+# substitution. This guard used to assert that exclusion, and it fired the
+# moment the Deathknell landed, which is exactly what it was for. Now it
+# asserts the other direction: BOTH halves are present, or the card goes back
+# out. Its Deathknell is the engine's only source of standing visibility, so a
+# silently missing one would leave the observation work with nothing to grant.
 crab = T.id_of("Scuttle Crab")
-if abilities_for(T, crab):
-    die("coverage", "Scuttle Crab has an ability spec but its Deathknell is "
-                    "not implemented; partial cards must stay out")
-if plays_as_printed(T, crab):
-    die("coverage", "Scuttle Crab counted as covered")
-ok("a card with one unimplemented ability is not counted as covered")
+triggers = {a.trigger for a in abilities_for(T, crab)}
+if triggers != {TR_PLAY_ME, chain_TR_DEATH}:
+    die("coverage", f"Scuttle Crab needs BOTH its ETB and its Deathknell; "
+                    f"has {sorted(triggers)}")
+if not plays_as_printed(T, crab):
+    die("coverage", "...and with both transcribed it must count as covered")
+ok("Scuttle Crab carries both halves, so it is covered honestly")
 
 # ---------------------------------------------------------------------------
 print("\n[9] 383.3.a -- 'you may' is decided at FINALIZATION")
@@ -1079,4 +1085,474 @@ if kinkou_drew([2, 2]) != 0 or kinkou_drew([2, 3]) != 1:
     die("kinkou", "'total Might 5 or more' is exact at the boundary")
 ok("...and a Might TOTAL over the other units is exact at its boundary too")
 
+# Viktor - Leader: "When another NON-RECRUIT unit you control dies, play a
+# 1 Might Recruit unit token into your base."
+#
+# The tag exclusion is load-bearing rather than flavour: Viktor MAKES Recruits,
+# so without it every token's death would make another one and the engine would
+# never stop. The token does carry the Recruit tag (187.1), so the check has
+# something real to test against.
+
+VIKTOR = T.id_of("Viktor - Leader")
+RECRUIT_TOK = T.id_of("Recruit (271) // Buff")
+NON_RECRUIT = next(c for c in range(T.n) if T.is_type(c, "Unit")
+                   and not T.is_token(c) and "Recruit" not in T.tags[c])
+
+
+def viktor_tokens(dying_card):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.add_permanent(VIKTOR, 0, bf_loc(0))
+    d = s.add_permanent(dying_card, 0, bf_loc(0), is_unit=True)
+    before = sum(1 for i in range(s.n_perms) if s.perms[i, P_ALIVE] == 1)
+    _combat.destroy(s, T, d)
+    _drain(s)
+    after = sum(1 for i in range(s.n_perms) if s.perms[i, P_ALIVE] == 1)
+    return after - (before - 1)
+
+
+if viktor_tokens(NON_RECRUIT) != 1:
+    die("viktor", "a non-Recruit death should make one Recruit")
+if viktor_tokens(RECRUIT_TOK) != 0:
+    die("viktor", "'NON-Recruit' -- a Recruit dying must make nothing, or the "
+                  "card is a perpetual motion machine")
+ok("a subject tag exclusion, which is what stops Viktor feeding on himself")
+
+# ---------------------------------------------------------------------------
+print("\n[16] a play watcher sees only the card TYPE it names")
+
+# Every permanent play -- unit, token and gear alike -- comes through the one
+# `fire_play_unit` site, so "when you play a UNIT" fired on a gear until the
+# watcher was made to state its type. Reluctant Leader grew +2 Might off a
+# Cull, and Vex would have stunned one. The bug is invisible in a units-only
+# game, which is why nothing caught it: v0 has no gear at all.
+
+LEADER = T.id_of("Reluctant Leader")     # when you play ANOTHER unit, +2 Might
+PIT = T.id_of("Pit Crew")                # when you play a GEAR, ready me
+GEAR = T.id_of("Cull")                   # a gear whose only text is its Equip
+
+
+def played(watcher, card, ready=True):
+    """Put `watcher` on the board, play `card`, and return its row + state."""
+    s = fresh(hand=[card])
+    w = s.add_permanent(watcher, 0, base_loc(0), ready=ready, is_unit=True)
+    play(s, V1, 0, base_loc(0))
+    drain(s, V1)
+    return s, w
+
+
+s, w = played(LEADER, GEAR)
+if combat.might(s, T, w) != int(T.might[LEADER]):
+    die("type filter", f"a GEAR play grew a 'when you play another UNIT' "
+                       f"watcher to {combat.might(s, T, w)}")
+ok("playing a gear does not fire 'when you play another unit'")
+
+s, w = played(LEADER, PLAIN2)
+if combat.might(s, T, w) != int(T.might[LEADER]) + 2:
+    die("type filter", "...but a UNIT play must still fire it")
+ok("...while a unit play still does, so the filter did not silence the card")
+
+s, w = played(PIT, GEAR, ready=False)
+if int(s.perms[w, P_READY]) != 1:
+    die("pit crew", "Pit Crew must ready itself when a gear is played")
+ok("Pit Crew reads the other half of the same filter: gear, not units")
+
+s, w = played(PIT, PLAIN2, ready=False)
+if int(s.perms[w, P_READY]) != 0:
+    die("pit crew", "...and a unit play must leave it exhausted")
+ok("...and a unit play leaves it exhausted, which is the whole restriction")
+
+# ---------------------------------------------------------------------------
+print("\n[17] 383.3.b -- an optional cost paid in a BODY, not in runes")
+
+# Overzealous Fan: "When I defend, you may kill me to move an attacking unit to
+# its base." Until now every optional trigger cost was runes, which are checked
+# for affordability before the offer. A kill-self cost is always affordable and
+# is paid at FINALIZATION, so the source is a corpse before targets are chosen.
+
+FAN = T.id_of("Overzealous Fan")
+
+
+def fan_fight(accept):
+    """Seat 1 attacks bf0; seat 0 defends with the Fan. Returns (state, rows)."""
+    s = fresh(seat=1)
+    s.active = s.priority = 1
+    fan = s.add_permanent(FAN, 0, bf_loc(0), is_unit=True)
+    atk = s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+    combat.open_showdown(s, T, 0, attacker=1)
+    for _ in range(40):
+        who = A.acting_seat(s)
+        if who < 0:
+            break
+        legal = A.legal_actions(s, T, V1, who)
+        if not legal:
+            die("fan", f"seat {who} to act with no legal action -- a cost was "
+                       f"paid and the ability could not be completed")
+        kinds = {a.kind for a in legal}
+        if accept and A.A_ACCEPT in kinds:
+            pick = next(a for a in legal if a.kind == A.A_ACCEPT)
+        elif A.A_DECLINE in kinds:
+            pick = next(a for a in legal if a.kind == A.A_DECLINE)
+        elif A.A_TARGET in kinds:
+            pick = next(a for a in legal if a.kind == A.A_TARGET)
+        else:
+            pick = next((a for a in legal if a.kind == A.A_PASS), legal[0])
+        A.apply(s, T, V1, pick)
+        if (s.n_chain == 0 and s.n_trig == 0
+                and s.pend_may < 0 and s.pend_slot < 0):
+            break
+    return s, fan, atk
+
+
+s, fan, atk = fan_fight(accept=True)
+if s.perms[fan, P_ALIVE] == 1:
+    die("fan", "accepting pays the cost -- the Fan must be dead")
+if int(s.perms[atk, P_LOC]) != base_loc(1):
+    die("fan", "the attacking unit goes home to ITS OWN base")
+ok("'you may kill me to ...' -- the cost is paid and the effect happens")
+
+s, fan, atk = fan_fight(accept=False)
+if s.perms[fan, P_ALIVE] != 1:
+    die("fan", "declining costs nothing -- 383.3.a.2, it never triggered")
+if int(s.perms[atk, P_LOC]) != bf_loc(0):
+    die("fan", "...and the attacker stays where it is")
+ok("...while declining leaves both the Fan and the attacker untouched")
+
+# The role gate is the other half of the card: an Overzealous Fan that ATTACKS
+# has no ability at all, and a trigger that fired anyway would let it throw
+# itself at a defender it was never meant to reach.
+s = fresh()
+s.add_permanent(FAN, 0, bf_loc(0), is_unit=True)
+s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+combat.open_showdown(s, T, 0, attacker=0)
+if int(s.n_trig) != 0:
+    die("fan", "'when I DEFEND' must not fire for an attacking Fan")
+ok("...and it does not trigger at all when the Fan is the attacker")
+
+# ---------------------------------------------------------------------------
+print("\n[18] a watcher on the OPPONENT's points, from every site that awards one")
+
+# Sumpworks Map: "When an opponent scores, draw 1." The engine has no single
+# "award a point" primitive -- Hold pays in `phases.score_holds`, Conquer in
+# `combat._establish_control`, and OP_SCORE grants one outright -- so the
+# trigger has three firing sites and a fourth would need wiring too. Both of
+# the reachable ones are checked here, in each direction.
+
+from rl.engine import phases as _ph
+
+MAP = T.id_of("Sumpworks Map")
+V8 = replace(V1, victory_score=8)
+
+
+def held_by(map_owner):
+    """Seat 1 holds bf0 and scores; `map_owner` owns the Map."""
+    s = fresh(seat=1)
+    s.active = s.priority = 1
+    s.add_permanent(MAP, map_owner, base_loc(map_owner), is_unit=False)
+    s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+    s.bf_ctrl[0] = 1
+    gained = _ph.score_holds(s, V8, T)
+    return gained, int(s.n_trig)
+
+
+gained, trig = held_by(0)
+if gained != 1 or trig != 1:
+    die("sumpworks", f"the opponent of the scorer must trigger "
+                     f"(scored {gained}, {trig} queued)")
+ok("a Hold by one player fires the OTHER player's 'when an opponent scores'")
+
+gained, trig = held_by(1)
+if trig != 0:
+    die("sumpworks", "'an OPPONENT scores' -- your own Hold must not fire it, "
+                     "or the card reads every point on the board")
+ok("...and never fires for the player who actually scored")
+
+# Conquer is the second site, and the one a Hold-only wiring would miss.
+s = fresh(seat=1)
+s.active = s.priority = 1
+s.add_permanent(MAP, 0, base_loc(0), is_unit=False)
+s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+s.bf_ctrl[:] = -1
+before = int(s.n_hand[0])
+combat.cleanup(s, T, V8, mover=1, dst=bf_loc(0))
+if int(s.n_trig) != 1:
+    die("sumpworks", "a Conquer awards a point too, and must fire it")
+# `drain` stops at an empty Chain, but the trigger is still in the QUEUE at
+# this point -- it reaches the Chain only once a player acts.
+for _ in range(30):
+    who = A.acting_seat(s)
+    if who < 0:
+        break
+    legal = A.legal_actions(s, T, V8, who)
+    if not legal:
+        die("sumpworks", f"seat {who} to act with no legal action")
+    A.apply(s, T, V8, next((a for a in legal if a.kind == A.A_PASS), legal[0]))
+    if s.n_chain == 0 and s.n_trig == 0:
+        break
+if int(s.n_hand[0]) != before + 1:
+    die("sumpworks", "the draw has to actually happen, not just queue")
+ok("...and a Conquer fires it as well, drawing the card the text promises")
+
+# ---------------------------------------------------------------------------
+print("\n[19] readying and choosing are events cards can watch")
+
+# Austin's ruling: **the Awaken Phase counts as readying.** That decides the
+# whole family -- Pirate's Haven pays out once per exhausted unit every turn,
+# which is what makes it a reward for attacking with everything rather than a
+# marginal trick. What it must NOT do is pay for a unit that was already ready,
+# since that unit never became ready; Awaken writes the whole board in one
+# vectorised store, so the transition has to be captured before the write.
+
+def drain_all(s, cfg=None):
+    """`drain` stops at an empty Chain, but a fired trigger sits in the QUEUE
+    until someone acts -- it reaches the Chain only on the next decision."""
+    cfg = cfg or V1
+    for _ in range(60):
+        if s.n_chain == 0 and s.n_trig == 0 and s.pend_slot < 0 \
+                and s.pend_may < 0:
+            return
+        who = A.acting_seat(s)
+        if who < 0:
+            return
+        legal = A.legal_actions(s, T, cfg, who)
+        if not legal:
+            die("drain_all", f"seat {who} to act with no legal action")
+        A.apply(s, T, cfg,
+                next((a for a in legal if a.kind == A.A_PASS), legal[0]))
+
+
+IRELIA = T.id_of("Irelia, Fervent")     # when you choose OR ready ME, +1 Might
+HAVEN = T.id_of("Pirate's Haven")       # when you ready a friendly unit, +1 it
+STUPEFY = T.id_of("Stupefy")            # give a unit -1 Might this turn
+
+
+def after_awaken(card, ready, watcher=None, seat=0, active=0):
+    """Put `card` on the board (maybe already ready) and run Awaken."""
+    s = fresh()
+    s.active = s.priority = active
+    if watcher is not None:
+        s.add_permanent(watcher, 0, base_loc(0), is_unit=False)
+    row = s.add_permanent(card, seat, base_loc(seat), ready=ready,
+                          is_unit=True)
+    before = combat.might(s, T, row)
+    phases.awaken(s, T)
+    drain_all(s)
+    return before, combat.might(s, T, row)
+
+
+before, after = after_awaken(IRELIA, ready=False)
+if after != before + 1:
+    die("readied", "Awaken counts as readying -- an exhausted Irelia grows")
+ok("the Awaken Phase readies, and 'when you ready me' fires for it")
+
+before, after = after_awaken(IRELIA, ready=True)
+if after != before:
+    die("readied", "a unit that was ALREADY ready has not become ready")
+ok("...but not for a unit that never was exhausted, which is the whole gate")
+
+# The discriminating case for `subject_is_self`: Awaken fires once PER unit,
+# so with a friend beside her Irelia sees two readying events and must react to
+# exactly one. Without the flag she reads "when you ready a friendly unit" and
+# scales with the width of your board.
+s = fresh()
+ire = s.add_permanent(IRELIA, 0, base_loc(0), ready=False, is_unit=True)
+s.add_permanent(PLAIN2, 0, base_loc(0), ready=False, is_unit=True)
+before = combat.might(s, T, ire)
+phases.awaken(s, T)
+drain_all(s)
+if combat.might(s, T, ire) != before + 1:
+    die("readied", f"'ready ME' -- Irelia must grow by exactly 1 with a friend "
+                   f"beside her, not once per unit readied "
+                   f"(got {combat.might(s, T, ire) - before})")
+ok("...and 'ME' means her alone: a friend waking beside her adds nothing")
+
+before, after = after_awaken(PLAIN2, ready=False, watcher=HAVEN)
+if after != before + 1:
+    die("readied", "Pirate's Haven pumps the unit that woke")
+ok("Pirate's Haven reads the same event with the SUBJECT as its target")
+
+before, after = after_awaken(PLAIN2, ready=False, watcher=HAVEN,
+                             seat=1, active=1)
+if after != before:
+    die("readied", "'a FRIENDLY unit' -- an enemy's Awaken feeds you nothing")
+ok("...and only for its controller's units, not the opponent's")
+
+
+def stupefied_by(caster):
+    """`caster` plays Stupefy on a unit of seat 0. Returns the Might delta."""
+    def delta(card):
+        s = fresh(seat=caster)
+        s.active = s.priority = caster
+        row = s.add_permanent(card, 0, base_loc(0), is_unit=True)
+        s.hand[caster, 0] = STUPEFY
+        s.n_hand[caster] = 1
+        before = combat.might(s, T, row)
+        A.apply(s, T, V1, A.Action(A.A_PLAY, 0))
+        legal = A.legal_actions(s, T, V1, A.acting_seat(s))
+        A.apply(s, T, V1, next(a for a in legal
+                               if a.kind == A.A_TARGET and a.arg == row))
+        drain_all(s)
+        return combat.might(s, T, row) - before
+    return delta
+
+
+# Measured against a CONTROL rather than against an expected number: Stupefy is
+# a debuff, so "Irelia ended on the same Might" could mean the trigger fired or
+# that nothing happened at all. The difference between the two deltas is the
+# only part that is Irelia's.
+own = stupefied_by(0)
+if own(PLAIN2) != -1:
+    die("chosen", "Stupefy alone is -1, which is the control")
+if own(IRELIA) != 0:
+    die("chosen", "choosing your own Irelia fires her: -1 debuff, +1 trigger")
+ok("'when you choose me' fires on your own targeting (+1 against a -1 control)")
+
+foe = stupefied_by(1)
+if foe(IRELIA) != -1:
+    die("chosen", "'YOU choose' -- an opponent's spell must not grow her, or "
+                  "[Deflect] would be rewarding the thing it taxes")
+ok("...and never when the OPPONENT chooses her, which is a different event")
+
 print("\n\033[32mall trigger tests passed\033[0m")
+
+
+# ---------------------------------------------------------------------------
+print("\n[20] a BATTLEFIELD is an ability source (BF_ABILITIES)")
+# Everything above sources an ability from a permanent row. A battlefield has
+# no row -- no controller, no location of its own, nothing that can die -- so
+# "when you conquer here, draw 1 for each other battlefield you control" needed
+# a source encoding that is not a row, and a controlling seat carried alongside
+# it. Both are what these check.
+from rl.engine import phases
+from rl.engine.effects import (BF_ABILITIES, TR_CONQUER, TR_HOLD,
+                               bf_abilities_for)
+from rl.engine.state import bf_src, is_bf_src, bf_src_index
+
+SEAT_OF_POWER = T.id_of("Seat of Power")
+GROVE = T.id_of("Grove of the God-Willow")
+WARRENS = T.id_of("Zaun Warrens")
+
+if not is_bf_src(bf_src(0)) or bf_src_index(bf_src(1)) != 1:
+    die("bf-src", "the battlefield source encoding must round-trip")
+if is_bf_src(0) or is_bf_src(-1):
+    die("bf-src", "a permanent row (or the -1 'no source') must never read as "
+                  "a battlefield, or `fire` would look up the wrong table")
+ok("the battlefield source sentinel round-trips and cannot collide with a row")
+
+
+def held_by(bf_cards, ctrl, seat=0):
+    """A board where `seat` holds every battlefield in `ctrl`, then Awaken."""
+    s = fresh(seat=seat)
+    s.active = s.priority = seat
+    for i, c in enumerate(bf_cards):
+        s.bf_card[i] = c
+    for i in ctrl:
+        s.bf_ctrl[i] = seat
+        s.add_permanent(PLAIN2, seat, bf_loc(i), is_unit=True)
+    return s
+
+
+# -- Hold: fires once for the holder, not once per unit standing there.
+s = held_by([GROVE, -1], [0])
+s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)     # a SECOND unit there
+before = int(s.n_hand[0])
+phases.score_holds(s, V1, T)
+if s.n_trig != 1:
+    die("bf-hold", f"expected exactly one queued trigger, got {s.n_trig} -- "
+                   f"a battlefield's ability fires for the PLAYER, so two "
+                   f"units standing on it must not fire it twice")
+drain_all(s)
+if int(s.n_hand[0]) != before + 1:
+    die("bf-hold", f"Grove of the God-Willow drew {int(s.n_hand[0]) - before}")
+ok("'when you hold here' fires once for the holder, with two units present")
+
+# -- and it is the HOLDER who draws, not the turn player.
+s = held_by([GROVE, -1], [0], seat=1)
+before = [int(s.n_hand[0]), int(s.n_hand[1])]
+phases.score_holds(s, V1, T)
+drain_all(s)
+if int(s.n_hand[1]) != before[1] + 1 or int(s.n_hand[0]) != before[0]:
+    die("bf-hold", "the battlefield has no controller of its own -- the seat "
+                   "the trigger fired FOR must be the one that resolves it")
+ok("...and for the holding seat, which is carried on the queue entry")
+
+# -- Conquer: "each OTHER battlefield" excludes the one being conquered.
+def conquer_draw(also_controls):
+    s = fresh()
+    s.bf_card[0] = SEAT_OF_POWER
+    s.bf_card[1] = GROVE
+    s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    if also_controls:
+        s.bf_ctrl[1] = 0
+    before = int(s.n_hand[0])
+    combat._establish_control(s, T, V1, 0)
+    drain_all(s)
+    return int(s.n_hand[0]) - before
+
+
+if conquer_draw(False) != 0:
+    die("bf-conquer", "controlling nothing else must draw nothing -- if the "
+                      "battlefield counted ITSELF this would be 1")
+if conquer_draw(True) != 1:
+    die("bf-conquer", "one other battlefield controlled is one card")
+ok("Seat of Power counts other battlefields, and never the one it is printed on")
+
+# -- The ability must not leak into the permanent-side lookup. A battlefield
+#    that landed in ABILITIES would be walked by `fire_watchers` and friends,
+#    which read `perms[w, P_CARD]` and would source it from a unit's row.
+for _nm in BF_ABILITIES:
+    if _nm in ABILITIES:
+        die("bf-tables", f"{_nm} is in BOTH ability tables; the permanent-side "
+                         f"loops would fire it with a unit as its source")
+    if not bf_abilities_for(T, T.id_of(_nm)):
+        die("bf-tables", f"{_nm} is not reachable through bf_abilities_for")
+if abilities_for(T, SEAT_OF_POWER):
+    die("bf-tables", "a battlefield must have no PERMANENT-side abilities")
+ok("the two ability tables stay disjoint, and battlefields are only in one")
+
+# -- "Discard 1, THEN draw 1": order is the whole content of the word "then".
+WARRENS_BF = T.id_of("Zaun Warrens")
+
+
+def warrens(hand_n):
+    """Conquer Zaun Warrens with `hand_n` cards in hand. Returns the deltas.
+
+    Runes are stripped so nothing in hand is castable: otherwise the drain loop
+    plays units out of the hand it is supposed to be measuring.
+    """
+    s = fresh(hand=[PLAIN2] * hand_n, runes=0)
+    s.bf_card[0] = WARRENS_BF
+    s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    # The deck is consumed by `deck_ptr`, not by `n_deck` -- `n_deck` is how
+    # many cards were dealt and never moves.
+    before = (int(s.n_hand[0]), int(s.deck_ptr[0]), int(s.n_trash[0]))
+    combat._establish_control(s, T, V1, 0)
+    for _ in range(30):
+        if s.n_chain == 0 and s.n_trig == 0 and s.pend_discard < 0 \
+                and s.pend_slot < 0 and s.pend_may < 0:
+            break
+        who = A.acting_seat(s)
+        if who < 0:
+            break
+        legal = A.legal_actions(s, T, V1, who)
+        if not legal:
+            die("bf-warrens", "seat to act with no legal action")
+        A.apply(s, T, V1,
+                next((a for a in legal if a.kind == A.A_PASS), legal[0]))
+    return tuple(x - y for x, y in
+                 zip((int(s.n_hand[0]), int(s.deck_ptr[0]), int(s.n_trash[0])),
+                     before))
+
+
+if warrens(3) != (0, 1, 1):
+    die("bf-warrens", f"discard 1 then draw 1 gave {warrens(3)}, expected "
+                      f"(hand 0, one card off the deck, trash +1)")
+ok("Zaun Warrens: one card leaves the hand and one replaces it")
+
+# The order is not cosmetic. If the draw ran first, a 0-card hand would end
+# with 1 drawn and then 1 discarded -- net zero, with a card in the trash.
+if warrens(0) != (1, 1, 0):
+    die("bf-warrens", f"an empty hand gave {warrens(0)}: 'then' is sequencing, "
+                      f"not a condition, so the draw still happens -- and with "
+                      f"nothing to discard the trash must stay empty")
+ok("...and an empty hand still draws, with nothing reaching the trash")

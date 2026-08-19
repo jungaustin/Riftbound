@@ -46,7 +46,8 @@ from engine.cards import find  # noqa: E402
 
 from rl.config import ABILITY_KEYWORDS, DOMAINS  # noqa: E402
 from rl.engine.cardtable import CardTable, read_decklist  # noqa: E402
-from rl.engine.effects import (ABILITIES, ABILITY_BORROWERS,  # noqa: E402
+from rl.engine.effects import (BF_ABILITIES, BF_STATICS,
+                               ABILITIES, ABILITY_BORROWERS,  # noqa: E402
                                COND_EMPOWERED,
                                COND_LEGION, OP_EMPOWER, OP_LOOK_TOP,
                                ENTERS_READY_IF, PLAY_PERMISSIONS, SPECS,
@@ -61,7 +62,20 @@ class DeckLoad:
     main: list[int]                 # card ids, length = printed deck size
     runes: list[int]                # domain ids
     battlefields: list[int]         # card ids, in printed order
-    coverage: float                 # fraction played as printed
+    coverage: float                 # fraction of the MAIN DECK played as printed
+    # **`coverage` deliberately excludes battlefields**, and that is a
+    # reporting hazard, not a convenience: every deck in the corpus prints 3,
+    # none of the 66 battlefield cards has an encoded ability, and every one of
+    # them has rules text. So a deck at `coverage == 1.0` still has three cards
+    # doing nothing, and a round robin cannot tell two decks apart when they
+    # differ ONLY in battlefields -- which is exactly what `lillia-fae-fawn/v6`
+    # and `v7` are, and they scored identically against all six opponents.
+    #
+    # The split is kept because `coverage` is what `--min-coverage` filters
+    # training decks on, and folding battlefields in would drop every deck
+    # below any useful threshold at once. `bf_coverage` carries the other half
+    # so that anything REPORTING a number can report an honest one.
+    bf_coverage: float = 0.0
     substituted: dict = field(default_factory=dict)   # printed name -> count
     # Kept in the deck, but with printed behaviour the engine ignores. This is
     # the category the old coverage number hid: the card is *there*, its cost
@@ -175,6 +189,16 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
       residual_text    anything printed beyond keywords needs a DSL spec
       unread_keywords  a keyword nothing consults is not being played
     """
+    # A BATTLEFIELD is never `includable` -- it does not go in the main deck --
+    # so it is judged on its own terms before that check. It counts as played
+    # only when its text is transcribed -- as a static in `BF_STATICS`, as a
+    # triggered ability in `BF_ABILITIES`, or both. Every one of the 66
+    # battlefields prints rules text, so none is covered by default.
+    if table.is_type(cid, "Battlefield"):
+        name = table.names[cid]
+        if name not in BF_STATICS and name not in BF_ABILITIES:
+            return False
+        return not table.unread_keywords(cid)
     if not includable(table, cid):
         return False
     if table.is_type(cid, "Spell"):
@@ -361,9 +385,11 @@ def load_deck(path: Path, table: CardTable) -> DeckLoad:
             bfs.extend([cid] * count)
 
     total = len(main) or 1
+    bf_ok = sum(1 for c in bfs if plays_as_printed(table, c))
     return DeckLoad(name=Path(path).parent.name + "/" + Path(path).stem,
                     main=main, runes=runes, battlefields=bfs,
-                    coverage=as_printed / total, substituted=subs,
+                    coverage=as_printed / total,
+                    bf_coverage=bf_ok / (len(bfs) or 1), substituted=subs,
                     approximated=approx, missing=missing)
 
 
