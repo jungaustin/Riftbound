@@ -69,6 +69,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                OP_EACH_KILLS_OWN, OP_NO_MOVE,
                                OP_ANY_DAMAGE_KILLS, OP_SWAP_MIGHT,
                                OP_READY_RUNES, OP_DISCARD_CHOOSE,
+                               OP_READY_LEGEND,
                                FOLLOWUPS, SPEED_MAIN,
                                OP_RECYCLE_SELF,
                                OP_SEE_HAND, OP_SEE_FACEDOWN,
@@ -91,6 +92,7 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
                              P_READY, GameState,
                              base_loc, bf_index, bf_loc,
                              bf_src_index, is_bf_src,
+                             is_legend_src,
                              is_battlefield)
 
 
@@ -837,12 +839,16 @@ def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
         # a thing an op can point at. -1 rather than the sentinel: every op
         # downstream treats -1 as "no target" and fizzles, which is the right
         # answer, where the sentinel would be read as a row index.
-        return -1 if is_bf_src(source) else source
+        return -1 if (is_bf_src(source) or is_legend_src(source)) else source
     if idx == T_HERE:
         # "Here" for a battlefield is the battlefield itself -- and unlike a
         # permanent's, it cannot move or die, so this never fizzles.
         if is_bf_src(source):
             return bf_loc(bf_src_index(source))
+        # 107.4.b -- the Legend Zone is not a location, so a legend has no
+        # "here" at all. -1 fizzles, which is the honest answer.
+        if is_legend_src(source):
+            return -1
         return int(state.perms[source, P_LOC]) if source >= 0 else -1
     if idx == T_CTX:
         return ctx
@@ -1312,6 +1318,21 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                                             ops=FOLLOWUPS[op.then_key]),
                                    seat, [], -1, True, source=source)
                     log["resolved"].extend(_sub["resolved"])
+        elif op.op == OP_READY_LEGEND:
+            # "Ready your legend" (Hall of Legends). A legend is a Game Object
+            # that exhausts to pay for its own ability, so readying it buys a
+            # second use in one turn -- and the cards that say it are all
+            # optional and all cost something, which is the tell that a second
+            # activation is meant to be worth paying for.
+            #
+            # A no-op on a legend that is already ready, and on a seat with no
+            # legend at all (a random-pool deal has none). Neither is an error:
+            # 415 readies what is able to be readied and says nothing about the
+            # rest.
+            log["readied_legend"] = bool(state.legend[seat] >= 0
+                                         and not state.legend_ready[seat])
+            if state.legend[seat] >= 0:
+                state.legend_ready[seat] = 1
         elif op.op == OP_READY_RUNES:
             # "Ready up to N runes." A rune readies by moving from spent back
             # to ready -- the same direction the Awaken Phase moves them, just

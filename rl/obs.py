@@ -50,9 +50,10 @@ from rl.engine.state import (C_CARD, C_SRC, F_NO_COMBAT_DAMAGE,
  CX_LOC,                       # 4 slots: own base, enemy base, B0, B1
  CX_AFFORD, CX_ARRIVED,
  CX_CTRL_MINE, CX_CTRL_OPP, CX_CTRL_NONE, CX_CONTESTED,
- CX_SCORED_MINE, CX_SCORED_OPP, CX_FD_PRESENT, CX_FD_LIVE) = (
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22)
-CTX_DIM = 23
+ CX_SCORED_MINE, CX_SCORED_OPP, CX_FD_PRESENT, CX_FD_LIVE,
+ CX_ZONE_LEGEND) = (
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)
+CTX_DIM = 24
 
 # Slot counts. Overflow is a bug, not a resize -- silently dropping a card from
 # the observation would be invisible in training.
@@ -263,6 +264,32 @@ class Encoder:
             m[i] = True
         return z, m
 
+    def _legends(self, state: GameState, seat: int):
+        """107.4 -- the Legend Zone, one Champion Legend per seat.
+
+        Public and permanent: 174.2.b establishes it at the start of the game
+        and it never leaves (107.4.d), so unlike every other zone here there is
+        no hidden information and no arrival to track. What DOES change is
+        `CX_READY` -- nearly every legend charges "Exhaust:" for its ability, so
+        whether it is spent is the single fact that decides what the seat can do
+        this turn.
+
+        Not a location (107.4.b), so no `CX_LOC` block is set.
+        """
+        z = np.zeros((N_SEATS, self.row_dim), np.float32)
+        m = np.zeros(N_SEATS, bool)
+        for k, owner in enumerate((seat, 1 - seat)):     # canonical: mine first
+            card = int(state.legend[owner])
+            if card < 0:
+                continue
+            r = self._row(card, CX_ZONE_LEGEND)
+            c = self.card_dim
+            r[c + CX_MINE] = float(owner == seat)
+            r[c + CX_READY] = float(state.legend_ready[owner])
+            z[k] = r
+            m[k] = True
+        return z, m
+
     # -- globals ---------------------------------------------------------
 
     def _globals(self, state: GameState, seat: int) -> np.ndarray:
@@ -356,13 +383,21 @@ class Encoder:
         elif k == A.A_DECLARE:
             loc = act.arg
         elif k == A.A_ACTIVATE:
-            # The arg may be a packed (permanent, donor) pair -- Heimerdinger
-            # borrows abilities, so the row alone no longer says which one.
-            # The DONOR's card is what distinguishes the candidates; the
-            # location is the activating permanent's.
-            _perm, _donor = A.unpack_activate(int(act.arg))
-            card = int(state.perms[_donor, P_CARD])
-            loc = int(state.perms[_perm, P_LOC])
+            if A.is_legend_activate(int(act.arg)):
+                # A legend activation names an ability index, not rows -- and
+                # the Legend Zone is not a location (107.4.b), so there is no
+                # `loc` to set. The card alone distinguishes the candidates
+                # while a legend has one ability; the day one has two, the
+                # index is what tells them apart and belongs here.
+                card = int(state.legend[seat])
+            else:
+                # The arg may be a packed (permanent, donor) pair --
+                # Heimerdinger borrows abilities, so the row alone no longer
+                # says which one. The DONOR's card is what distinguishes the
+                # candidates; the location is the activating permanent's.
+                _perm, _donor = A.unpack_activate(int(act.arg))
+                card = int(state.perms[_donor, P_CARD])
+                loc = int(state.perms[_perm, P_LOC])
         elif k in (A.A_ADD, A.A_RETREAT):
             # The location a unit is *leaving*; the destination is fixed for the
             # whole decision, so it could not discriminate between candidates.
@@ -492,7 +527,8 @@ class Encoder:
         zones, masks = {}, {}
         for name, fn in (("hand", self._hand), ("board", self._board),
                          ("battlefields", self._battlefields),
-                         ("facedown", self._facedown)):
+                         ("facedown", self._facedown),
+                         ("legends", self._legends)):
             zones[name], masks[name] = fn(state, seat)
         acts, amask = self._actions(legal, state, seat)
         return Obs(
@@ -516,6 +552,7 @@ class Encoder:
             "board": (BOARD_SLOTS, self.row_dim),
             "battlefields": (N_BF, self.row_dim),
             "facedown": (N_BF, self.row_dim),
+            "legends": (N_SEATS, self.row_dim),
             "globals": (GLOBAL_DIM,),
             "actions": (self.a_max, self.act_dim),
             "privileged": (self.priv_dim,),

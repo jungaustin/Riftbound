@@ -61,6 +61,13 @@ def awaken(state: GameState, table: CardTable | None = None) -> None:
     seat = state.active
     state.runes_ready[seat] += state.runes_spent[seat]
     state.runes_spent[seat] = 0
+    # 315.1.b readies "all GAME OBJECTS they control that are able to be
+    # readied", and the Champion Legend is a Game Object (107.4.c) even though
+    # it is not a Permanent (175). So the Exhaust ability nearly every legend
+    # prints recharges once a turn, which is what makes it an engine rather
+    # than a one-shot. Before the early return: a player with an empty board
+    # still has a legend.
+    state.legend_ready[seat] = 1
     p = state.perms[:state.n_perms]
     if not state.n_perms:
         return

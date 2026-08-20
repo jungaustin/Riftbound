@@ -37,11 +37,13 @@ from rl.engine import resolve as rsv
 # Payment lives in `cost` so combat can ask about affordability without
 # importing the action layer. Re-exported: callers still say A.plan_payment.
 from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
-                            card_domains, pay, pay_ability_cost,
+                            ability_energy, card_domains, pay,
+                            pay_ability_cost,
                             plan_ability_cost, plan_flow, plan_payment,
                             plan_surcharge)
 from rl.engine.cardtable import CardTable
-from rl.engine.effects import (ABILITY_BORROWERS, CardSpec, FOLLOWUPS,
+from rl.engine.effects import (legend_abilities_for,
+                               ABILITY_BORROWERS, CardSpec, FOLLOWUPS,
                                TR_DISCARD,
                                TR_GEAR_ABILITY,
                                DISCARD_BRANCHES,
@@ -70,6 +72,7 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
                              MAX_CHAIN, MAX_PERMS, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
                              P_LOC, P_READY, GameState, base_loc, bf_loc,
+                             legend_src, legend_src_seat, is_legend_src,
                              is_battlefield)
 
 # Action kinds. Wire format -- append only, never reorder.
@@ -282,10 +285,44 @@ def pick_card(state: GameState, arg: int) -> int:
 
 
 def unpack_activate(arg: int) -> tuple[int, int]:
-    """The inverse. Returns (permanent, donor); donor == permanent if its own."""
+    """The inverse. Returns (permanent, donor); donor == permanent if its own.
+
+    Never call this on a LEGEND activation -- ask `is_legend_activate` first.
+    A legend's arg lives in a band above every packed pair and decodes to an
+    ability index, not to rows; run through here it would come back as two
+    plausible-looking permanent indices.
+    """
+    assert not is_legend_activate(arg), (
+        "a legend activation carries an ability index, not a (perm, donor) pair")
     if arg < MAX_PERMS:
         return arg, arg
     return arg % MAX_PERMS, arg // MAX_PERMS - 1
+
+
+# A legend activation reuses `A_ACTIVATE` because it IS one -- 151.2 makes no
+# distinction, and giving it a second action kind would fork the whole
+# targeting and finalization path for a source that behaves identically once it
+# is on the Chain. The arg says which ability instead of which row: the legend
+# is always the acting seat's own (107.4.d fixes it in place, so there is no
+# choosing between legends), and a legend may print SEVERAL activated abilities
+# where a permanent prints at most one.
+#
+# The band starts above every value `pack_activate` can produce, which for
+# donor == MAX_PERMS - 1 and perm == MAX_PERMS - 1 is MAX_PERMS*(MAX_PERMS+1)-1.
+LEGEND_ACT0 = MAX_PERMS * (MAX_PERMS + 1)
+
+
+def pack_legend_activate(k: int) -> int:
+    """The k-th activated ability of the acting seat's own legend."""
+    return LEGEND_ACT0 + k
+
+
+def is_legend_activate(arg: int) -> bool:
+    return arg >= LEGEND_ACT0
+
+
+def legend_ability_index(arg: int) -> int:
+    return arg - LEGEND_ACT0
 
 
 def _look_type_bit(table: CardTable, card: int) -> int:
@@ -357,7 +394,9 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
                     and state.has_flag(i, F_EMPOWERED)):
                 continue
             if plan_ability_cost(state, table, seat, card,
-                                 ab.cost_energy, ab.cost_power) is None:
+                                 ability_energy(state, table, seat, card,
+                                                ab.cost_energy),
+                                 ab.cost_power) is None:
                 continue
             # 355.8, same as for a card: no legal targets, no activation.
             if ab.n_targets and not rsv.can_be_cast(state, table, ab, seat,
@@ -395,13 +434,41 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
                         and state.has_flag(i, F_EMPOWERED)):
                     continue
                 if plan_ability_cost(state, table, seat, dcard,
-                                     ab.cost_energy, ab.cost_power) is None:
+                                     ability_energy(state, table, seat, dcard,
+                                                    ab.cost_energy),
+                                     ab.cost_power) is None:
                     continue
                 if ab.n_targets and not rsv.can_be_cast(state, table, ab, seat,
                                                         -1, i, dcard):
                     continue
                 out.append(pack_activate(i, d))
                 break
+
+    # The Champion Legend. Every ability is offered by INDEX rather than
+    # first-match, because a legend may print several and they are genuinely
+    # different choices (Kha'Zix charges 1 XP for one and 2 for another).
+    lcard = int(state.legend[seat])
+    if lcard >= 0:
+        for k, ab in enumerate(legend_abilities_for(table, lcard)):
+            if ab.trigger != TR_ACTIVATED:
+                continue
+            if not chain.speed_ok(state, cfg, seat, ab.speed):
+                continue
+            # The legend exhausts itself to pay, and 315.1.b readies it each
+            # Awaken -- so this is a once-per-turn gate, not a once-per-game.
+            if ab.cost_exhaust and not state.legend_ready[seat]:
+                continue
+            if ab.cost_xp and int(state.xp[seat]) < ab.cost_xp:
+                continue
+            if plan_ability_cost(state, table, seat, lcard,
+                                 ability_energy(state, table, seat, lcard,
+                                                ab.cost_energy),
+                                 ab.cost_power) is None:
+                continue
+            if ab.n_targets and not rsv.can_be_cast(state, table, ab, seat, -1,
+                                                    legend_src(seat), lcard):
+                continue
+            out.append(pack_legend_activate(k))
     return out
 
 
@@ -1068,15 +1135,27 @@ def _finalize_pending(state: GameState, table: CardTable, cfg: Config,
         spec = chain.item_spec(state, table, item)
         if spec.trigger == TR_ACTIVATED:
             # 204.1.b -- the base cost is what stands before the ':'.
+            # Discounted ONCE and handed to both halves, so the number that
+            # said "affordable" is the number that gets paid.
+            e = ability_energy(state, table, seat, card, spec.cost_energy)
             recycle = plan_ability_cost(state, table, seat, card,
-                                        spec.cost_energy, spec.cost_power)
+                                        e, spec.cost_power)
             assert recycle is not None, "unaffordable ability reached finalize"
-            pay_ability_cost(state, table, seat, spec.cost_energy, recycle,
+            pay_ability_cost(state, table, seat, e, recycle,
                              spec.cost_power, card)
             if spec.cost_exhaust:
                 src = int(state.chain[item, C_SRC])
-                assert state.perms[src, P_READY], "exhaust cost with no ready source"
-                state.perms[src, P_READY] = 0
+                # A legend exhausts in its own zone -- it has no `perms` row,
+                # and 107.4.d keeps it out of one.
+                if is_legend_src(src):
+                    who = legend_src_seat(src)
+                    assert state.legend_ready[who], \
+                        "exhaust cost with an already-exhausted legend"
+                    state.legend_ready[who] = 0
+                else:
+                    assert state.perms[src, P_READY], \
+                        "exhaust cost with no ready source"
+                    state.perms[src, P_READY] = 0
             if spec.cost_xp:
                 assert state.xp[seat] >= spec.cost_xp, "XP cost underflow"
                 state.xp[seat] -= spec.cost_xp
@@ -1175,6 +1254,9 @@ def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
     ability whose targets all become illegal before it finalizes is never paid
     for.
     """
+    if is_legend_activate(perm):
+        return _activate_legend(state, table, cfg, seat,
+                                legend_ability_index(perm))
     perm, donor = unpack_activate(perm)
     # The SPEC comes from the donor; the SOURCE stays the activating permanent.
     # For an ordinary activation the two are the same permanent. `item_spec`
@@ -1196,10 +1278,11 @@ def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
         # 337.2 -- a resource-adding ability resolves immediately and never
         # touches the Chain, so no window opens in which the opponent could
         # answer the resource before it exists.
-        recycle = plan_ability_cost(state, table, seat, card,
-                                    spec.cost_energy, spec.cost_power)
+        e = ability_energy(state, table, seat, card, spec.cost_energy)
+        recycle = plan_ability_cost(state, table, seat, card, e,
+                                    spec.cost_power)
         assert recycle is not None, "unaffordable ability reached _activate"
-        pay_ability_cost(state, table, seat, spec.cost_energy, recycle,
+        pay_ability_cost(state, table, seat, e, recycle,
                          spec.cost_power, card)
         if spec.cost_exhaust:
             state.perms[perm, P_READY] = 0
@@ -1216,6 +1299,47 @@ def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
 
     item = chain.push(state, card, seat, from_hand=False, abil=idx, src=perm,
                       ctx=int(state.perms[perm, P_LOC]))
+    if spec.n_targets:
+        state.pend_slot = 0
+        return {"activated": table.names[card]}
+    return _finalize_pending(state, table, cfg, item)
+
+
+def _activate_legend(state: GameState, table: CardTable, cfg: Config,
+                     seat: int, idx: int) -> dict:
+    """Activate the seat's own Champion Legend (151.2, 107.4).
+
+    The permanent path in `_activate` cannot be reused as-is: every line of it
+    reads a `perms` row for the card, the exhaust flag and the context location,
+    and a legend has none of those. What it DOES share is everything after the
+    Chain -- targeting, finalization and resolution all work off `C_CARD` and
+    `C_SRC`, and the legend source sentinel is just another `C_SRC`.
+
+    `ctx` is -1 rather than a location: 107.4.b says the Legend Zone is not a
+    location, so there is no "here" for the ability to have captured.
+    """
+    card = int(state.legend[seat])
+    spec = legend_abilities_for(table, card)[idx]
+
+    if spec.immediate:
+        # 337.2 -- the [Add] family resolves without touching the Chain.
+        e = ability_energy(state, table, seat, card, spec.cost_energy)
+        recycle = plan_ability_cost(state, table, seat, card, e,
+                                    spec.cost_power)
+        assert recycle is not None, "unaffordable legend ability reached activate"
+        pay_ability_cost(state, table, seat, e, recycle,
+                         spec.cost_power, card)
+        if spec.cost_exhaust:
+            state.legend_ready[seat] = 0
+        if spec.cost_xp:
+            state.xp[seat] -= spec.cost_xp
+        log = rsv.resolve(state, table, cfg, spec, seat, [], -1, False,
+                          source=legend_src(seat), ctx=-1)
+        log["activated"] = table.names[card]
+        return log
+
+    item = chain.push(state, card, seat, from_hand=False, abil=idx,
+                      src=legend_src(seat), ctx=-1)
     if spec.n_targets:
         state.pend_slot = 0
         return {"activated": table.names[card]}

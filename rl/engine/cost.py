@@ -116,11 +116,18 @@ def energy_discounts(state: GameState, table: CardTable, seat: int,
     permanent, so `static_might`'s "walk the board" approach cannot see it.
     Discounts printed on OTHER permanents ("Your spells cost {1 energy} less")
     are a second source and are not implemented yet.
+
+    A LEGEND's discount comes from its own table and applies to its own
+    activated ability ("this ability costs {1 energy} less for each friendly
+    unit with [Temporary]"). Same shape, same self-scope -- the only difference
+    is which table the static was written in, so it is unioned here rather than
+    given a parallel function that would drift.
     """
     from rl.engine.combat import static_applies, static_count
-    from rl.engine.effects import SC_SELF, ST_COST_ENERGY, statics_for
+    from rl.engine.effects import (SC_SELF, ST_COST_ENERGY, legend_statics_for,
+                                   statics_for)
     out: list[tuple[int, int]] = []
-    for st in statics_for(table, card):
+    for st in statics_for(table, card) + legend_statics_for(table, card):
         if st.kind != ST_COST_ENERGY or st.scope != SC_SELF:
             continue
         # One gate predicate for costs and for Might, so a card cannot be half
@@ -149,6 +156,27 @@ def effective_energy(state: GameState, table: CardTable, seat: int,
     """
     return apply_discounts(int(table.energy[card]),
                            energy_discounts(state, table, seat, card))
+
+
+def ability_energy(state: GameState, table: CardTable, seat: int, card: int,
+                   energy: int) -> int:
+    """The Energy an ACTIVATED ability actually costs `seat` right now.
+
+    `effective_energy`'s counterpart for a cost that is not the card's printed
+    one (204.1.b). Lillia - Bashful Bloom is the first thing in the pool that
+    discounts its own ability -- "this ability costs {1 energy} less for each
+    friendly unit with [Temporary]" -- and `plan_ability_cost` took the raw
+    number, so the discount was simply not applied.
+
+    **Called at the activation sites, not inside plan/pay.** Both of those are
+    shared with the [Flow] path, which computes its own cost, and a discount
+    applied inside them would be applied twice there. Computing it once here
+    and handing the same number to plan and to pay is what keeps the two in
+    agreement -- the failure `effective_energy`'s docstring describes, where a
+    discount one half honours and the other does not offers the ability as
+    affordable and then underflows the rune payment.
+    """
+    return apply_discounts(energy, energy_discounts(state, table, seat, card))
 
 
 def card_domains(table: CardTable, card: int) -> list[int]:

@@ -102,8 +102,9 @@ def make_game(table, cfg, seed):
 def make_v1_game(table, cfg, seed):
     """A spell game -- real deck size, real spell density, the DSL pool."""
     from rl.ppo import v1_deal            # imported lazily: ppo pulls in torch
-    decks, runes, bfs = v1_deal(table)(seed)
-    return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
+    decks, runes, bfs, legends = v1_deal(table)(seed)
+    return game.new_game(table, cfg, decks, runes, bfs, seed=seed,
+                         legends=legends)
 
 
 _DECK_DEAL = None
@@ -121,8 +122,9 @@ def make_deck_game(table, cfg, seed):
     if _DECK_DEAL is None:
         from rl.ppo import deck_pool_deal
         _DECK_DEAL = deck_pool_deal(table)
-    decks, runes, bfs = _DECK_DEAL(seed)
-    return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
+    decks, runes, bfs, legends = _DECK_DEAL(seed)
+    return game.new_game(table, cfg, decks, runes, bfs, seed=seed,
+                         legends=legends)
 
 
 

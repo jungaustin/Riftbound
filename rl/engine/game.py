@@ -30,13 +30,19 @@ from rl.engine.state import MAX_DECK, N_DOMAINS, N_SEATS, RUNE_RING, GameState
 
 def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
              rune_decks: list[list[int]], battlefields: list[int],
-             seed: int = 0, mulligan_choices=None) -> GameState:
+             seed: int = 0, mulligan_choices=None,
+             legends: list[int] | None = None) -> GameState:
     """Deal a game. `decks` are card ids, `rune_decks` are domain ids.
 
     Battlefields start **uncontrolled**: each player picked one (486.5) but
     neither has units there, and 190.4.c is unambiguous that Control requires
     Units. The opening position therefore has two free points on the table,
     which is most of why the first few turns are a race rather than a setup.
+
+    `legends` is each seat's Champion Legend (111), placed in the Legend Zone
+    before the first turn and never leaving it. Optional, and -1 per seat when
+    omitted: a caller dealing a random pool has no decklist to take one from,
+    and a game with no legend is a legal game with one fewer ability.
     """
     s = GameState()
     s.rng = np.random.default_rng(seed)
@@ -57,6 +63,14 @@ def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
 
     for i, bf in enumerate(battlefields):
         s.bf_card[i] = bf
+
+    # 111 -- each player separates their Champion Legend into the Legend Zone.
+    # Ready to begin with: 174.2.b establishes it at the start of the game, and
+    # nothing has exhausted it yet.
+    for seat in range(N_SEATS):
+        if legends is not None and seat < len(legends):
+            s.legend[seat] = int(legends[seat])
+    s.legend_ready[:] = 1
 
     s.active = 0
     s.turn = 1

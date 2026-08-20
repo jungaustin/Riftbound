@@ -1556,3 +1556,215 @@ if warrens(0) != (1, 1, 0):
                       f"not a condition, so the draw still happens -- and with "
                       f"nothing to discard the trash must stay empty")
 ok("...and an empty hand still draws, with nothing reaching the trash")
+
+
+# ---------------------------------------------------------------------------
+print("\n[21] 486.5 -- each deck presents ONE of its OWN three battlefields")
+from rl.decks import DeckLoad, load_all, matchup, present
+
+_DECKS = {d.name: d for d in load_all(T, warn=False)}
+_WITH_BF = [d for d in _DECKS.values() if len(d.battlefields) >= 3]
+if len(_WITH_BF) < 2:
+    die("matchup", "this test needs two decks printing three battlefields")
+_A, _B = _WITH_BF[0], _WITH_BF[1]
+
+# The bug this pins: `matchup` read deck A's FIRST and deck B's SECOND from a
+# shared pool, so the pair it produced depended on ARGUMENT ORDER. Every
+# evaluator averages over a seat swap to cancel the first-player advantage --
+# and each half of that average was being played on a different pair of
+# battlefields, which is a confound and not an average.
+_, _, _fwd, _ = matchup(_A, _B)
+_, _, _rev, _ = matchup(_B, _A)
+if sorted(_fwd) != sorted(_rev):
+    die("matchup", f"swapping the seats changed which battlefields are in "
+                   f"play: {[T.names[c] for c in _fwd]} vs "
+                   f"{[T.names[c] for c in _rev]}")
+if _fwd != _rev[::-1]:
+    die("matchup", "the swap must exchange the two slots and nothing else")
+ok("a seat swap exchanges the seats, and leaves the battlefield pair alone")
+
+if _fwd[0] not in _A.battlefields or _fwd[1] not in _B.battlefields:
+    die("matchup", "each seat must present a battlefield from its OWN deck")
+ok("...and each battlefield in play came from the deck that presented it")
+
+# `picks` is the decision the Bo3 format is built around, so it has to reach
+# all nine pairings rather than a diagonal.
+_grid = {tuple(matchup(_A, _B, picks=(i, j))[2])
+         for i in range(3) for j in range(3)}
+if len(_grid) != 9:
+    die("matchup", f"the 3x3 presentation grid produced {len(_grid)} distinct "
+                   f"pairs, not 9 -- a caller cannot evaluate a choice it "
+                   f"cannot express")
+ok("the 3x3 grid of presentations reaches all nine pairs")
+
+# A decklist with no battlefields must not supply BOTH of them.
+_EMPTY = DeckLoad(name="none", main=list(_A.main), runes=list(_A.runes),
+                  battlefields=[], coverage=1.0)
+_, _, _borrowed, _ = matchup(_EMPTY, _B)
+if _borrowed[0] not in _B.battlefields or _borrowed[1] not in _B.battlefields:
+    die("matchup", "a deck printing no battlefields borrows, which is fine")
+if present(_EMPTY, 0, None) != -1:
+    die("matchup", "with nothing to borrow either, there is no battlefield")
+ok("a deck printing none borrows rather than blocking the matchup")
+
+
+# ---------------------------------------------------------------------------
+print("\n[22] the Champion Legend is a source, and 315.1.b recharges it")
+# A legend is a Game Object (174) but NOT a Permanent (175): no row, no
+# location, cannot be killed or moved, never leaves the Legend Zone (107.4.d).
+# It nonetheless prints activated abilities that are available from turn 1 of
+# every game, which is a third kind of ability source.
+from rl.engine.effects import LEGEND_ABILITIES, legend_abilities_for
+from rl.engine.state import legend_src, is_legend_src, legend_src_seat
+
+BASHFUL = T.id_of("Lillia - Bashful Bloom")     # {4}, Exhaust: 3-Might Sprite
+SPRITE_TOK = T.id_of("Sprite (274) // Buff")
+
+if not is_legend_src(legend_src(1)) or legend_src_seat(legend_src(1)) != 1:
+    die("legend-src", "the legend source encoding must round-trip")
+# The three source bands must not overlap, or `fire` reads the wrong table.
+for _v in (0, 1, 47, -1, bf_src(0), bf_src(1)):
+    if is_legend_src(_v):
+        die("legend-src", f"{_v} reads as a legend source; the sentinel bands "
+                          f"for rows, battlefields and legends must be disjoint")
+for _v in (legend_src(0), legend_src(1)):
+    if is_bf_src(_v):
+        die("legend-src", f"{_v} reads as a battlefield source too")
+ok("row / battlefield / legend source bands are disjoint and round-trip")
+
+
+def with_legend(card, ready=True, runes=6, sprites=0):
+    """A board with `card` in the Legend Zone and `runes` TOTAL ready runes.
+
+    `fresh` takes runes PER DOMAIN across six domains, so its `runes=2` is
+    twelve runes and pays for anything -- which is how the first version of the
+    unaffordability assertion below passed while measuring nothing. Total is
+    what an energy cost actually spends, so that is what this takes.
+    """
+    s = fresh(runes=0)
+    s.runes_ready[0, 0] = runes
+    s.legend[0] = card
+    s.legend_ready[0] = int(ready)
+    for _ in range(sprites):
+        s.add_permanent(SPRITE_TOK, 0, base_loc(0), is_unit=True)
+    return s
+
+
+def legend_acts(s):
+    return [a for a in A.legal_actions(s, T, V1, 0)
+            if a.kind == A.A_ACTIVATE and A.is_legend_activate(a.arg)]
+
+
+s = with_legend(BASHFUL)
+if len(legend_acts(s)) != 1:
+    die("legend", "a ready legend with an affordable ability must offer it")
+if legend_acts(with_legend(BASHFUL, ready=False)):
+    die("legend", "an EXHAUSTED legend must offer nothing -- the Exhaust cost "
+                  "is what makes the ability once per turn rather than free")
+if legend_acts(with_legend(BASHFUL, runes=3)):
+    die("legend", "{4 energy} is unaffordable on 3 runes, so it must not be "
+                  "offered at all")
+ok("offered only while ready and affordable; exhaustion is the once-per-turn gate")
+
+# The discount is the whole card: three friendly [Temporary] units make the
+# 4-cost ability cost 1, so it becomes castable on runes that could not pay
+# the printed price.
+# Three friendly [Temporary] units take the 4-cost ability to 1, so the very
+# board that could not pay a moment ago now can. Measured against the
+# `runes=3` control directly above: without it, "affordable" could just mean
+# the discount is being ignored and the cost was payable all along.
+if not legend_acts(with_legend(BASHFUL, runes=3, sprites=3)):
+    die("legend", "'costs {1 energy} less for each friendly unit with "
+                  "[Temporary]' must make it affordable on 3 runes with 3 out")
+ok("...and the printed discount scales with the board, off the legend's own table")
+
+# End to end: activating it exhausts the legend and makes a Sprite.
+s = with_legend(BASHFUL)
+n_before = int(s.n_perms)
+A.apply(s, T, V1, legend_acts(s)[0])
+drain_all(s)
+made = [i for i in range(int(s.n_perms))
+        if int(s.perms[i, P_CARD]) == SPRITE_TOK and s.perms[i, P_ALIVE] == 1]
+if not made:
+    die("legend", "activating Lillia - Bashful Bloom must produce a Sprite")
+if int(s.legend_ready[0]) != 0:
+    die("legend", "the Exhaust cost must actually exhaust the legend")
+if not s.perms[made[0], P_READY]:
+    die("legend", "the token is played READY -- 'play a READY 3 Might Sprite'")
+ok("activating it exhausts the legend and plays a ready Sprite token")
+
+# 315.1.b -- Awaken readies "all Game Objects they control", legend included.
+# This is what makes a legend an engine rather than a one-shot, so it is the
+# assertion that matters most.
+phases.awaken(s, T)
+if int(s.legend_ready[0]) != 1:
+    die("legend", "315.1.b readies every Game Object the turn player controls, "
+                  "and 107.4.c makes the Champion Legend one of them")
+ok("the Awaken Phase recharges it (315.1.b), once per turn, every turn")
+
+# ...and only the TURN PLAYER's. Awaken is the turn player's task.
+s.legend_ready[:] = 0
+s.active = 1
+phases.awaken(s, T)
+if int(s.legend_ready[1]) != 1 or int(s.legend_ready[0]) != 0:
+    die("legend", "Awaken is the TURN PLAYER's task; the opponent's legend "
+                  "stays exhausted through it")
+ok("...for the turn player alone, which is what makes exhausting it a real cost")
+
+# The tables stay disjoint, the same guard the battlefield tables have.
+for _nm in LEGEND_ABILITIES:
+    if _nm in ABILITIES or _nm in BF_ABILITIES:
+        die("legend", f"{_nm} is in more than one ability table")
+    if not legend_abilities_for(T, T.id_of(_nm)):
+        die("legend", f"{_nm} is unreachable through legend_abilities_for")
+ok("legend abilities live in exactly one table, reachable only as a legend")
+
+# -- Hall of Legends, the card this whole section unblocks. It is the most
+#    played battlefield in the corpus (14 of 108 slots) and was inexpressible
+#    while `state.legend` was a field nothing wrote and nothing read.
+HALL = T.id_of("Hall of Legends")
+
+
+def conquer_hall(legend_ready, accept, runes=6):
+    s = fresh(runes=0)
+    s.runes_ready[0, 0] = runes
+    s.bf_card[0] = HALL
+    s.legend[0] = BASHFUL
+    s.legend_ready[0] = int(legend_ready)
+    s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    combat._establish_control(s, T, V1, 0)
+    for _ in range(30):
+        if s.n_chain == 0 and s.n_trig == 0 and s.pend_may < 0 \
+                and s.pend_slot < 0:
+            break
+        who = A.acting_seat(s)
+        if who < 0:
+            break
+        legal = A.legal_actions(s, T, V1, who)
+        want = A.A_ACCEPT if accept else A.A_DECLINE
+        pick = next((a for a in legal if a.kind == want),
+                    next((a for a in legal if a.kind == A.A_PASS), legal[0]))
+        A.apply(s, T, V1, pick)
+    return s
+
+
+s = conquer_hall(legend_ready=False, accept=True)
+if int(s.legend_ready[0]) != 1:
+    die("hall", "'you may pay {1 energy} to ready your legend' must ready it")
+if int(s.total_ready_runes(0)) != 5:
+    die("hall", f"the {{1 energy}} must actually be paid; "
+                f"{int(s.total_ready_runes(0))} runes left of 6")
+ok("Hall of Legends readies an exhausted legend for {1 energy}")
+
+s = conquer_hall(legend_ready=False, accept=False)
+if int(s.legend_ready[0]) != 0 or int(s.total_ready_runes(0)) != 6:
+    die("hall", "383.3.a.2 -- declining removes the ability from the chain, so "
+                "nothing is readied and nothing is paid")
+ok("...and declining costs nothing, which is what makes 'you may' a choice")
+
+# A second activation in one turn is the entire point of paying for this.
+s = conquer_hall(legend_ready=False, accept=True)
+if not legend_acts(s):
+    die("hall", "the readied legend must be activatable again this turn -- a "
+                "second use is what the {1 energy} buys")
+ok("the readied legend can be used again the same turn")

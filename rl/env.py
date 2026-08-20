@@ -105,9 +105,10 @@ class RiftboundEnv:
 
     # -- lifecycle -------------------------------------------------------
 
-    def reset(self, seed: int, decks, rune_decks, battlefields) -> Obs:
+    def reset(self, seed: int, decks, rune_decks, battlefields,
+              legends=None) -> Obs:
         self.state = game.new_game(self.table, self.cfg, decks, rune_decks,
-                                   battlefields, seed=seed)
+                                   battlefields, seed=seed, legends=legends)
         self.steps = 0
         self.auto_passes = 0
         self._advance()
@@ -228,9 +229,9 @@ def policy_from_agent(agent):
 
 
 def play(env: RiftboundEnv, policies, seed: int, decks, rune_decks,
-         battlefields) -> dict:
+         battlefields, legends=None) -> dict:
     """Run one episode with per-seat index policies `policies[seat](obs)`."""
-    obs = env.reset(seed, decks, rune_decks, battlefields)
+    obs = env.reset(seed, decks, rune_decks, battlefields, legends)
     while obs is not None:
         r = env.step(policies[obs.to_move](obs))
         obs = r.obs

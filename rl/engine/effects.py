@@ -114,7 +114,8 @@ REL_NONE, REL_SAME_BF, REL_DIFFERENT_LOC = range(3)
  OP_SCORE, OP_EACH_KILLS_OWN, OP_NO_MOVE,
  OP_ANY_DAMAGE_KILLS, OP_SWAP_MIGHT,
  OP_READY_RUNES, OP_DISCARD_CHOOSE,
- OP_RECYCLE_SELF, OP_SEE_HAND, OP_SEE_FACEDOWN) = range(45)
+ OP_RECYCLE_SELF, OP_SEE_HAND, OP_SEE_FACEDOWN,
+ OP_READY_LEGEND) = range(46)
 OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "no_spells", "create_token", "move_to", "return_to_hand",
             "damage", "kill", "draw_controller", "ready", "modify_might_all",
@@ -125,7 +126,8 @@ OP_NAMES = ("stun", "draw", "swap_loc", "modify_might", "counter",
             "grant_keyword", "look_top", "empower", "channel",
             "death_guard", "reveal_hand", "score", "each_kills_own",
             "no_move", "any_damage_kills", "swap_might",
-            "ready_runes", "discard_choose", "recycle_self", "see_hand", "see_facedown")
+            "ready_runes", "discard_choose", "recycle_self", "see_hand",
+            "see_facedown", "ready_legend")
 
 # What an op's "for each ..." clause counts, for `Op.n_from_count`. Distinct
 # from the CNT_* used by a Static's scaling: these are per-OP, and they are
@@ -1921,6 +1923,15 @@ BF_ABILITIES: dict[str, tuple[Ability, ...]] = {
         Ability(TR_HOLD, ops=(Op(OP_DRAW, n=1),)),
     ),
 
+    # When you conquer here, you may pay {1 energy} to ready your legend.
+    # `optional` plus `opt_cost_energy` is 383.3.b's cost-within-instructions:
+    # the choice and the payment both happen at finalization, so declining
+    # removes the ability from the chain entirely (383.3.a.2).
+    "Hall of Legends": (
+        Ability(TR_CONQUER, optional=True, opt_cost_energy=1,
+                ops=(Op(OP_READY_LEGEND),)),
+    ),
+
     # When you conquer here, discard 1, then draw 1.
     # The draw is a FOLLOW-UP, not a second op: ops after a discard run before
     # the player has picked, so writing it plainly would let them pitch the
@@ -1930,6 +1941,57 @@ BF_ABILITIES: dict[str, tuple[Ability, ...]] = {
     "Zaun Warrens": (
         Ability(TR_CONQUER, ops=(
             Op(OP_DISCARD_CHOOSE, n=1, then_key=FU_DRAW_1),)),
+    ),
+}
+
+
+# Abilities printed on a Champion Legend (103.1). In the Legend Zone from turn
+# 1 and never leaving it, so unlike everything else in these tables a legend's
+# ability is available on EVERY turn of the game from the first -- which is why
+# most of them charge an Exhaust, and why the Awaken Phase recharging it
+# (315.1.b) is what makes them engines rather than one-shots.
+LEGEND_ABILITIES: dict[str, tuple[Ability, ...]] = {
+
+    # {4 energy}, Exhaust: Play a ready 3 Might Sprite unit token with
+    # [Temporary]. This ability costs {1 energy} less for each friendly unit
+    # with [Temporary].
+    #
+    # The most-played legend in the corpus by a distance (17 of 36 decks), and
+    # the discount is the whole card: a wide Temporary board pays for the next
+    # Sprite, so the ability gets cheaper exactly as the deck does what it
+    # wants. The scaling lives in LEGEND_STATICS, where a cost discount
+    # belongs; this half is only the effect.
+    "Lillia - Bashful Bloom": (
+        Ability(TR_ACTIVATED, cost_energy=4, cost_exhaust=True,
+                ops=(Op(OP_CREATE_TOKEN, target=T_MY_BASE, n=1,
+                        token=SPRITE_TOKEN, ready=True),)),
+    ),
+
+    # {1 energy}, Exhaust: Play a 1 Might Recruit unit token.
+    # No location clause, so it lands at the base.
+    "Viktor - Herald of the Arcane": (
+        Ability(TR_ACTIVATED, cost_energy=1, cost_exhaust=True,
+                ops=(Op(OP_CREATE_TOKEN, target=T_MY_BASE, n=1,
+                        token=RECRUIT_TOKEN),)),
+    ),
+
+    # At the end of your turn, ready 2 runes.
+    # Not an activated ability and costs no exhaust, so it pays out every turn
+    # whatever the legend did -- which is why tapping out costs this deck less
+    # than any other ([[riftbound-tapping-out-costs-the-opponents-turn]]).
+    "Annie - Dark Child": (
+        Ability(TR_END_OF_TURN, ops=(Op(OP_READY_RUNES, n=2),)),
+    ),
+}
+
+
+LEGEND_STATICS: dict[str, tuple[Static, ...]] = {
+
+    # "This ability costs {1 energy} less for each friendly unit with
+    # [Temporary]" -- the scaling half of Lillia - Bashful Bloom.
+    "Lillia - Bashful Bloom": (
+        Static(ST_COST_ENERGY, n=1, per_keyword="Temporary",
+               per_friendly=True, per_same_loc=False, per=CNT_BOARD),
     ),
 }
 
@@ -3517,6 +3579,26 @@ def abilities_for(table, card: int) -> tuple[Ability, ...]:
     return (ABILITIES.get(table.names[card], ())
             + _hunt_abilities(table, card)
             + _vision_abilities(table, card))
+
+
+def legend_abilities_for(table, card: int) -> tuple[Ability, ...]:
+    """Every ability printed on a Champion Legend.
+
+    A third table for the third kind of non-permanent source. A legend is a
+    Game Object (174) and not a Permanent (175): it has no row, no location and
+    no Might, cannot be killed (174.3) and never leaves its zone (107.4.d). So
+    it needs the same separation `BF_ABILITIES` needed, and for the same
+    reason -- every permanent-side loop reads `perms[w, P_CARD]`.
+
+    Unlike a permanent, a legend may print SEVERAL activated abilities and the
+    player picks between them (Kha'Zix charges 1 XP for one and 2 for another),
+    so the action carries the ability INDEX rather than taking the first.
+    """
+    return LEGEND_ABILITIES.get(table.names[card], ())
+
+
+def legend_statics_for(table, card: int) -> tuple[Static, ...]:
+    return LEGEND_STATICS.get(table.names[card], ())
 
 
 def bf_abilities_for(table, card: int) -> tuple[Ability, ...]:

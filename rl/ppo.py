@@ -460,7 +460,9 @@ def v1_deal(table, deck_size: int = MAIN_DECK_SIZE,
                     if isinstance(spell_rate, tuple) else spell_rate)
             decks.append(_build(rng, int(round(deck_size * rate))))
         runes = [[int(rng.integers(6)) for _ in range(12)] for _ in range(2)]
-        return decks, runes, bfs
+        # No decklist, so no Champion Legend (103.1). A random pool has no
+        # domain identity to take one from, and a game without one is legal.
+        return decks, runes, bfs, [-1, -1]
     return deal
 
 
@@ -489,7 +491,15 @@ def deck_pool_deal(table, min_coverage: float = 0.0, seed_decks=None):
     def deal(seed):
         rng = np.random.default_rng(seed)
         i, j = rng.integers(len(pool)), rng.integers(len(pool))
-        return matchup(pool[int(i)], pool[int(j)])
+        # WHICH of its three battlefields each deck presents is sampled too
+        # (486.5). It used to be each deck's first, always -- so two thirds of
+        # every decklist's battlefields never appeared in training at all, and
+        # the policy could not learn to play on ground it had never seen. Free
+        # to vary now that battlefields are distinguishable in the observation;
+        # before that they all encoded identically and this would have changed
+        # nothing.
+        picks = (int(rng.integers(3)), int(rng.integers(3)))
+        return matchup(pool[int(i)], pool[int(j)], picks=picks)
     return deal
 
 
@@ -527,7 +537,7 @@ def v0_deal(table, deck_size: int = 30):
         decks = [[int(rng.choice(pool)) for _ in range(deck_size)]
                  for _ in range(2)]
         runes = [[int(rng.integers(6)) for _ in range(12)] for _ in range(2)]
-        return decks, runes, bfs
+        return decks, runes, bfs, [-1, -1]
     return deal
 
 

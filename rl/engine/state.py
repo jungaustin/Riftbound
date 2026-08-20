@@ -96,6 +96,27 @@ def bf_src_index(src: int) -> int:
     return BF_SRC0 - src
 
 
+# --- a legend as an ability SOURCE ------------------------------------------
+# Same problem as a battlefield, same shape of answer, and deliberately a
+# DIFFERENT sentinel band so the two can never be confused: a legend is not a
+# permanent either (175), so `LEGEND_SRC0` sits above the battlefield band and
+# below any real row. Two seats, so two values.
+LEGEND_SRC0 = -51
+
+
+def legend_src(seat: int) -> int:
+    """The ability-source encoding for `seat`'s Champion Legend."""
+    return LEGEND_SRC0 - seat
+
+
+def is_legend_src(src: int) -> bool:
+    return LEGEND_SRC0 - N_SEATS < src <= LEGEND_SRC0
+
+
+def legend_src_seat(src: int) -> int:
+    return LEGEND_SRC0 - src
+
+
 # Permanent columns. One int16 matrix so a clone is a single copy.
 (P_CARD, P_CTRL, P_LOC, P_READY, P_DMG, P_ALIVE, P_ARRIVED, P_FLAGS,
  P_MIGHT_MOD) = range(9)
@@ -337,7 +358,7 @@ class GameState:
         "pend_may", "trig", "n_trig", "pend_order", "chain_from_trigger",
         "points", "burned_out", "no_spells", "cards_played", "xp",
         "kw_grant", "kw_grant_turn",
-        "legend", "champion",
+        "legend", "champion", "legend_ready",
         "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "showdown_combat",
         "attacker", "passes",
@@ -473,8 +494,18 @@ class GameState:
         # unit landed on its index -- silently, and only on long turns.
         self.kw_grant = np.zeros((MAX_PERMS, N_GRANTABLE), np.int16)
         self.kw_grant_turn = np.zeros((MAX_PERMS, N_GRANTABLE), np.int16)
+        # 107.4 -- the Legend Zone. The Champion Legend is a Game Object (174)
+        # but explicitly NOT a Permanent (175): it has no location, cannot be
+        # killed (174.3) or moved (174.4), and never leaves the zone (107.4.d).
+        # So it gets fields of its own rather than a `perms` row, which would
+        # make it answer to "kill a unit" and every board sweep in the pool.
         self.legend = np.full(N_SEATS, -1, np.int16)
         self.champion = np.full(N_SEATS, -1, np.int16)
+        # A legend CAN be exhausted, which is the cost most of them charge
+        # ("Exhaust: [Add] {1 energy}"), and 315.1.b readies "all Game Objects
+        # they control that are able to be readied" -- so the Awaken Phase
+        # readies it exactly as it readies a unit. Starts ready.
+        self.legend_ready = np.ones(N_SEATS, np.int16)
 
         self.turn = 1
         self.ply = 0        # monotone; incremented at every end of turn

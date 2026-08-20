@@ -67,9 +67,9 @@ def opening_value(net, enc, table, cfg, a: DeckLoad, b: DeckLoad,
     vals = []
     for i in range(n):
         for swap in (0, 1):
-            decks, runes, bfs = matchup(b, a) if swap else matchup(a, b)
+            decks, runes, bfs, legs = matchup(b, a) if swap else matchup(a, b)
             env = RiftboundEnv(table, cfg, encoder=enc)
-            obs = env.reset(10_000 + i, decks, runes, bfs)
+            obs = env.reset(10_000 + i, decks, runes, bfs, legs)
             if obs is None:
                 continue
             t = to_torch(batch([obs]), "cpu")
@@ -88,9 +88,9 @@ def head_to_head(net, enc, table, cfg, a: DeckLoad, b: DeckLoad,
     wins = games = 0
     for i in range(n):
         for swap in (0, 1):
-            decks, runes, bfs = matchup(b, a) if swap else matchup(a, b)
+            decks, runes, bfs, legs = matchup(b, a) if swap else matchup(a, b)
             env = RiftboundEnv(table, cfg, encoder=enc)
-            obs = env.reset(20_000 + i, decks, runes, bfs)
+            obs = env.reset(20_000 + i, decks, runes, bfs, legs)
             while obs is not None:
                 obs = env.step(net_choice(net, obs, "cpu", deterministic,
                                           gen)).obs

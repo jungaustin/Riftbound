@@ -31,7 +31,8 @@ SEAT_AXIS = (
     "runes_ready", "runes_spent", "rune_deck", "rune_head", "rune_left",
     "banished", "n_banished",
     "pool_energy", "pool_power", "bf_scored", "points", "burned_out",
-    "legend", "champion", "no_spells", "cards_played", "xp",
+    "legend", "champion", "legend_ready",
+    "no_spells", "cards_played", "xp",
     "played_types", "died_in_beginning",
     # Turn stamps indexed BY the seat that may look, so the permission follows
     # its owner across a swap.

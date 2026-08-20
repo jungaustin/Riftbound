@@ -40,9 +40,10 @@ from rl.engine.cardtable import CardTable
 from rl.engine.cost import plan_flow, plan_payment
 from rl.engine.effects import (TR_PLAY_UNIT,
                                SPEED_ACTION, SPEED_REACTION, abilities_for,
-                               bf_abilities_for, spec_for)
+                               bf_abilities_for, legend_abilities_for,
+                               spec_for)
 from rl.engine.state import (is_battlefield, is_bf_src, bf_src_index,  # noqa: F401
-                             bf_loc,
+                             is_legend_src, legend_src_seat, bf_loc,
                              C_REPEAT,  # noqa: F401
                              C_ABIL, C_SUBJ, C_BOUND_BF, C_CARD, C_CTRL, C_CTX,
                              C_CTX2,
@@ -261,6 +262,7 @@ def item_spec(state: GameState, table: CardTable, item: int):
     # the card -- a battlefield's abilities are numbered in `BF_ABILITIES`.
     src = int(state.chain[item, C_SRC])
     abilities = (bf_abilities_for(table, card) if is_bf_src(src)
+                 else legend_abilities_for(table, card) if is_legend_src(src)
                  else abilities_for(table, card))
     assert abil < len(abilities), f"ability {abil} missing on {table.names[card]!r}"
     return abilities[abil]
@@ -417,9 +419,15 @@ def fire_play_unit(state: GameState, table: CardTable, seat: int,
 
 
 def trig_card(state: GameState, src: int) -> int:
-    """The card an ability source is printed on -- permanent row or battlefield."""
+    """The card an ability source is printed on.
+
+    Three kinds of source: a permanent row, a battlefield slot, a legend zone.
+    One decoder, because every caller downstream only wants the card.
+    """
     if is_bf_src(src):
         return int(state.bf_card[bf_src_index(src)])
+    if is_legend_src(src):
+        return int(state.legend[legend_src_seat(src)])
     return int(state.perms[src, P_CARD])
 
 
@@ -522,6 +530,11 @@ def fire(state: GameState, table: CardTable, cfg: Config, trigger: int,
         # abilities start finding them.
         ctrl = who
         abils = bf_abilities_for(table, card)
+    elif is_legend_src(src):
+        # A legend HAS an owner, so the controller is recoverable from the
+        # source alone -- unlike a battlefield, which needed the seat carried.
+        ctrl = legend_src_seat(src)
+        abils = legend_abilities_for(table, card)
     else:
         ctrl = int(state.perms[src, P_CTRL])
         abils = abilities_for(table, card)

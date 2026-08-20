@@ -495,7 +495,7 @@ print("\n[mulligan] 116-117: draw 4, set aside up to 2, draw, THEN recycle")
 from rl.engine.game import MULLIGAN_MAX, STARTING_HAND, mulligan, new_game
 
 from rl.ppo import deck_pool_deal
-_decks, _runes, _bfs = deck_pool_deal(T, 0.0)(3)
+_decks, _runes, _bfs, _legends = deck_pool_deal(T, 0.0)(3)
 _s = new_game(T, CFG, _decks, _runes, _bfs, seed=3)
 # Seat 1 has not taken a turn, so its hand is the untouched 116 deal.
 if int(_s.n_hand[1]) != STARTING_HAND or STARTING_HAND != 4:

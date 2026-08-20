@@ -63,6 +63,14 @@ class DeckLoad:
     runes: list[int]                # domain ids
     battlefields: list[int]         # card ids, in printed order
     coverage: float                 # fraction of the MAIN DECK played as printed
+    # 103.1 -- the Champion Legend, which every decklist declares and which is
+    # in the Legend Zone from turn 1 (111). -1 when the list did not name one.
+    legend: int = -1
+    # 103.1.b's Champion Unit. Recorded but not yet read by the engine: the
+    # Champion Zone (107.5) and its interactions are not built, and a field
+    # that looks live but is never consulted is worse than an absent one, so
+    # this is here only because the decklists carry it.
+    champion: int = -1
     # **`coverage` deliberately excludes battlefields**, and that is a
     # reporting hazard, not a convenience: every deck in the corpus prints 3,
     # none of the 66 battlefield cards has an encoded ability, and every one of
@@ -384,12 +392,23 @@ def load_deck(path: Path, table: CardTable) -> DeckLoad:
         if cid is not None:
             bfs.extend([cid] * count)
 
+    def _one(section: str) -> int:
+        """The single card named in a one-line section, or -1."""
+        for _count, nm in parsed.get(section, []):
+            card = find(nm)
+            cid = table._index.get(card.name) if card else None
+            if cid is not None:
+                return int(cid)
+        return -1
+
     total = len(main) or 1
     bf_ok = sum(1 for c in bfs if plays_as_printed(table, c))
     return DeckLoad(name=Path(path).parent.name + "/" + Path(path).stem,
                     main=main, runes=runes, battlefields=bfs,
                     coverage=as_printed / total,
-                    bf_coverage=bf_ok / (len(bfs) or 1), substituted=subs,
+                    bf_coverage=bf_ok / (len(bfs) or 1),
+                    legend=_one("Legend"), champion=_one("Champion"),
+                    substituted=subs,
                     approximated=approx, missing=missing)
 
 
@@ -418,17 +437,45 @@ def load_all(table: CardTable, root: Path | None = None,
     return out
 
 
+def present(deck: DeckLoad, pick: int = 0,
+            fallback: DeckLoad | None = None) -> int:
+    """The battlefield `deck` presents, by 486.5: ONE of its own three.
+
+    `pick` indexes the deck's printed battlefield list and wraps, so a caller
+    sweeping 0..2 works on a deck that printed fewer than three. A deck that
+    printed none borrows from `fallback` -- an incomplete decklist should not
+    block a matchup -- and returns -1 if there is nothing anywhere.
+    """
+    pool = deck.battlefields or (fallback.battlefields if fallback else [])
+    return pool[pick % len(pool)] if pool else -1
+
+
 def matchup(a: DeckLoad, b: DeckLoad, rune_size: int = 12,
-            n_bf: int = 2) -> tuple[list, list, list]:
+            n_bf: int = 2, picks: tuple[int, int] = (0, 0)
+            ) -> tuple[list, list, list, list]:
     """Two DeckLoads as `game.new_game` arguments.
 
-    Each player brings battlefields and one goes into play (486.5); with N_BF=2
-    that is one from each deck. A deck missing battlefield entries falls back to
-    the other's, so a partial list never blocks a matchup.
+    486.5: **each player selects one of their OWN three battlefields**, and the
+    two are placed simultaneously. With N_BF=2 that is exactly one from each
+    deck, in seat order -- `bfs[0]` is what seat 0 brought.
+
+    `picks` is which of its three each deck presents. It is a parameter rather
+    than a fixed index because choosing is the decision the format is built
+    around ([[riftbound-builds-for-bo3]]): a caller that wants to know which
+    battlefield a deck should bring sweeps the 3x3 grid, and one that does not
+    care gets each deck's first.
+
+    This used to read deck A's FIRST battlefield and deck B's SECOND from a
+    pool that fell back to whichever deck had any -- two bugs in one line. A
+    deck with no battlefields listed supplied BOTH, and, worse, the pair
+    depended on argument order: `matchup(a, b)` gave `[a[0], b[1]]` while
+    `matchup(b, a)` gave `[b[0], a[1]]`. Every evaluator here averages over a
+    seat swap to cancel the first-player advantage, so each half of that
+    average was played on a DIFFERENT pair of battlefields. Presenting per deck
+    makes the swap change only the seats, which is what it is for.
     """
     decks = [list(a.main), list(b.main)]
     runes = [(a.runes * 3)[:rune_size], (b.runes * 3)[:rune_size]]
-    pool = (a.battlefields or b.battlefields)
-    other = (b.battlefields or a.battlefields)
-    bfs = [pool[0], (other[1] if len(other) > 1 else other[0])][:n_bf]
-    return decks, runes, bfs
+    bfs = [present(a, picks[0], b), present(b, picks[1], a)][:n_bf]
+    legends = [a.legend, b.legend]
+    return decks, runes, bfs, legends
