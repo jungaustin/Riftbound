@@ -2054,6 +2054,25 @@ BF_ABILITIES: dict[str, tuple[Ability, ...]] = {
                 ops=(Op(OP_READY_RUNES, n=2, at_end_of_turn=True),)),
     ),
 
+    # At the start of your Beginning Phase, you may kill a unit you control
+    # here to draw 1. (This happens before scoring.)
+    #
+    # Pickpocket's shape -- one "you may" covering cost and effect, so declining
+    # removes the whole ability (383.3.a.2) and accepting does both.
+    #
+    # **"Before scoring" is the entire card, and it is why the Beginning Phase
+    # had to learn to suspend.** 315.2.a is a step and 315.2.b is a later one,
+    # but `start_turn` used to run both without stopping and drain the trigger
+    # queue afterwards -- so killing your last unit here banked the Hold AND
+    # drew the card. Now the ability resolves first, `control_cleanup` sees an
+    # empty battlefield (190.4.c) and the Hold is gone: a real trade every turn
+    # rather than a free draw.
+    "Dusk Rose Lab": (
+        Ability(TR_BEGINNING, optional=True,
+                targets=(TargetSpec(who=W_FRIENDLY, same_loc_as_source=True),),
+                ops=(Op(OP_KILL, target=0), Op(OP_DRAW, n=1))),
+    ),
+
     # When you conquer here, discard 1, then draw 1.
     # The draw is a FOLLOW-UP, not a second op: ops after a discard run before
     # the player has picked, so writing it plainly would let them pitch the

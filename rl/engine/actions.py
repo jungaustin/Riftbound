@@ -840,8 +840,37 @@ def _settle(state: GameState, table: CardTable, cfg: Config) -> dict:
     # the missing one had nothing left to do.
         log.update(_settle_after_decision(state, table, cfg))
         if not state.n_trig:
-            return log
+            return _resume_phase(state, table, cfg, log)
     raise AssertionError("the Cleanup keeps queueing triggers")
+
+
+def _resume_phase(state: GameState, table: CardTable, cfg: Config,
+                  log: dict) -> dict:
+    """Finish a turn suspended mid-Beginning-Phase, if one is (315.2).
+
+    `phases.start_turn` stops after the Beginning Step whenever it put anything
+    on the Chain, because the Scoring Step is a LATER step and must not run
+    until those abilities have resolved. This is the other half: the Chain is
+    empty again, so the turn carries on into scoring, channel and draw.
+
+    Guarded on the Chain AND the trigger queue both being empty. Resuming with
+    either non-empty would score in the middle of the step it is supposed to
+    follow -- the exact bug this split exists to fix, reintroduced one level
+    down.
+    """
+    if state.pend_phase < 0 or state.n_chain or state.n_trig:
+        return log
+    if is_terminal(state):
+        state.pend_phase = -1
+        return log
+    log.update(phases.resume_turn(state, table, cfg))
+    # Resuming is itself a trigger site: scoring a Hold fires TR_HOLD and the
+    # "when an opponent scores" watchers, and the Draw Step can end the game.
+    # So settle again rather than leaving those queued for the next action --
+    # the same reason `_settle` drains twice around its Cleanup.
+    if state.n_trig or state.n_chain:
+        log.update(_settle(state, table, cfg))
+    return log
 
 
 def _apply_one(state: GameState, table: CardTable, cfg: Config,

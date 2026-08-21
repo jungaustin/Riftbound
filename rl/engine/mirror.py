@@ -89,6 +89,10 @@ UNCHANGED = (
     "fd_ply", "ply", "pend_hide", "chain_uid", "chain_from_trigger",
     # A chain INDEX, not a seat: which pending item is waiting on a "you may".
     "pend_may", "n_trig",
+    # A PHASE marker -- "the turn is suspended in the Beginning Step" -- which
+    # names a step and not a player. The suspended turn belongs to `active`,
+    # and that is flipped separately.
+    "pend_phase",
 )
 
 # Handled by hand below: they carry seat ids *inside* a matrix.

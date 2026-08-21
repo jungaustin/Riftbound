@@ -2078,3 +2078,118 @@ if _enc.encode(_a, 0, A.legal_actions(_a, T, V1, 0)).public_bytes() == \
     die("targon", "banked runes must reach the observation -- they change what "
                   "tapping out costs, which is the decision runes drive")
 ok("...and the banked refund is visible to the policy")
+
+
+# ---------------------------------------------------------------------------
+print("\n[25] 315.2 -- the Beginning STEP finishes before the Scoring STEP")
+# The bug this pins was silent for a long time and is not a card bug. 315.2.a
+# (start-of-phase effects) and 315.2.b (Scoring) are SEPARATE STEPS, so a
+# trigger from the first must fully resolve -- through real priority windows --
+# before anything Holds. `start_turn` ran both without stopping and drained the
+# trigger queue afterwards, putting every start-of-Beginning ability AFTER the
+# scoring it is printed to precede. The comment in `phases.py` claimed the
+# opposite, which is why nothing caught it: the triggers were QUEUED before
+# scoring and RESOLVED after.
+LAB = T.id_of("Dusk Rose Lab")
+
+
+def dusk(accept, n_units):
+    """Returns (cards drawn, units left here, points gained)."""
+    s = fresh(runes=0)
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN2
+    s.bf_card[0] = LAB
+    s.bf_ctrl[0] = 0
+    for _ in range(n_units):
+        s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    h0, pts0 = int(s.n_hand[0]), int(s.points[0])
+    phases.start_turn(s, T, V1)
+    A._settle(s, T, V1)
+    want = A.A_ACCEPT if accept else A.A_DECLINE
+    for _ in range(30):
+        seat = A.acting_seat(s)
+        if seat < 0:
+            break
+        legal = A.legal_actions(s, T, V1, seat)
+        if not legal:
+            die("dusk", "seat to act with no legal action mid-Beginning-Phase")
+        a = next((x for x in legal if x.kind == want),
+                 next((x for x in legal if x.kind == A.A_TARGET),
+                      next((x for x in legal if x.kind == A.A_PASS), None)))
+        if a is None:
+            break
+        A.apply(s, T, V1, a)
+        if int(s.pend_phase) < 0 and int(s.phase) == MAIN:
+            break
+    return (int(s.n_hand[0]) - h0, len(s.units_at(bf_loc(0), 0)),
+            int(s.points[0]) - pts0)
+
+
+# The turn must actually suspend, or the rest of this is measuring nothing.
+_s = fresh(runes=0)
+_s.n_deck[:] = 20
+_s.deck[:, :20] = PLAIN2
+_s.bf_card[0] = LAB
+_s.bf_ctrl[0] = 0
+_s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+phases.start_turn(_s, T, V1)
+if int(_s.pend_phase) < 0:
+    die("dusk", "a Beginning-Step trigger must SUSPEND the turn; running "
+                "straight to the Scoring Step is the bug itself")
+if int(_s.points[0]):
+    die("dusk", "nothing may Hold while the Beginning Step is unfinished")
+ok("a Beginning-Step trigger suspends the turn before the Scoring Step")
+
+# Everything below is measured AGAINST THE DECLINE CONTROL rather than against
+# absolute numbers. The turn resumes all the way into the Draw Step, so every
+# case draws one card that has nothing to do with this battlefield; comparing
+# to the control subtracts it, and cannot drift if the phase order changes
+# again.
+_dec1 = dusk(accept=False, n_units=1)
+_dec2 = dusk(accept=False, n_units=2)
+if _dec1[2] != 1 or _dec1[1] != 1:
+    die("dusk", f"the control is wrong: declining must keep the unit and the "
+                f"Hold, got {_dec1}")
+ok("declining keeps the unit and the Hold -- the control the rest measures from")
+
+# The trade, and the whole card. Killing your ONLY unit there costs the Hold:
+# 190.4.c, and `control_cleanup` runs before `score_holds`.
+_acc1 = dusk(accept=True, n_units=1)
+if _acc1[0] != _dec1[0] + 1:
+    die("dusk", f"accepting must draw exactly one more than declining; "
+                f"{_acc1[0]} vs {_dec1[0]}")
+if _acc1[1] != 0 or _acc1[2] != 0:
+    die("dusk", f"killing your only unit here must empty the battlefield AND "
+                f"cost the Hold; got {_acc1[1]} unit(s) and {_acc1[2]} point(s)")
+ok("...so killing your last unit here draws a card and loses the point")
+
+# ...and with a spare unit the battlefield is still garrisoned, so you get both.
+_acc2 = dusk(accept=True, n_units=2)
+if _acc2[0] != _dec2[0] + 1 or _acc2[1] != 1 or _acc2[2] != 1:
+    die("dusk", f"with a spare unit the Hold survives; got {_acc2}")
+ok("...while a spare unit keeps the Hold, which is what makes it a decision")
+
+# The suspend must not leak: a turn that suspends has to reach Main.
+_s = fresh(runes=0)
+_s.n_deck[:] = 20
+_s.deck[:, :20] = PLAIN2
+_s.bf_card[0] = LAB
+_s.bf_ctrl[0] = 0
+_s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+phases.start_turn(_s, T, V1)
+A._settle(_s, T, V1)
+for _ in range(30):
+    if int(_s.pend_phase) < 0:
+        break
+    seat = A.acting_seat(_s)
+    if seat < 0:
+        die("dusk", "the turn suspended and then nobody could act -- a "
+                    "deadlock, which is what an unresumed phase looks like")
+    legal = A.legal_actions(_s, T, V1, seat)
+    if not legal:
+        die("dusk", "suspended mid-phase with no legal action")
+    A.apply(_s, T, V1, next((x for x in legal if x.kind == A.A_DECLINE), legal[0]))
+if int(_s.pend_phase) >= 0 or int(_s.phase) != MAIN:
+    die("dusk", f"a suspended turn must resume all the way to Main; ended in "
+                f"phase {int(_s.phase)} with pend_phase {int(_s.pend_phase)}")
+ok("a suspended turn always resumes, through Channel and Draw, into Main")

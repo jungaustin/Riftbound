@@ -95,6 +95,14 @@ def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
         if keep:
             mulligan(s, seat, keep)
     phases.start_turn(s, table, cfg)
+    # `start_turn` SUSPENDS if anything triggered in the Beginning Step (315.2),
+    # and it is `_settle` that puts those triggers on the Chain and hands out
+    # priority. Every other caller reaches it through `actions.apply`; this one
+    # does not, and without this the state came back mid-Beginning-Phase with a
+    # queued trigger and NO legal actions -- a deadlock rather than a game.
+    # The Arena's Greatest fires on turn 1, so it is reachable from a plain
+    # deal, not just a contrived one.
+    A._settle(s, table, cfg)
     return s
 
 

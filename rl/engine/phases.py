@@ -417,6 +417,38 @@ def start_turn(state: GameState, table: CardTable, cfg: Config) -> dict:
         combat._queue_bf_trigger(state, table, TR_BEGINNING, _i,
                                  int(state.active))
 
+    # **315.2.a is a step, and 315.2.b is a LATER one.** Anything the Beginning
+    # Step put on the Chain has to resolve -- through real priority windows --
+    # before the Scoring Step runs. So if a trigger fired, the turn SUSPENDS
+    # here and `actions._settle` resumes it once the Chain is empty.
+    #
+    # This used to run straight on to the scoring and let the trigger queue
+    # drain afterwards, which put every start-of-Beginning ability *after* the
+    # scoring it is printed to precede. Dusk Rose Lab is where that stops being
+    # academic: "you may kill a unit you control here to draw 1 (this happens
+    # before scoring)" banked the Hold and drew the card, when the whole cost
+    # of the card is giving up the garrison to draw.
+    #
+    # Nothing suspends when nothing triggered, which is every turn in v0 --
+    # so the goldens are untouched by this.
+    if state.n_trig or state.n_chain:
+        state.pend_phase = BEGINNING
+        return log
+    return resume_turn(state, table, cfg, log)
+
+
+def resume_turn(state: GameState, table: CardTable, cfg: Config,
+                log: dict | None = None) -> dict:
+    """Finish a turn suspended in the Beginning Step (see `start_turn`).
+
+    Called by `actions._settle` once the Chain and the trigger queue are both
+    empty. Idempotent in the sense that matters: `pend_phase` is cleared first,
+    so a Cleanup that runs during the Scoring Step cannot re-enter it.
+    """
+    log = {} if log is None else log
+    state.pend_phase = -1
+    state.phase = BEGINNING
+
     # Order matters -- see module docstring.
     log["temporary_died"] = expire_temporary(state, table)
     log["control_lost"] = control_cleanup(state)

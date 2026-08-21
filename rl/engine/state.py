@@ -359,6 +359,7 @@ class GameState:
         "points", "burned_out", "no_spells", "cards_played", "xp",
         "kw_grant", "kw_grant_turn",
         "legend", "champion", "legend_ready", "pending_ready_runes",
+        "pend_phase",
         "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "showdown_combat",
         "attacker", "passes",
@@ -514,6 +515,22 @@ class GameState:
         # is conquered, which is what makes tapping out that turn cheap
         # ([[riftbound-tapping-out-costs-the-opponents-turn]]).
         self.pending_ready_runes = np.zeros(N_SEATS, np.int16)
+        # 315.2 -- the turn is SUSPENDED partway through the Beginning Phase.
+        #
+        # The Beginning Step (315.2.a) puts start-of-phase effects on the Chain,
+        # and the Scoring Step (315.2.b) is a separate, LATER step. So a trigger
+        # there must fully resolve -- through real priority windows -- before
+        # anything Holds. `start_turn` used to run both steps straight through
+        # and drain the trigger queue afterwards, which put every
+        # start-of-Beginning ability after the scoring it is supposed to
+        # precede. Dusk Rose Lab is the card that makes it visible: "kill a unit
+        # you control here to draw 1 (this happens before scoring)" banked the
+        # Hold AND drew the card, instead of trading one for the other.
+        #
+        # -1 when the turn is running normally, which is always in v0: nothing
+        # triggers there, so nothing ever suspends and the golden replays are
+        # untouched.
+        self.pend_phase = -1
 
         self.turn = 1
         self.ply = 0        # monotone; incremented at every end of turn
