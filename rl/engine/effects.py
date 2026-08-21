@@ -176,7 +176,19 @@ T_CTX2 = -8
  COND_FEW_RUNES,
  COND_NOT_DIED_ALONE, COND_CTX_BATTLEFIELD, COND_SELF_AT_BF,
  COND_N_OTHERS_HERE, COND_OTHERS_MIGHT,
- COND_READY_ENEMY_HERE, COND_CTX2_BATTLEFIELD) = range(18)
+ COND_READY_ENEMY_HERE, COND_CTX2_BATTLEFIELD,
+ COND_FIRST_TURN, COND_DEFENDING_ALONE) = range(20)
+
+# COND_FIRST_TURN is The Arena's Greatest: "at the start of EACH PLAYER'S FIRST
+# Beginning Phase". `state.turn` counts ROUNDS rather than plies -- it advances
+# after the second seat's turn -- so both players' first Beginning Phase falls
+# on turn 1, and the condition is that plain.
+#
+# COND_DEFENDING_ALONE is Forbidding Waste's "while a unit here is defending
+# alone". Two facts at once, and both are live: the unit must be on the
+# DEFENDING side of a running combat (459 designation, not who moved), and
+# 740.2.a's "alone" -- no other friendly unit at that location. A static rather
+# than a trigger, so it switches off the instant a second unit arrives.
 
 # COND_PLAYED_TRIO is Swain's "if you've played a non-token unit, a non-token
 # gear, and a spell this turn" -- all three kinds, in one turn. Read off
@@ -1792,8 +1804,19 @@ SPECS: dict[str, CardSpec] = {
 # check ("if a Unit EVER has damage equalling or exceeding its Might"), a static
 # going away can kill. Killing Soul Shepherd shrinks every token she was pumping
 # and any of them already carrying damage dies with her.
-ST_MIGHT, ST_COST_ENERGY, ST_KEYWORD, ST_UNCHOOSABLE = range(4)
-ST_NAMES = ("might", "cost_energy", "keyword", "unchoosable")
+(ST_MIGHT, ST_COST_ENERGY, ST_KEYWORD, ST_UNCHOOSABLE,
+ ST_NO_PLAY) = range(5)
+ST_NAMES = ("might", "cost_energy", "keyword", "unchoosable", "no_play")
+
+# ST_NO_PLAY is Rockfall Path's "Units can't be played here" -- the first
+# static that REMOVES a permission rather than granting or modifying something.
+# It reaches `actions.play_destinations`, not the board scan every other kind
+# uses, because the thing it applies to is not on the board yet.
+#
+# 806.3 already restricts a unit to its controller's base or a battlefield they
+# control, and four printed permissions WIDEN that (see `PLAY_PERMISSIONS`).
+# This narrows it, and it must narrow the widened set too: an [Ambush] unit is
+# still a unit being played here.
 
 # Who a static applies to.
 #   SC_UNITS_HERE -- printed on a BATTLEFIELD, reaching units standing on it.
@@ -1887,6 +1910,23 @@ BF_STATICS: dict[str, tuple[Static, ...]] = {
                requires_keyword="Temporary"),
     ),
 
+    # While a unit here is defending alone, it has -2 Might.
+    # Reaches BOTH players' units, like every "units here" clause, so it is as
+    # much a reason not to leave your own lone defender as it is a weapon. The
+    # gate is live: a second friendly unit arriving at the battlefield turns it
+    # off mid-combat.
+    "Forbidding Waste": (
+        Static(ST_MIGHT, n=-2, scope=SC_UNITS_HERE, cond=COND_DEFENDING_ALONE),
+    ),
+
+    # Units can't be played here.
+    # The one static in the pool that takes a permission away. `scope` is
+    # SC_UNITS_HERE because that is who it speaks about -- units at this
+    # battlefield -- even though it is read before any of them exists.
+    "Rockfall Path": (
+        Static(ST_NO_PLAY, scope=SC_UNITS_HERE),
+    ),
+
     # Units here with [Tank] have +1 Might.
     # The same shape as Black Flame Altar with a different kind: the
     # requirement is on the affected unit either way, so nothing new was
@@ -1930,6 +1970,39 @@ BF_ABILITIES: dict[str, tuple[Ability, ...]] = {
     "Hall of Legends": (
         Ability(TR_CONQUER, optional=True, opt_cost_energy=1,
                 ops=(Op(OP_READY_LEGEND),)),
+    ),
+
+    # At the start of each player's first Beginning Phase, that player gains
+    # 1 point.
+    # Fires for BOTH players, once each, on their own first Beginning Phase --
+    # so it is symmetric and nets nothing, but it moves both players two points
+    # closer to the Victory Score, which shortens the game for whoever is
+    # ahead on tempo.
+    "The Arena's Greatest": (
+        Ability(TR_BEGINNING,
+                ops=(Op(OP_SCORE, n=1, cond=COND_FIRST_TURN),)),
+    ),
+
+    # When you conquer here, you may pay {1 energy} and return a unit you
+    # control here to its owner's hand. If you do, play a 2 Might Sand Soldier
+    # unit token here.
+    #
+    # Pickpocket's shape: the whole ability is one "you may", so declining
+    # removes it (383.3.a.2) and accepting performs both halves -- "if you do"
+    # needs no separate condition. `same_loc_as_source` is what "here" means
+    # for a battlefield's own target slot, and it is also what makes 355.8
+    # decline to offer the ability when nothing of yours is standing there.
+    #
+    # The trade is a real one: a conquered battlefield is held by the units on
+    # it (190.4.c), so bouncing one to replace it with a token risks the ground
+    # unless the token lands first -- which it does, both ops resolving
+    # together.
+    "Emperor's Dais": (
+        Ability(TR_CONQUER, optional=True, opt_cost_energy=1,
+                targets=(TargetSpec(who=W_FRIENDLY, same_loc_as_source=True),),
+                ops=(Op(OP_RETURN_TO_HAND, target=0),
+                     Op(OP_CREATE_TOKEN, target=T_HERE, n=1,
+                        token=SAND_SOLDIER_TOKEN))),
     ),
 
     # When you conquer here, discard 1, then draw 1.

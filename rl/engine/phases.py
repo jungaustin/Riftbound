@@ -390,9 +390,17 @@ def start_turn(state: GameState, table: CardTable, cfg: Config) -> dict:
     # expiry and the Hold scoring, which is the order the phase runs in and the
     # order Sprite Queen depends on: her token arrives, then anything that
     # expires does.
+    from rl.engine import combat
     from rl.engine.chain import fire_watchers
     from rl.engine.effects import TR_BEGINNING
     fire_watchers(state, table, int(state.active), TR_BEGINNING)
+    # ...and the battlefields, which watch the phase for the turn player the
+    # same way a permanent does. "At the start of EACH player's Beginning
+    # Phase" needs no side clause: this runs once per turn, for whoever is
+    # taking it, so both players are covered by both of their turns.
+    for _i in range(N_BF):
+        combat._queue_bf_trigger(state, table, TR_BEGINNING, _i,
+                                 int(state.active))
 
     # Order matters -- see module docstring.
     log["temporary_died"] = expire_temporary(state, table)

@@ -42,6 +42,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                CT_MY_BATTLEFIELDS, CT_MY_MIGHTY_UNITS,
                                CT_MY_OTHER_BATTLEFIELDS,
                                CT_ENEMIES_AT_TARGET, COND_READY_ENEMY_HERE,
+                               COND_FIRST_TURN,
                                COND_LEGION, COND_LEVEL, COND_NONE,
                                COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
@@ -94,6 +95,30 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
                              bf_src_index, is_bf_src,
                              is_legend_src,
                              is_battlefield)
+
+
+def source_loc(state: GameState, source: int) -> int:
+    """Where an ability's source stands -- its "here". -1 if it has none.
+
+    **The one decoder for the question**, because there are now three kinds of
+    source and two places that ask. A permanent is at its row's location; a
+    battlefield IS a location, and unlike a permanent's it cannot move or die,
+    so it never fizzles; a legend has no location at all (107.4.b -- the Legend
+    Zone is not one), and -1 is the honest answer rather than a lie that would
+    put its abilities somewhere.
+
+    Split out after `same_loc_as_source` silently excluded every battlefield
+    source: it tested `source < 0`, which is true of every sentinel, so
+    Emperor's Dais found no candidates for "a unit you control HERE" and 355.8
+    refused to put the ability on the Chain at all. The ability simply never
+    happened, with nothing to see -- a trigger that declines to fire looks the
+    same as one that was never written.
+    """
+    if is_bf_src(source):
+        return bf_loc(bf_src_index(source))
+    if is_legend_src(source):
+        return -1
+    return int(state.perms[source, P_LOC]) if source >= 0 else -1
 
 
 def deflect_cost(state: GameState, table: CardTable, seat: int,
@@ -187,8 +212,7 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
     # SLOT and so cannot say this at all; and from `at_battlefield`, which says
     # "at SOME battlefield" and would let Crackshot Corsair shoot across the
     # board. With no source (a spell), there is no "here" and nothing matches.
-    if spec.same_loc_as_source and (source < 0
-                                    or int(state.perms[source, P_LOC]) != loc):
+    if spec.same_loc_as_source and source_loc(state, source) != loc:
         return False
 
     if spec.lacks_keyword and combat.perm_kw(state, table, perm,
@@ -689,6 +713,10 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
         # because by now the source is a corpse and `source` has been blanked.
         return dead_source >= 0 and not (
             int(state.perms[dead_source, P_FLAGS]) & F_DIED_ALONE)
+    if op.cond == COND_FIRST_TURN:
+        # `state.turn` counts ROUNDS, advancing after the second seat's turn,
+        # so BOTH players' first Beginning Phase falls on turn 1.
+        return int(state.turn) == 1
     if op.cond == COND_CTX_BATTLEFIELD:
         return ctx >= 0 and is_battlefield(ctx)
     if op.cond == COND_CTX2_BATTLEFIELD:
@@ -841,15 +869,7 @@ def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
         # answer, where the sentinel would be read as a row index.
         return -1 if (is_bf_src(source) or is_legend_src(source)) else source
     if idx == T_HERE:
-        # "Here" for a battlefield is the battlefield itself -- and unlike a
-        # permanent's, it cannot move or die, so this never fizzles.
-        if is_bf_src(source):
-            return bf_loc(bf_src_index(source))
-        # 107.4.b -- the Legend Zone is not a location, so a legend has no
-        # "here" at all. -1 fizzles, which is the honest answer.
-        if is_legend_src(source):
-            return -1
-        return int(state.perms[source, P_LOC]) if source >= 0 else -1
+        return source_loc(state, source)
     if idx == T_CTX:
         return ctx
     if idx == T_CTX2:

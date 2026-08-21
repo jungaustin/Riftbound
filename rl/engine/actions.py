@@ -186,10 +186,16 @@ def play_destinations(state: GameState, table: CardTable, cfg: Config,
         # has the keyword.
         if not table.has(card, "Ambush"):
             return []
-        return sorted(set(ambush + extra))
+        # A printed permission widens 806.3; Rockfall Path narrows it, and it
+        # narrows the widened set too. An [Ambush] unit is still a unit being
+        # played there.
+        return [loc for loc in sorted(set(ambush + extra))
+                if not combat.bf_forbids_play(state, table, loc)]
 
     own = [bf_loc(i) for i in range(N_BF) if int(state.bf_ctrl[i]) == seat]
-    return [base_loc(seat)] + sorted(set(own + ambush + extra))
+    return [base_loc(seat)] + [
+        loc for loc in sorted(set(own + ambush + extra))
+        if not combat.bf_forbids_play(state, table, loc)]
 
 
 def _enters_ready(state: GameState, table: CardTable, seat: int,

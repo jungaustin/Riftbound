@@ -48,11 +48,12 @@ import numpy as np
 from rl.config import Config
 from rl.engine.cardtable import CardTable
 from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH,
+                               COND_DEFENDING_ALONE,
                                COND_EMPOWERED, COND_LEGION, COND_LEVEL,
                                COND_NONE,
                                BF_STATICS, SC_UNITS_HERE, W_FRIENDLY,
                                SC_SELF, ST_KEYWORD, ST_MIGHT,
-                               ST_UNCHOOSABLE,
+                               ST_NO_PLAY, ST_UNCHOOSABLE,
                                TR_ATTACK_OR_DEFEND, TR_OTHER_DIES,
                                TR_OPPONENT_SCORES,
                                TR_DEATH, TR_MOVE, abilities_for,
@@ -273,6 +274,13 @@ def bf_statics_for(state: GameState, table: CardTable, perm: int):
                                                st.requires_keyword,
                                                include_bf=False):
             continue
+        # A battlefield's gate is about the AFFECTED unit, not about the
+        # source's controller -- a battlefield has neither. So it is checked
+        # here rather than through `static_applies`, which answers the other
+        # question.
+        if st.cond == COND_DEFENDING_ALONE and not defending_alone(
+                state, table, perm):
+            continue
         yield st
 
 
@@ -334,6 +342,37 @@ def _printed_kw(table: CardTable, card: int, keyword: str) -> int:
     if keyword == "Deflect":
         return int(table.deflect[card])
     return 1 if table.has(card, keyword) else 0
+
+
+def defending_alone(state: GameState, table: CardTable, perm: int) -> bool:
+    """Is `perm` a DEFENDER in the running combat, with no friendly company?
+
+    Forbidding Waste. Two live facts at once:
+
+      459     the Attacker/Defender designation, held in `state.attacker` --
+              who moved is irrelevant, and the designation outlives the Move.
+      740.2.a "alone" is no OTHER unit its controller has at that location.
+
+    Read the same way `combat_role_bonus` reads the role, so [Shield] and this
+    can never disagree about who is defending. Live rather than snapshotted: a
+    second friendly unit arriving mid-combat turns the penalty off, which is
+    what makes the battlefield a reason to commit two units rather than one.
+    """
+    bf = int(state.showdown_bf)
+    if bf < 0:
+        return False
+    row = state.perms[perm]
+    loc = int(row[P_LOC])
+    if loc != bf_loc(bf):
+        return False
+    mine = int(row[P_CTRL])
+    if mine == int(state.attacker):
+        return False                       # an attacker is never defending
+    return not any(i != perm and state.perms[i, P_ALIVE] == 1
+                   and int(state.perms[i, P_CTRL]) == mine
+                   and int(state.perms[i, P_LOC]) == loc
+                   and not (int(state.perms[i, P_FLAGS]) & F_NON_UNIT)
+                   for i in range(state.n_perms))
 
 
 def combat_role_bonus(state: GameState, table: CardTable, perm: int) -> int:
@@ -1534,3 +1573,22 @@ def resolution_step(state: GameState, table: CardTable, cfg: Config,
     log.setdefault("scored", []).extend(
         _establish_control(state, table, cfg, bf))
     return True
+
+
+def bf_forbids_play(state: GameState, table: CardTable, loc: int) -> bool:
+    """Does the battlefield at `loc` forbid playing units there (ST_NO_PLAY)?
+
+    Rockfall Path. Read by `actions.play_destinations` rather than by the board
+    scan every other static uses, because the unit this applies to is not on
+    the board yet -- there is no row to reach.
+
+    A base is never forbidden: 806.3 always allows a unit to be played to its
+    controller's own base, and no card in the pool takes that away.
+    """
+    if not is_battlefield(loc):
+        return False
+    card = int(state.bf_card[bf_index(loc)])
+    if card < 0:
+        return False
+    return any(st.kind == ST_NO_PLAY
+               for st in BF_STATICS.get(table.names[card], ()))

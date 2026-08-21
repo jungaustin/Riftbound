@@ -1768,3 +1768,156 @@ if not legend_acts(s):
     die("hall", "the readied legend must be activatable again this turn -- a "
                 "second use is what the {1 energy} buys")
 ok("the readied legend can be used again the same turn")
+
+
+# ---------------------------------------------------------------------------
+print("\n[23] four more battlefields, and the three shapes they needed")
+from rl.engine.effects import ST_NO_PLAY
+SAND_SOLDIER = T.id_of("Sand Soldier")
+
+
+def conquer_bf(name, prefer=(), runes=6, extra_units=0):
+    """Conquer battlefield 0 with `name` on it, then drain."""
+    s = fresh(runes=0)
+    s.runes_ready[0, 0] = runes
+    s.bf_card[0] = T.id_of(name)
+    s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    for _ in range(extra_units):
+        s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    combat._establish_control(s, T, V1, 0)
+    # The conquer happened outside an action, so nothing has drained the
+    # trigger queue yet. `_settle` is what `apply` would have called.
+    A._settle(s, T, V1)
+    for _ in range(30):
+        if s.n_chain == 0 and s.n_trig == 0 and s.pend_may < 0 \
+                and s.pend_slot < 0:
+            break
+        who = A.acting_seat(s)
+        if who < 0:
+            break
+        legal = A.legal_actions(s, T, V1, who)
+        if not legal:
+            die("bf23", f"{name}: seat to act with no legal action")
+        a = next((x for x in legal if x.kind in prefer),
+                 next((x for x in legal if x.kind == A.A_PASS), legal[0]))
+        A.apply(s, T, V1, a)
+    return s
+
+
+# -- Emperor's Dais: "you may pay {1} AND return a unit you control here. If
+#    you do, play a Sand Soldier here." Pickpocket's shape -- one "you may", so
+#    accepting performs both halves and "if you do" needs no condition.
+s = conquer_bf("Emperor's Dais", prefer=(A.A_ACCEPT, A.A_TARGET))
+if int(s.n_hand[0]) != 1:
+    die("dais", "the chosen unit must return to its owner's HAND")
+if int(s.total_ready_runes(0)) != 5:
+    die("dais", "the {1 energy} is a cost and must actually be paid")
+ss = [i for i in range(int(s.n_perms))
+      if int(s.perms[i, P_CARD]) == SAND_SOLDIER and s.perms[i, P_ALIVE] == 1]
+if len(ss) != 1 or int(s.perms[ss[0], P_LOC]) != bf_loc(0):
+    die("dais", "the Sand Soldier is played HERE, replacing what was bounced")
+ok("Emperor's Dais bounces a unit and replaces it with a Sand Soldier here")
+
+s = conquer_bf("Emperor's Dais", prefer=(A.A_DECLINE,))
+if int(s.n_hand[0]) or int(s.total_ready_runes(0)) != 6:
+    die("dais", "declining must cost nothing and bounce nothing")
+ok("...and declining pays nothing, bounces nothing, makes nothing")
+
+# "HERE" is the battlefield's own location, and that is the whole reason
+# `same_loc_as_source` had to learn about battlefield sources: it tested
+# `source < 0`, which is true of every sentinel, so the slot found no
+# candidates at all and 355.8 kept the ability off the Chain silently.
+_s = fresh(runes=0)
+_s.runes_ready[0, 0] = 6
+_s.bf_card[0] = T.id_of("Emperor's Dais")
+_here = _s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+_away = _s.add_permanent(PLAIN2, 0, base_loc(0), is_unit=True)
+combat._establish_control(_s, T, V1, 0)
+A._settle(_s, T, V1)
+A.apply(_s, T, V1, next(a for a in A.legal_actions(_s, T, V1, 0)
+                        if a.kind == A.A_ACCEPT))
+_opts = {a.arg for a in A.legal_actions(_s, T, V1, 0) if a.kind == A.A_TARGET}
+if _opts != {_here}:
+    die("dais", f"'a unit you control HERE' must offer only the unit at the "
+                f"battlefield; offered {_opts}, wanted {{{_here}}} and not the "
+                f"one at base ({_away})")
+ok("...and 'here' means the battlefield itself, never a unit back at base")
+
+# -- The Arena's Greatest: a battlefield watching the BEGINNING PHASE, which
+#    needed a firing site of its own -- no permanent is involved at all.
+s = fresh(runes=0)
+s.bf_card[0] = T.id_of("The Arena's Greatest")
+s.turn = 1
+before = int(s.points[0])
+phases.start_turn(s, T, V1)
+A._settle(s, T, V1)          # what `apply` does after start_turn in real play
+drain_all(s)
+if int(s.points[0]) != before + 1:
+    die("arena", "each player gains 1 point on their FIRST Beginning Phase")
+ok("The Arena's Greatest scores on the first Beginning Phase, off no permanent")
+
+s.turn = 4
+before = int(s.points[0])
+phases.start_turn(s, T, V1)
+A._settle(s, T, V1)
+drain_all(s)
+if int(s.points[0]) != before:
+    die("arena", "'FIRST Beginning Phase' is once, not every turn -- otherwise "
+                 "the battlefield simply ends the game")
+ok("...and never again, which is the difference between a bonus and a clock")
+
+# -- Rockfall Path: the first static that REMOVES a permission.
+s = fresh(runes=6)
+s.bf_card[0] = T.id_of("Rockfall Path")
+s.bf_card[1] = T.id_of("Trifarian War Camp")
+s.bf_ctrl[0] = 0
+s.bf_ctrl[1] = 0
+dests = A.play_destinations(s, T, V1, 0, PLAIN2)
+if bf_loc(0) in dests:
+    die("rockfall", "'units can't be played here' must remove the destination")
+if bf_loc(1) not in dests or base_loc(0) not in dests:
+    die("rockfall", f"it must remove only ITS OWN battlefield; got {dests}")
+ok("Rockfall Path removes itself as a play destination, and nothing else")
+
+# It must narrow the WIDENED set too -- a printed permission is still a play.
+amb = [c for c in range(T.n) if T.is_type(c, "Unit") and T.has(c, "Ambush")]
+if amb:
+    s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    if bf_loc(0) in A.play_destinations(s, T, V1, 0, amb[0]):
+        die("rockfall", "[Ambush] widens 806.3, but an Ambushed unit is still a "
+                        "unit being played here")
+    ok("...including for [Ambush], which widens 806.3 but is still a play")
+
+# -- Forbidding Waste: a static gated on a live COMBAT ROLE, not on a keyword.
+def waste_might(defender_alone):
+    s = fresh(runes=0)
+    s.bf_card[0] = T.id_of("Forbidding Waste")
+    d = s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+    if not defender_alone:
+        s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+    s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    base = combat.might(s, T, d)
+    s.showdown_bf = 0
+    s.attacker = 0                       # seat 1 is therefore defending
+    return base, combat.might(s, T, d)
+
+
+base, alone = waste_might(True)
+if alone != base - 2:
+    die("waste", f"a lone defender here has -2 Might; {base} -> {alone}")
+ok("Forbidding Waste: -2 Might while defending alone")
+
+base, paired = waste_might(False)
+if paired != base:
+    die("waste", "740.2.a -- a second friendly unit here means not alone, and "
+                 "the penalty must switch off live")
+ok("...and a second friendly unit turns it off, read live rather than snapshot")
+
+# Out of combat there is no defender at all.
+_s = fresh(runes=0)
+_s.bf_card[0] = T.id_of("Forbidding Waste")
+_d = _s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+if combat.might(_s, T, _d) != int(T.might[PLAIN2]):
+    die("waste", "with no combat running nothing is DEFENDING, so the penalty "
+                 "must not apply")
+ok("...and outside a combat nobody is defending, so it does not apply at all")
