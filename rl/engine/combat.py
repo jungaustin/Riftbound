@@ -52,7 +52,7 @@ from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH,
                                COND_EMPOWERED, COND_LEGION, COND_LEVEL,
                                COND_NONE,
                                BF_STATICS, SC_UNITS_HERE, W_FRIENDLY,
-                               SC_SELF, ST_KEYWORD, ST_MIGHT,
+                               SC_SELF, ST_DAMAGE_BONUS, ST_KEYWORD, ST_MIGHT,
                                ST_NO_PLAY, ST_UNCHOOSABLE,
                                TR_ATTACK_OR_DEFEND, TR_OTHER_DIES,
                                TR_OPPONENT_SCORES,
@@ -495,7 +495,22 @@ def set_might_mod(state: GameState, table: CardTable, perm: int, delta: int,
 
 def mark_damage(state: GameState, table: CardTable, perm: int,
                 amount: int) -> bool:
-    """Mark damage and apply 143.2.a. Returns True if it killed the unit."""
+    """Mark damage and apply 143.2.a. Returns True if it killed the unit.
+
+    **This is the spell-and-ability damage path, and only that.** Combat damage
+    is assigned in the damage step, which writes `P_DMG` directly -- so Void
+    Gate's "spells and abilities affecting units here each deal 1 Bonus Damage"
+    belongs here and nowhere else, and combat damage is correctly untouched.
+
+    "Each INSTANCE of damage is increased by 1" falls out of the call shape:
+    one call is one instance, so a spell that deals damage twice is bonused
+    twice without the wording having to be arranged for.
+    """
+    if amount > 0:
+        # Bonus Damage rides on a nonzero instance. A 0-damage event is not an
+        # instance of damage to increase -- and turning one into 1 would make
+        # 143.2.a lethal where the rules say nothing happened at all.
+        amount += bf_damage_bonus(state, table, int(state.perms[perm, P_LOC]))
     state.perms[perm, P_DMG] += amount
     dmg = int(state.perms[perm, P_DMG])
     # Imperial Decree lowers the lethal threshold to ANY nonzero damage, for
@@ -1324,6 +1339,37 @@ def _designate(state: GameState, table: CardTable, bf: int,
                 # Queueing per ability would run a two-ability card twice.
                 break
 
+    # ...and the battlefield's own "when you defend here". Fired once PER SEAT
+    # that has a role, not once per unit: the ground says "when YOU defend",
+    # and a player defending with three units has defended once. That is the
+    # same once-for-the-player rule the conquer and hold sites follow, and the
+    # reason this loop is over seats rather than nested in the one above.
+    for seat in range(N_SEATS):
+        if not state.units_at(loc, seat).size:
+            continue
+        role = ROLE_ATTACK if seat == attacker else ROLE_DEFEND
+        _queue_bf_role_trigger(state, table, bf, seat, role)
+
+
+def _queue_bf_role_trigger(state: GameState, table: CardTable, bf: int,
+                           seat: int, role: int) -> None:
+    """Queue the battlefield's TR_ATTACK_OR_DEFEND abilities for one seat."""
+    from rl.engine.chain import queue as chain_queue
+    from rl.engine.effects import (ROLE_EITHER, TR_ATTACK_OR_DEFEND,
+                                   bf_abilities_for)
+    from rl.engine.state import bf_src
+    card = int(state.bf_card[bf])
+    if card < 0:
+        return
+    for ab in bf_abilities_for(table, card):
+        if ab.trigger != TR_ATTACK_OR_DEFEND:
+            continue
+        if ab.subject_role not in (ROLE_EITHER, role):
+            continue
+        chain_queue(state, TR_ATTACK_OR_DEFEND, bf_src(bf), bf_loc(bf),
+                    who=seat)
+        break
+
 
 def showdown_responses(state: GameState, table: CardTable, cfg: Config,
                        seat: int) -> list:
@@ -1573,6 +1619,22 @@ def resolution_step(state: GameState, table: CardTable, cfg: Config,
     log.setdefault("scored", []).extend(
         _establish_control(state, table, cfg, bf))
     return True
+
+
+def bf_damage_bonus(state: GameState, table: CardTable, loc: int) -> int:
+    """Bonus Damage added by the battlefield at `loc` (Void Gate).
+
+    Zero at a base and at an unscripted battlefield. Summed rather than maxed:
+    two sources of Bonus Damage would each add, which is what "each deal 1
+    Bonus Damage" says, though only one card in the pool prints it.
+    """
+    if not is_battlefield(loc):
+        return 0
+    card = int(state.bf_card[bf_index(loc)])
+    if card < 0:
+        return 0
+    return sum(st.n for st in BF_STATICS.get(table.names[card], ())
+               if st.kind == ST_DAMAGE_BONUS)
 
 
 def bf_forbids_play(state: GameState, table: CardTable, loc: int) -> bool:

@@ -72,7 +72,8 @@ BOARD_SLOTS = MAX_PERMS
 
 # 5*N_DOMAINS: runes_ready + runes_spent for both seats (4), plus this seat's
 # pool_power (1). The +1 is pool_power's [A] column -- see state.D_ANY.
-GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1
+# The +2 is `pending_ready_runes` for both seats -- see `_globals`.
+GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2
 
 # Action-row layout after the kind one-hot and card block.
 ACT_EXTRA = 4 + 1 + 3 + 1 + 1 + 1 + 1 + 2 + 1
@@ -354,6 +355,13 @@ class Encoder:
             g += list(state.runes_ready[s].astype(np.float32) / 4.0)
             g += list(state.runes_spent[s].astype(np.float32) / 4.0)
         g += list(state.pool_power[seat].astype(np.float32) / 3.0)
+        # Runes promised at end of turn (Targon's Peak). Public -- the conquer
+        # that banked them happened in the open -- and it changes what tapping
+        # out costs, which is the single decision runes drive. Left out, the
+        # whole point of the card ("delayed, so the refund lands before the
+        # OPPONENT's turn") would be invisible to the policy.
+        g += [float(state.pending_ready_runes[seat]) / 2.0,
+              float(state.pending_ready_runes[foe]) / 2.0]
 
         out = np.asarray(g, np.float32)
         assert out.size == GLOBAL_DIM, f"{out.size} globals, expected {GLOBAL_DIM}"

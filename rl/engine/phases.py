@@ -361,6 +361,21 @@ def ending(state: GameState) -> None:
     one-turn window, not a lasting debuff: stun on your turn to survive your own
     attack, or at Action speed on theirs to blank an attacker mid-Showdown.
     """
+    # Delayed "ready N runes at the end of this turn" (Targon's Peak), paid
+    # out before the pools empty. Both seats, not just the turn player: a
+    # Reaction can start a Combat on the opponent's turn, so the promise can
+    # belong to whoever is not taking it.
+    for _seat in range(N_SEATS):
+        _owed = int(state.pending_ready_runes[_seat])
+        if _owed:
+            state.pending_ready_runes[_seat] = 0
+            for _dom in np.argsort(-state.runes_spent[_seat]):
+                if _owed <= 0:
+                    break
+                _take = min(_owed, int(state.runes_spent[_seat, _dom]))
+                state.runes_spent[_seat, _dom] -= _take
+                state.runes_ready[_seat, _dom] += _take
+                _owed -= _take
     heal_board(state)
     if state.n_perms:
         state.perms[:state.n_perms, P_FLAGS] &= ~TURN_SCOPED_FLAGS

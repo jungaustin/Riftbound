@@ -1353,6 +1353,14 @@ def resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
                                          and not state.legend_ready[seat])
             if state.legend[seat] >= 0:
                 state.legend_ready[seat] = 1
+        elif op.op == OP_READY_RUNES and op.at_end_of_turn:
+            # "Ready 2 runes AT THE END OF THIS TURN" (Targon's Peak). Banked
+            # rather than performed: `phases.ending` pays it out. The promise
+            # is what the card is worth -- it is made the moment the
+            # battlefield is conquered, so the runes spent taking it come back
+            # before the opponent's turn rather than after.
+            state.pending_ready_runes[seat] += op.n
+            log["ready_runes_pending"] = op.n
         elif op.op == OP_READY_RUNES:
             # "Ready up to N runes." A rune readies by moving from spent back
             # to ready -- the same direction the Awaken Phase moves them, just

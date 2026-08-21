@@ -36,7 +36,8 @@ from rl.engine.cardtable import full_table
 from rl.engine.effects import (ABILITIES, TR_DEATH as chain_TR_DEATH,
                                TR_MOVE as chain_TR_MOVE, TR_PLAY_ME,
                                abilities_for)
-from rl.engine.state import (C_ABIL, C_CARD, C_SRC, MAIN, P_ALIVE, P_CARD,
+from rl.obs import Encoder
+from rl.engine.state import (C_ABIL, C_CARD, C_SRC, MAIN, P_ALIVE, P_CARD, P_DMG,
                              P_LOC, P_READY, GameState, base_loc, bf_loc)
 
 T = full_table()
@@ -1921,3 +1922,159 @@ if combat.might(_s, T, _d) != int(T.might[PLAIN2]):
     die("waste", "with no combat running nothing is DEFENDING, so the penalty "
                  "must not apply")
 ok("...and outside a combat nobody is defending, so it does not apply at all")
+
+
+# ---------------------------------------------------------------------------
+print("\n[24] Void Gate, Ravenbloom Conservatory, Targon's Peak")
+from rl.engine.effects import ST_DAMAGE_BONUS
+
+# -- Void Gate: a damage MODIFIER, hooked at the one path spell and ability
+#    damage goes through. Combat damage is assigned in the damage step and
+#    writes P_DMG directly, so it must be untouched -- the card says "spells
+#    and abilities", and a hook in the wrong place would buff every attack.
+BIG = plain(5)
+
+
+def void_marked(bf_name, loc_fn, amount=2):
+    s = fresh(runes=0)
+    s.bf_card[0] = T.id_of(bf_name)
+    u = s.add_permanent(BIG, 0, loc_fn(0), is_unit=True)
+    combat.mark_damage(s, T, u, amount)
+    return int(s.perms[u, P_DMG])
+
+
+if void_marked("Void Gate", bf_loc) != 3:
+    die("void", "2 damage from a spell becomes 3 on Void Gate")
+if void_marked("Rockfall Path", bf_loc) != 2:
+    die("void", "another battlefield adds nothing")
+if void_marked("Void Gate", base_loc) != 2:
+    die("void", "'units HERE' is the battlefield, not a base across the board")
+ok("Void Gate adds 1 to each instance of spell/ability damage dealt there")
+
+# A 0-damage event is not an instance of damage to increase. Turning it into 1
+# would make 143.2.a lethal where the rules say nothing happened.
+if void_marked("Void Gate", bf_loc, amount=0) != 0:
+    die("void", "a zero-damage event must stay zero -- otherwise Might "
+                "reduction becomes removal on this battlefield")
+ok("...and never turns a zero-damage event into a real one")
+
+# The negative control that matters: COMBAT damage must NOT be bonused. Void
+# Gate says "spells and abilities", and combat damage travels a different path
+# (`_assign` writes P_DMG directly) -- which is exactly why the hook went into
+# `mark_damage` and not into a shared helper.
+#
+# A 3-Might attacker into a 5-Might defender leaves 3 marked, not 4. Asserted
+# against a plain battlefield as a control so that "3" cannot mean the damage
+# step silently did nothing.
+def combat_marks(bf_name):
+    """(damage marked on the defender, the attacker's effective Might)."""
+    s = fresh(runes=0)
+    s.bf_card[0] = T.id_of(bf_name)
+    a = s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    d = s.add_permanent(BIG, 1, bf_loc(0), is_unit=True)    # survives the hit
+    s.showdown_bf = 0
+    s.attacker = 0
+    # Against EFFECTIVE Might, not the printed number: PLAIN2 is Daring Poro,
+    # which has [Assault 1] and so hits for 3 rather than 2. A control written
+    # against the corner number tests the wrong thing and fails honestly.
+    pool = combat.might(s, T, a)
+    combat._assign(s, T, pool, [d])
+    return int(s.perms[d, P_DMG]), pool
+
+
+_plain_marks, _pool = combat_marks("Rockfall Path")
+if _plain_marks != _pool:
+    die("void", f"the control is wrong: a {_pool}-Might attacker should mark "
+                f"that much, marked {_plain_marks}")
+if combat_marks("Void Gate")[0] != _plain_marks:
+    die("void", "combat damage must be untouched -- 'spells and abilities' is "
+                "not every source of damage, and combat writes P_DMG directly")
+ok("...and leaves combat damage alone, which is what 'spells and abilities' means")
+
+# -- Ravenbloom Conservatory: a battlefield watching a COMBAT ROLE, firing once
+#    for the DEFENDING PLAYER rather than once per defending unit.
+RAVEN = T.id_of("Ravenbloom Conservatory")
+SPELL = next(c for c in range(T.n) if T.is_type(c, "Spell"))
+
+
+def raven(top_is_spell, n_defenders=1):
+    s = fresh(runes=0)
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN2
+    if top_is_spell:
+        s.deck[1, 0] = SPELL
+    s.bf_card[0] = RAVEN
+    for _ in range(n_defenders):
+        s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+    s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+    hand0, deck0 = int(s.n_hand[1]), int(s.deck_ptr[1])
+    combat.open_showdown(s, T, 0, 0)          # seat 0 attacks, so seat 1 defends
+    queued = int(s.n_trig)
+    A._settle(s, T, V1)
+    for _ in range(30):
+        if s.n_chain == 0 and s.n_trig == 0 and s.pend_look < 0 \
+                and s.pend_slot < 0:
+            break
+        who = A.acting_seat(s)
+        if who < 0:
+            break
+        legal = A.legal_actions(s, T, V1, who)
+        if not legal:
+            die("raven", "seat to act with no legal action")
+        a = next((x for x in legal if x.kind in (A.A_PICK, A.A_PICK_NONE)),
+                 next((x for x in legal if x.kind == A.A_PASS), legal[0]))
+        A.apply(s, T, V1, a)
+    return (int(s.n_hand[1]) - hand0, int(s.deck_ptr[1]) - deck0, queued)
+
+
+got = raven(top_is_spell=True)
+if got[:2] != (1, 1):
+    die("raven", f"a spell on top goes to HAND; got hand {got[0]}, deck {got[1]}")
+ok("Ravenbloom: defending reveals the top card, and a spell goes to hand")
+
+got = raven(top_is_spell=False)
+if got[:2] != (0, 1):
+    die("raven", f"anything else is RECYCLED, not kept; got hand {got[0]}")
+ok("...and anything else is recycled instead, with no choice either way")
+
+# Once for the PLAYER, not once per defending unit -- the same rule the conquer
+# and hold sites follow, and invisible in a test with one defender.
+one = raven(top_is_spell=True, n_defenders=1)[2]
+two = raven(top_is_spell=True, n_defenders=3)[2]
+if one != two:
+    die("raven", f"'when YOU defend here' fired {one} time with one defender "
+                 f"and {two} with three; a battlefield fires once for the "
+                 f"player, however many units are standing there")
+ok("...and fires once for the defending player, not once per defending unit")
+
+# -- Targon's Peak: the pool's only DELAYED effect.
+s = fresh(runes=0)
+s.bf_card[0] = T.id_of("Targon's Peak")
+s.runes_spent[0, 0] = 4
+s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+combat._establish_control(s, T, V1, 0)
+A._settle(s, T, V1)
+drain_all(s)
+if int(s.total_ready_runes(0)) != 0:
+    die("targon", "'at the end of THIS turn' -- the runes must NOT ready now; "
+                  "readying immediately refunds the wrong turn")
+if int(s.pending_ready_runes[0]) != 2:
+    die("targon", "the promise must be banked where it can be seen")
+ok("Targon's Peak banks the refund instead of paying it immediately")
+
+phases.ending(s)
+if int(s.total_ready_runes(0)) != 2 or int(s.pending_ready_runes[0]) != 0:
+    die("targon", "the end of the turn pays it out, once, and clears it")
+ok("...and the end of the turn pays it out exactly once")
+
+# It must be visible: a promise the policy cannot see is a card that does
+# nothing until the runes silently appear.
+_a = fresh(runes=0)
+_b = _a.clone()
+_b.pending_ready_runes[0] = 2
+_enc = Encoder(T, V1)
+if _enc.encode(_a, 0, A.legal_actions(_a, T, V1, 0)).public_bytes() == \
+        _enc.encode(_b, 0, A.legal_actions(_b, T, V1, 0)).public_bytes():
+    die("targon", "banked runes must reach the observation -- they change what "
+                  "tapping out costs, which is the decision runes drive")
+ok("...and the banked refund is visible to the policy")

@@ -358,7 +358,7 @@ class GameState:
         "pend_may", "trig", "n_trig", "pend_order", "chain_from_trigger",
         "points", "burned_out", "no_spells", "cards_played", "xp",
         "kw_grant", "kw_grant_turn",
-        "legend", "champion", "legend_ready",
+        "legend", "champion", "legend_ready", "pending_ready_runes",
         "turn", "ply", "active", "phase", "priority", "focus",
         "showdown_bf", "showdown_step", "showdown_combat",
         "attacker", "passes",
@@ -506,6 +506,14 @@ class GameState:
         # they control that are able to be readied" -- so the Awaken Phase
         # readies it exactly as it readies a unit. Starts ready.
         self.legend_ready = np.ones(N_SEATS, np.int16)
+        # "Ready 2 runes AT THE END OF THIS TURN" (Targon's Peak). A delayed
+        # effect, and the only one in the whole pool -- one card of 937 -- so
+        # it is a per-seat counter applied in `ending` rather than a general
+        # delayed-trigger queue built for a single user. It is a real piece of
+        # state either way: the runes are promised the moment the battlefield
+        # is conquered, which is what makes tapping out that turn cheap
+        # ([[riftbound-tapping-out-costs-the-opponents-turn]]).
+        self.pending_ready_runes = np.zeros(N_SEATS, np.int16)
 
         self.turn = 1
         self.ply = 0        # monotone; incremented at every end of turn

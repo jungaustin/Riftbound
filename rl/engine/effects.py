@@ -414,6 +414,11 @@ class Op(NamedTuple):
     # way, draw 1" rider several of these cards print -- a consolation for an
     # empty Rune Deck, checked against how many actually came off it.
     ready_runes: bool = False
+    # For OP_READY_RUNES: defer to the end of the turn instead of readying now
+    # (Targon's Peak). "At the end of THIS turn" is the current turn whoever's
+    # it is, and `ending` runs once per turn, so a promise made on the
+    # opponent's turn is kept at the end of THAT turn.
+    at_end_of_turn: bool = False
     draw_if_short: int = 0
     # For OP_KILL_ALL: which printed type the sweep reaches.
     # Empty means Unit, which is what every board wipe meant before
@@ -1805,8 +1810,16 @@ SPECS: dict[str, CardSpec] = {
 # going away can kill. Killing Soul Shepherd shrinks every token she was pumping
 # and any of them already carrying damage dies with her.
 (ST_MIGHT, ST_COST_ENERGY, ST_KEYWORD, ST_UNCHOOSABLE,
- ST_NO_PLAY) = range(5)
-ST_NAMES = ("might", "cost_energy", "keyword", "unchoosable", "no_play")
+ ST_NO_PLAY, ST_DAMAGE_BONUS) = range(6)
+ST_NAMES = ("might", "cost_energy", "keyword", "unchoosable", "no_play",
+            "damage_bonus")
+
+# ST_DAMAGE_BONUS is Void Gate's "spells and abilities affecting units here each
+# deal 1 Bonus Damage". Read in `combat.mark_damage`, which is exactly the
+# spell-and-ability damage path -- combat damage writes `P_DMG` directly in the
+# damage step and so is untouched, which is what the card says. "Each INSTANCE"
+# is per call, and `mark_damage` is called once per instance, so the wording
+# falls out rather than needing to be arranged.
 
 # ST_NO_PLAY is Rockfall Path's "Units can't be played here" -- the first
 # static that REMOVES a permission rather than granting or modifying something.
@@ -1919,6 +1932,14 @@ BF_STATICS: dict[str, tuple[Static, ...]] = {
         Static(ST_MIGHT, n=-2, scope=SC_UNITS_HERE, cond=COND_DEFENDING_ALONE),
     ),
 
+    # Spells and abilities affecting units here each deal 1 Bonus Damage.
+    # Reaches BOTH players' spells, like every unqualified "units here" clause,
+    # so it makes the ground dangerous to stand on rather than being a weapon
+    # for whoever controls it.
+    "Void Gate": (
+        Static(ST_DAMAGE_BONUS, n=1, scope=SC_UNITS_HERE),
+    ),
+
     # Units can't be played here.
     # The one static in the pool that takes a permission away. `scope` is
     # SC_UNITS_HERE because that is who it speaks about -- units at this
@@ -2003,6 +2024,34 @@ BF_ABILITIES: dict[str, tuple[Ability, ...]] = {
                 ops=(Op(OP_RETURN_TO_HAND, target=0),
                      Op(OP_CREATE_TOKEN, target=T_HERE, n=1,
                         token=SAND_SOLDIER_TOKEN))),
+    ),
+
+    # When you defend here, reveal the top card of your Main Deck. If it's a
+    # spell, put it in your hand. Otherwise, recycle it.
+    #
+    # `pick_optional=False` because the card gives no choice: a spell GOES to
+    # hand, anything else IS recycled. The look machinery still routes it
+    # through an A_PICK, but with a type restriction and no opt-out there is
+    # exactly one legal action either way -- a forced choice, not a decision.
+    # `rest_dest` is RECYCLE rather than Diana's TOP, which is the whole
+    # difference between digging and filtering.
+    "Ravenbloom Conservatory": (
+        Ability(TR_ATTACK_OR_DEFEND, subject_role=ROLE_DEFEND,
+                ops=(Op(OP_LOOK_TOP, n=1, pick_optional=False,
+                        pick_types=("Spell",), pick_dest=DEST_HAND,
+                        rest_dest=DEST_RECYCLE),)),
+    ),
+
+    # When you conquer here, ready 2 runes at the end of this turn.
+    # The only delayed effect in the pool -- one card of 937 -- so it is banked
+    # on a per-seat counter that `phases.ending` pays out, rather than a general
+    # delayed-trigger queue built for a single user. Delayed is the whole point:
+    # readying now would refund the runes you spent taking the ground, while
+    # readying at end of turn refunds them for the OPPONENT's turn, which is
+    # when they matter ([[riftbound-tapping-out-costs-the-opponents-turn]]).
+    "Targon's Peak": (
+        Ability(TR_CONQUER,
+                ops=(Op(OP_READY_RUNES, n=2, at_end_of_turn=True),)),
     ),
 
     # When you conquer here, discard 1, then draw 1.
