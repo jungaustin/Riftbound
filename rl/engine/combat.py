@@ -310,6 +310,12 @@ def static_reaches(state: GameState, table: CardTable, st, src_i: int,
         return False
     if st.scope_same_loc and int(src[P_LOC]) != int(row[P_LOC]):
         return False
+    # "your units THAT ARE [Empowered]" -- a requirement on the AFFECTED unit's
+    # status (441.1.a), the mirror of `requires_keyword`. Aurok General's "(and
+    # me)" needs no clause: he is a friendly unit and he is Empowered, since
+    # `cond=COND_EMPOWERED` on the same static is what turned it on.
+    if st.requires_empowered and not (int(row[P_FLAGS]) & F_EMPOWERED):
+        return False
     return bool(table.is_type(card, "Unit"))
 
 

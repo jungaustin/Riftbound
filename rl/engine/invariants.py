@@ -94,6 +94,20 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
         _fail("showdown in progress at an uncontested battlefield")
     if (state.attacker >= 0) != (state.showdown_bf >= 0):
         _fail("attacker designation and showdown disagree")
+    # **A live Showdown must have a real Focus.** 345/464.2.d give Focus to a
+    # seat, and `chain.after_resolution` passes it with `1 - focus` -- so a -1
+    # left over from an Open State does not stay -1, it becomes 2 and then -1
+    # again, and `acting_seat` hands the driver a seat that does not exist. The
+    # game then stops in a position that is neither terminal nor actionable,
+    # which is scored as an undecided game with no truncation to show for it.
+    # `enter_main` used to write exactly that: it ran a Cleanup that could OPEN
+    # a Showdown and then reset priority and Focus for the Main Phase anyway.
+    if state.showdown_bf >= 0 and not 0 <= int(state.focus) < N_SEATS:
+        _fail(f"showdown at bf {int(state.showdown_bf)} with focus "
+              f"{int(state.focus)} -- nobody holds it")
+    if state.showdown_bf >= 0 and not 0 <= int(state.priority) < N_SEATS:
+        _fail(f"showdown at bf {int(state.showdown_bf)} with priority "
+              f"{int(state.priority)} -- nobody can act")
 
     # No Battlefield may hold units from both players once combat is over. A
     # staged Combat (461) that never resolved is the single most likely bug in

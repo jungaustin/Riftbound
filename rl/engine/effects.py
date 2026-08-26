@@ -185,7 +185,14 @@ T_COMBAT = -9
  COND_READY_ENEMY_HERE, COND_CTX2_BATTLEFIELD,
  COND_FIRST_TURN, COND_DEFENDING_ALONE,
  COND_WAS_MIGHTY, COND_FEWER_RUNES_THAN_OPP,
- COND_PAID_ADDITIONAL) = range(23)
+ COND_PAID_ADDITIONAL, COND_TARGET_EMPOWERED) = range(24)
+
+# COND_TARGET_EMPOWERED is Guttural Roar's "if IT'S [Empowered]" -- the same
+# 441.1.a status COND_EMPOWERED reads, asked of the op's TARGET instead of its
+# source. A separate condition rather than a flag on the existing one because
+# overloading COND_EMPOWERED to mean "the target, if there is one" would
+# silently change every card already using it: Noxian Emissary's Deathknell
+# names a destination in `target` and would start asking about a base.
 
 # COND_PAID_ADDITIONAL is "when you play me, IF YOU PAID THE ADDITIONAL COST,
 # ...". A snapshot on the permanent (`F_PAID_ADDITIONAL`), not a live question:
@@ -328,6 +335,11 @@ class TargetSpec(NamedTuple):
     # "another unit" on a unit's own ability: exclude the ability's source.
     # Distinct from `rel`, which relates a slot to an earlier SLOT.
     not_self: bool = False
+    # "an enemy unit here WITH LESS MIGHT THAN ME". `less_might_than` compares
+    # against an earlier SLOT, and the source is not a slot -- it is not a
+    # choice anyone made -- so the two cannot share a field. Strictly less, and
+    # both sides read effective Might, exactly as the slot version does.
+    less_might_than_source: bool = False
     # "an enemy unit HERE" -- at the SOURCE's location. `rel`/`rel_to` cannot
     # express this: they point at an earlier target slot, and "here" is not a
     # choice anyone made. Meaningless on a spell, which has no location.
@@ -1908,6 +1920,24 @@ SPECS: dict[str, CardSpec] = {
         ops=(Op(OP_DRAW, n=1, n_from_count=CT_MY_MIGHTY_UNITS),),
     ),
 
+    # [Action] Give a unit +2 Might this turn. If IT'S [Empowered], give it
+    # +4 Might this turn instead.
+    #
+    # "Instead" as two ops that add, the same arithmetic Rage Amplifier and
+    # Tools of Empire use -- and the condition is about the TARGET here rather
+    # than the source, which is the whole reason COND_TARGET_EMPOWERED exists.
+    #
+    # A condition, not a restriction (355.9.b): any unit is a legal choice and
+    # the bonus half is decided at resolution, so an opponent holding a
+    # disempower has a real answer in the response window.
+    "Guttural Roar": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=2),
+             Op(OP_MODIFY_MIGHT, target=0, n=2,
+                cond=COND_TARGET_EMPOWERED)),
+    ),
+
     # [Action] Give a friendly unit +1 Might this turn and [Stun] an enemy
     # unit at its location.
     #
@@ -1998,6 +2028,13 @@ class Static(NamedTuple):
     # keyword the AFFECTED unit must already have. Distinct from `keyword`
     # (what is granted) and from `per_keyword` (what is counted).
     requires_keyword: str | None = None
+    # "Your units that are [Empowered] have +2 Might (including me)" (Aurok
+    # General). A requirement on the AFFECTED unit's 441.1.a status, the mirror
+    # of `requires_keyword` for a status rather than a keyword -- and distinct
+    # from `cond=COND_EMPOWERED`, which asks about the SOURCE. Aurok General
+    # needs both readings in one sentence: the static only exists while HE is
+    # Empowered, and it then reaches only units that are.
+    requires_empowered: bool = False
     # SC_UNITS_HERE only: whose units. W_ANY is the unqualified "units here",
     # which reaches both players.
     who: int = W_ANY
@@ -2298,6 +2335,45 @@ STATICS: dict[str, tuple[Static, ...]] = {
     "Shadow Fiend": (
         Static(ST_KEYWORD, keyword="Assault", n=3, scope=SC_SELF,
                cond=COND_EMPOWERED),
+    ),
+    # I have +7 Might. The [Deflect] beside it is PRINTED, not dependent, so it
+    # is a read keyword rather than a static.
+    "Steel Paws": (
+        Static(ST_MIGHT, n=7, scope=SC_SELF, cond=COND_EMPOWERED),
+    ),
+    "Kinkou Lifeblade": (
+        Static(ST_MIGHT, n=1, scope=SC_SELF, cond=COND_EMPOWERED),
+        Static(ST_KEYWORD, keyword="Ganking", n=1, scope=SC_SELF,
+               cond=COND_EMPOWERED),
+    ),
+    # I have [Deflect] and [Shield 3]. A bare keyword is n=1 (809.1: the
+    # Deflect Value defaults to one), a numbered one carries its number.
+    "Serene Ascetic": (
+        Static(ST_KEYWORD, keyword="Deflect", n=1, scope=SC_SELF,
+               cond=COND_EMPOWERED),
+        Static(ST_KEYWORD, keyword="Shield", n=3, scope=SC_SELF,
+               cond=COND_EMPOWERED),
+    ),
+    "Baccai Witherclaw": (
+        Static(ST_MIGHT, n=2, scope=SC_SELF, cond=COND_EMPOWERED),
+    ),
+    # Your units have +1 Might. If I'm [Empowered], they have +2 INSTEAD --
+    # written as two statics that add to the same number. Note this one reaches
+    # every friendly unit including himself, and unlike the self-statics above
+    # the FIRST is ungated: the gear is worth something the turn it lands.
+    "Rage Amplifier": (
+        Static(ST_MIGHT, n=1, scope=SC_FRIENDLY_UNITS),
+        Static(ST_MIGHT, n=1, scope=SC_FRIENDLY_UNITS, cond=COND_EMPOWERED),
+    ),
+    # Your units THAT ARE [Empowered] have +2 Might (including me).
+    # Both readings of the status in one sentence: `cond` asks about the
+    # SOURCE -- the static exists only while the General himself is Empowered
+    # -- and `requires_empowered` asks the same question of each unit it
+    # reaches. "(Including me)" needs no clause: he is a friendly unit, and by
+    # the time the static is live he is Empowered by definition.
+    "Aurok General": (
+        Static(ST_MIGHT, n=2, scope=SC_FRIENDLY_UNITS,
+               requires_empowered=True, cond=COND_EMPOWERED),
     ),
 
     # Your token units have +1 Might.  No location clause: it reaches the whole
@@ -2943,13 +3019,6 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
         Ability(TR_ACTIVATED, cost_energy=3, ops=(Op(OP_EMPOWER),)),
     ),
 
-    # [Empower] {1 energy}{Order rune}{Order rune}. [Empowered] I have
-    # [Assault 2].  Two rune symbols is cost_power=2, not one.
-    "Ambessa, Respected and Feared": (
-        Ability(TR_ACTIVATED, cost_energy=1, cost_power=2,
-                ops=(Op(OP_EMPOWER),)),
-    ),
-
     # [Empower] {2 energy}{Fury rune}. [Empowered] I have [Assault 3].
     "Shadow Fiend": (
         Ability(TR_ACTIVATED, cost_energy=2, cost_power=1,
@@ -2969,6 +3038,113 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
         Ability(TR_DEATH,
                 ops=(Op(OP_CREATE_TOKEN, target=T_MY_BASE, n=2,
                         token=RECRUIT_TOKEN, cond=COND_EMPOWERED),)),
+    ),
+
+    # [Deflect] [Empower] {7 energy}. [Empowered] I have +7 Might.
+    # The largest single static in the pool, and the cost says so.
+    "Steel Paws": (
+        Ability(TR_ACTIVATED, cost_energy=7, ops=(Op(OP_EMPOWER),)),
+    ),
+
+    # [Empower] {2 energy}. [Empowered] I have +1 Might and [Ganking].
+    "Kinkou Lifeblade": (
+        Ability(TR_ACTIVATED, cost_energy=2, ops=(Op(OP_EMPOWER),)),
+    ),
+
+    # [Empower] {3 energy}. [Empowered] I have [Deflect] and [Shield 3].
+    "Serene Ascetic": (
+        Ability(TR_ACTIVATED, cost_energy=3, ops=(Op(OP_EMPOWER),)),
+    ),
+
+    # [Empower] {1 energy}{any rune}{any rune}. [Empowered] I have +2 Might.
+    # [Empowered] [Deathknell] Channel 2 runes exhausted.
+    # Two rune symbols is cost_power=2 -- "{any rune}" is one Power of any
+    # domain, and `plan_ability_cost` reads the count, not the symbol.
+    "Baccai Witherclaw": (
+        Ability(TR_ACTIVATED, cost_energy=1, cost_power=2,
+                ops=(Op(OP_EMPOWER),)),
+        Ability(TR_DEATH,
+                ops=(Op(OP_CHANNEL, n=2, cond=COND_EMPOWERED),)),
+    ),
+
+    # [Empower] {3 energy}. [Empowered] When I move, draw 1.
+    # A dependent ability that is a TRIGGER (828.1.d), so the gate rides on
+    # the op: he moves either way and the draw is what the status buys.
+    "Covert Informant": (
+        Ability(TR_ACTIVATED, cost_energy=3, ops=(Op(OP_EMPOWER),)),
+        Ability(TR_MOVE, ops=(Op(OP_DRAW, n=1, cond=COND_EMPOWERED),)),
+    ),
+
+    # [Deflect 2] [Empower] {8 energy}. [Empowered] When I conquer, you score
+    # 1 point.  Eight Energy for a second point per Conquer -- and 471.1.b
+    # still applies to the Conquer that carries it, not to this.
+    "Nasus, Ascended": (
+        Ability(TR_ACTIVATED, cost_energy=8, ops=(Op(OP_EMPOWER),)),
+        Ability(TR_CONQUER, ops=(Op(OP_SCORE, n=1, cond=COND_EMPOWERED),)),
+    ),
+
+    # [Empower] - {1 energy} OR {Body rune}. [Empowered] I have +1 Might.
+    #
+    # **"Pay either cost" is two activated abilities, not one with a choice.**
+    # 827.1.c.1 expands [Empower Cost] into "[Cost]: Empower this", and a card
+    # printing two costs expands into two of those. The action layer already
+    # offers each activated ability separately and prices each on its own, so
+    # the player picks by picking which to activate -- and a seat that can
+    # afford only one is offered only that one, which a single ability with an
+    # internal choice would have got wrong.
+    "Legion Marauder": (
+        Ability(TR_ACTIVATED, cost_energy=1, ops=(Op(OP_EMPOWER),)),
+        Ability(TR_ACTIVATED, cost_power=1, ops=(Op(OP_EMPOWER),)),
+    ),
+
+    # [Empower] {6 energy}{Fury rune}. Your units have +1 Might. If I'm
+    # [Empowered], they have +2 Might INSTEAD.
+    #
+    # "Instead" is expressed as a second static that ADDS, which is the same
+    # number by a different route: +1 always, +1 more while Empowered, so the
+    # board reads +2 and never +3. Writing it as a replacement would need the
+    # static layer to know that one entry supersedes another, which nothing
+    # else in the pool asks for.
+    "Rage Amplifier": (
+        Ability(TR_ACTIVATED, cost_energy=6, cost_power=1,
+                ops=(Op(OP_EMPOWER),)),
+    ),
+
+    # [Empower] {2 energy}. Exhaust: Give a unit +2 Might this turn. If this
+    # is [Empowered], give that unit +4 Might this turn INSTEAD.
+    #
+    # The same "instead" arithmetic, on ops rather than statics: +2, then +2
+    # more while Empowered. Both point at the one slot, so the unit that was
+    # chosen is the unit that grows.
+    "Tools of Empire": (
+        Ability(TR_ACTIVATED, cost_energy=2, ops=(Op(OP_EMPOWER),)),
+        Ability(TR_ACTIVATED, cost_exhaust=True,
+                targets=(TargetSpec(who=W_ANY),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=2),
+                     Op(OP_MODIFY_MIGHT, target=0, n=2,
+                        cond=COND_EMPOWERED))),
+    ),
+
+    # [Empower] {3 energy}{Order rune}. [Empowered] Your units that are
+    # [Empowered] have +2 Might (including me).
+    "Aurok General": (
+        Ability(TR_ACTIVATED, cost_energy=3, cost_power=1,
+                ops=(Op(OP_EMPOWER),)),
+    ),
+
+    # [Empower] {1 energy}{Order rune}{Order rune}.
+    # [Empowered] I have [Assault 2].
+    # [Empowered] When I attack, kill an enemy unit here with LESS MIGHT THAN
+    # ME.  The second dependent ability, which was missing: the [Assault 2]
+    # static was transcribed and this was not, so the card was on the board
+    # doing half of what it prints.
+    "Ambessa, Respected and Feared": (
+        Ability(TR_ACTIVATED, cost_energy=1, cost_power=2,
+                ops=(Op(OP_EMPOWER),)),
+        Ability(TR_ATTACK_OR_DEFEND, subject_role=ROLE_ATTACK,
+                targets=(TargetSpec(who=W_ENEMY, same_loc_as_source=True,
+                                    less_might_than_source=True),),
+                ops=(Op(OP_KILL, target=0, cond=COND_EMPOWERED),)),
     ),
 
     # [Deathknell] Channel 1 rune exhausted.

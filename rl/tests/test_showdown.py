@@ -292,3 +292,62 @@ ok("344.1 escalates in place and Renekton keeps the Attacker designation")
 
 
 print("\n\033[32mall showdown tests passed\033[0m")
+
+
+# ---------------------------------------------------------------------------
+print("\n[enter_main] a Cleanup that OPENS a Showdown keeps its priority")
+
+# `enter_main` runs a Cleanup because a Combat staged during the opponent's
+# turn has nowhere else to be initiated (461, and 321 forbids a Cleanup while
+# the Chain resolves). That Cleanup can therefore OPEN a Showdown -- and
+# `enter_main` then reset priority and Focus for the Main Phase anyway,
+# clobbering the values 345/464.2.d had just written.
+#
+# The failure is silent and total: Focus sits at -1, `after_resolution` passes
+# it with `1 - focus` so it flips to 2 and back to -1 forever, `acting_seat`
+# returns a seat that does not exist, and the driver loop exits. The game is
+# scored undecided with `truncated` False -- a stall wearing a draw's clothes.
+# Found by a random deck game, not by a test, which is why an invariant now
+# asserts it too.
+from rl.engine import phases as _ph
+from rl.engine.state import N_SEATS as _N_SEATS
+
+_s = fresh()
+_s.active, _s.priority = 0, 0
+# Seat 1 has a unit standing where seat 0 controls the battlefield: contested
+# ground with no Combat yet initiated, which is what `cleanup` is for. Seat 1
+# also holds an affordable [Reaction], because a Showdown whose window nobody
+# can act in runs straight through to Combat and never yields -- and it is the
+# yield that leaves the corrupted Focus visible.
+_s.bf_ctrl[0] = 0
+_s.hand[1, 0] = GUST
+_s.n_hand[1] = 1
+_mine = _s.add_permanent(PLAIN3, 0, bf_loc(0), is_unit=True)
+_theirs = _s.add_permanent(PLAIN3, 1, bf_loc(0), is_unit=True)
+_ph.enter_main(_s, T, V1)
+
+if int(_s.showdown_bf) < 0:
+    die("enter_main", "the Cleanup should have initiated the staged Combat")
+if not 0 <= int(_s.focus) < _N_SEATS:
+    die("enter_main", f"a live Showdown must have a real Focus, got "
+                      f"{int(_s.focus)} -- 345/464.2.d give it to a SEAT")
+if not 0 <= int(_s.priority) < _N_SEATS:
+    die("enter_main", f"...and a real priority, got {int(_s.priority)}")
+if A.acting_seat(_s) < 0:
+    die("enter_main", "nobody can act: the driver loop exits here and the "
+                      "game is scored undecided with truncated=False")
+ok("a Showdown opened by enter_main's Cleanup keeps priority and Focus")
+
+# The control: with nothing to contest, the Main Phase defaults still apply.
+_s = fresh()
+_s.active, _s.priority = 0, 0
+_s.add_permanent(PLAIN3, 0, bf_loc(0), is_unit=True)
+_ph.enter_main(_s, T, V1)
+if int(_s.showdown_bf) >= 0:
+    die("enter_main", "uncontested ground must not open a Showdown")
+if int(_s.priority) != 0 or int(_s.focus) != -1:
+    die("enter_main", "with no Showdown, Main resets priority to the turn "
+                      "player and clears Focus")
+ok("...and with nothing staged the Main Phase defaults are still written")
+
+print("\n\033[32mall showdown tests passed\033[0m")

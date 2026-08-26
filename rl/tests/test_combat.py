@@ -6,11 +6,34 @@ import numpy as np
 from rl.config import Config
 from rl.engine import combat, phases, invariants
 from rl.engine.cardtable import full_table
+from rl.engine.effects import (TR_ACTIVATED, TR_PLAY_ME, abilities_for,
+                               statics_for)
 from rl.engine.state import (GameState, P_ALIVE, P_LOC, P_READY, P_DMG,
                              base_loc, bf_loc)
 
 T = full_table()
 CFG = Config()
+
+# A fixture must be INERT in the step under test, or the test measures the
+# card instead of the rule. `_COMBAT_MODIFIERS` below records the first time
+# that bit -- a [Shield 2] Tank whose Might was different during combat -- and
+# a scripted ABILITY is the same hazard one layer up: `PLAIN[5]` resolved to
+# Ambessa, Respected and Feared, and the day her "when I attack, kill a
+# smaller unit" was transcribed the combat tests started queueing a trigger
+# nothing here drains.
+#
+# So a fixture may carry no static at all, and no ability that these tests can
+# fire. TR_PLAY_ME is allowed because `put` adds a permanent directly rather
+# than playing it, and TR_ACTIVATED because nothing here activates anything;
+# both exclusions would leave some Might values with no card in the pool.
+_INERT_TRIGGERS = (TR_PLAY_ME, TR_ACTIVATED)
+
+
+def _inert(cid) -> bool:
+    if statics_for(T, cid):
+        return False
+    return all(a.trigger in _INERT_TRIGGERS for a in abilities_for(T, cid))
+
 
 # Pick real cards by might so the test exercises the actual card table.
 def card_with(might, kw=None, exclude_kw=()):
@@ -20,6 +43,8 @@ def card_with(might, kw=None, exclude_kw=()):
         if kw and not T.has(cid, kw):
             continue
         if any(T.has(cid, k) for k in exclude_kw):
+            continue
+        if not _inert(cid):
             continue
         return cid
     raise LookupError(f"no unit with might={might} kw={kw}")
@@ -358,7 +383,8 @@ ok("identical hashes from a cloned position; the snapshot is untouched")
 print("\n[11] [Stun] breaks the symmetry -- the owner's 5-into-9 scenario")
 BIG = next(cid for cid in range(len(T.names))
            if T.is_type(cid, "Unit") and T.might[cid] == 9
-           and not any(T.has(cid, k) for k in ("Tank", "Backline", "Temporary")))
+           and not any(T.has(cid, k) for k in ("Tank", "Backline", "Temporary"))
+           and _inert(cid))
 s = fresh()
 s.active = 0
 a = put(s, PLAIN[5], 0, base_loc(0))

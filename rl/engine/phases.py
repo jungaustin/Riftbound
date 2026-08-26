@@ -295,8 +295,17 @@ def enter_main(state: GameState, table: CardTable | None = None,
         combat.cleanup(state, table, cfg, mover=-1, dst=-1)
     state.clear_pools()
     state.phase = MAIN
-    state.priority = state.active
-    state.focus = -1
+    # **That Cleanup can open a Showdown, and the Showdown owns priority.**
+    # 345/464.2.d hand both priority and Focus to the seat that applied
+    # Contested, which `open_showdown` has just done -- so overwriting them
+    # with the Main-Phase defaults is not a reset, it is a corruption. It left
+    # `focus` at -1 with a Showdown live, `chain.after_resolution` then flipped
+    # -1 to 2 and back to -1 forever, and `acting_seat` returned -1: a position
+    # that is not terminal and that nobody can act in. The driver loop exits,
+    # and the game is scored as undecided with no truncation to show for it.
+    if state.showdown_bf < 0:
+        state.priority = state.active
+        state.focus = -1
 
 
 def heal_board(state: GameState) -> None:

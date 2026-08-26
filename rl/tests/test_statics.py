@@ -923,3 +923,209 @@ if combat.perm_kw(s, T, mate, "Shield") != 0:
 ok("...and it is his: the grant lapses the moment he leaves the board")
 
 print("\n\033[32mall static tests passed\033[0m")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Empower, continued] two costs, an 'instead', and a status "
+      "requirement")
+
+# 827: "Pay EITHER cost: Empower me." Legion Marauder prints {1 energy} OR
+# {Body rune}, which is two activated abilities rather than one with an
+# internal choice -- so a seat that can afford only one is offered only that
+# one, and the player picks by picking which to activate.
+from rl.config import DOMAINS as _DOMS
+
+MARAUDER = T.id_of("Legion Marauder")
+_BODY = _DOMS.index("Body")
+
+
+def marauder_offers(body_runes, other_runes):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    s.add_permanent(MARAUDER, 0, base_loc(0))
+    s.runes_ready[0, _BODY] = body_runes
+    s.runes_ready[0, (_BODY + 1) % len(_DOMS)] = other_runes
+    return len([a for a in A.legal_actions(s, T, CFG, 0)
+                if a.kind == A.A_ACTIVATE])
+
+
+if marauder_offers(body_runes=2, other_runes=0) != 2:
+    die("either cost", "with both affordable, BOTH costs are offered")
+ok("'pay either cost' is two activated abilities, not one")
+
+# The asymmetry the two costs actually have: Energy is generic (163.1.a) and
+# comes from exhausting ANY ready rune, so a Body board pays both; {Body rune}
+# is Power (163.2) and is bound to its domain, so a board with no Body rune
+# pays only the Energy half. There is no mirror case -- no board can pay the
+# Power cost and not the Energy one -- which is itself the rule showing.
+if marauder_offers(body_runes=0, other_runes=2) != 1:
+    die("either cost", "with no Body rune to recycle, only the Energy cost is "
+                       "payable and only that one should be offered")
+ok("...so a seat that can afford one of them is offered exactly that one")
+
+if marauder_offers(body_runes=0, other_runes=0) != 0:
+    die("either cost", "with an empty board neither cost is payable")
+ok("...and an empty board is offered neither")
+
+
+# "Your units have +1 Might. If I'm [Empowered], they have +2 INSTEAD."
+# Written as two statics that ADD, which is the same number by a different
+# route -- the board must read +2 and never +3.
+AMP = T.id_of("Rage Amplifier")
+s = fresh()
+amp = s.add_permanent(AMP, 0, base_loc(0), is_unit=False)
+friend = s.add_permanent(_PLAIN, 0, bf_loc(0))
+printed = int(T.might[_PLAIN])
+if m(s, friend) != printed + 1:
+    die("instead", f"the ungated half is +1, got {m(s, friend) - printed}")
+ok("Rage Amplifier is worth +1 the turn it lands, before any Empowering")
+
+s.set_flag(amp, F_EMPOWERED)
+if m(s, friend) != printed + 2:
+    die("instead", f"'+2 INSTEAD' must read +2, got {m(s, friend) - printed} "
+                   f"-- two statics that add, not two that stack")
+ok("...and +2 once Empowered: 'instead' is arithmetic, never +3")
+
+
+# "Your units THAT ARE [Empowered] have +2 Might (including me)." Both
+# readings of the status in one sentence: the static exists only while the
+# GENERAL is Empowered, and it then reaches only units that are.
+GENERAL = T.id_of("Aurok General")
+s = fresh()
+gen = s.add_permanent(GENERAL, 0, bf_loc(0))
+plain_friend = s.add_permanent(_PLAIN, 0, bf_loc(0))
+other = s.add_permanent(_PLAIN, 0, bf_loc(0))
+gen_printed, friend_printed = int(T.might[GENERAL]), int(T.might[_PLAIN])
+
+s.set_flag(other, F_EMPOWERED)
+if m(s, other) != friend_printed:
+    die("aurok", "with the General not Empowered the static does not exist")
+ok("Aurok General's static is off while HE is not Empowered")
+
+s.set_flag(gen, F_EMPOWERED)
+if m(s, other) != friend_printed + 2:
+    die("aurok", "an Empowered friendly unit gets +2")
+if m(s, plain_friend) != friend_printed:
+    die("aurok", "'units THAT ARE Empowered' -- a plain unit gets nothing")
+if m(s, gen) != gen_printed + 2:
+    die("aurok", "'(including me)' -- he is a friendly Empowered unit too")
+ok("...and then reaches only Empowered units, himself among them")
+
+print("\n\033[32mall static tests passed\033[0m")
+
+
+# ---------------------------------------------------------------------------
+print("\n[two activated abilities on one permanent]")
+
+# `activatable` used to `break` after the first activated ability and
+# `pack_activate` carried no index, so the second was unreachable: a card on
+# the board that could not do half of what it prints. Tools of Empire is the
+# discriminating case, because its two abilities have DIFFERENT effects --
+# [Empower] {2 energy}, and "Exhaust: give a unit +2 Might this turn".
+TOOLS = T.id_of("Tools of Empire")
+
+s = fresh()
+tools = s.add_permanent(TOOLS, 0, base_loc(0), is_unit=False)
+victim = s.add_permanent(_PLAIN, 0, bf_loc(0))
+s.runes_ready[0, :] = 4
+
+acts = [a for a in A.legal_actions(s, T, CFG, 0) if a.kind == A.A_ACTIVATE]
+if len(acts) != 2:
+    die("two abilities", f"both abilities should be offered, got {len(acts)}")
+if len({a.arg for a in acts}) != 2:
+    die("two abilities", "the two offers must be DISTINGUISHABLE args, or the "
+                         "policy is choosing between two identical actions")
+ok("a permanent printing two activated abilities offers both, distinctly")
+
+for a in acts:
+    _perm, _donor, _k = A.unpack_activate(int(a.arg))
+    if _perm != tools or _donor != tools:
+        die("two abilities", f"arg {a.arg} decoded to the wrong row")
+if {A.unpack_activate(int(a.arg))[2] for a in acts} != {0, 1}:
+    die("two abilities", "the args must decode to ability indices 0 and 1")
+ok("...and each decodes back to its own ability index")
+
+
+# The pump ability is index 1. Running it must give +2 and NOT Empower.
+def use(k, target=None):
+    st = fresh()
+    src = st.add_permanent(TOOLS, 0, base_loc(0), is_unit=False)
+    tgt = st.add_permanent(_PLAIN, 0, bf_loc(0))
+    st.runes_ready[0, :] = 4
+    A.apply(st, T, CFG, A.Action(A.A_ACTIVATE, A.pack_activate(src, src, k)))
+    if st.pend_slot >= 0:
+        A.apply(st, T, CFG, A.Action(A.A_TARGET, tgt))
+    for _ in range(8):
+        if st.n_chain == 0 and st.n_trig == 0 and st.pend_slot < 0:
+            break
+        A.apply(st, T, CFG, A.Action(A.A_PASS))
+    return st, src, tgt
+
+
+st, src, tgt = use(1)
+if m(st, tgt) != int(T.might[_PLAIN]) + 2:
+    die("two abilities", f"ability 1 gives +2 Might, got "
+                         f"{m(st, tgt) - int(T.might[_PLAIN])}")
+if st.has_flag(src, F_EMPOWERED):
+    die("two abilities", "ability 1 is the pump, not the [Empower]")
+ok("...and activating index 1 runs the pump, not the [Empower]")
+
+st, src, tgt = use(0)
+if not st.has_flag(src, F_EMPOWERED):
+    die("two abilities", "ability 0 is the [Empower]")
+ok("...while index 0 runs the [Empower], which is the whole point of an index")
+
+# "If this is [Empowered], give that unit +4 INSTEAD" -- the same two-ops-that-
+# add arithmetic, now on a live board.
+st = fresh()
+src = st.add_permanent(TOOLS, 0, base_loc(0), is_unit=False)
+tgt = st.add_permanent(_PLAIN, 0, bf_loc(0))
+st.runes_ready[0, :] = 4
+st.set_flag(src, F_EMPOWERED)
+A.apply(st, T, CFG, A.Action(A.A_ACTIVATE, A.pack_activate(src, src, 1)))
+A.apply(st, T, CFG, A.Action(A.A_TARGET, tgt))
+for _ in range(8):
+    if st.n_chain == 0 and st.n_trig == 0 and st.pend_slot < 0:
+        break
+    A.apply(st, T, CFG, A.Action(A.A_PASS))
+if m(st, tgt) != int(T.might[_PLAIN]) + 4:
+    die("two abilities", f"'+4 INSTEAD' must read +4, got "
+                         f"{m(st, tgt) - int(T.might[_PLAIN])}")
+ok("...and Empowered it gives +4, never +6")
+
+
+# ---------------------------------------------------------------------------
+print("\n[less Might than ME] -- a comparison against the source, not a slot")
+
+# Ambessa, Respected and Feared: "[Empowered] when I attack, kill an enemy unit
+# here with less Might than me." `less_might_than` compares against an earlier
+# SLOT; the source is not a slot, so the two cannot share a field.
+from rl.engine.effects import TR_ATTACK_OR_DEFEND, abilities_for as _abils
+from rl.engine import resolve as _res
+
+AMBESSA = T.id_of("Ambessa, Respected and Feared")
+_KILL = next(a for a in _abils(T, AMBESSA) if a.trigger == TR_ATTACK_OR_DEFEND)
+
+s = fresh()
+amb = s.add_permanent(AMBESSA, 0, bf_loc(0))
+small = s.add_permanent(_PLAIN, 1, bf_loc(0))          # 2 Might
+big = s.add_permanent(T.id_of("Kadregrin the Infernal"), 1, bf_loc(0))
+elsewhere = s.add_permanent(_PLAIN, 1, bf_loc(1))
+
+got = _res.legal_targets(s, T, _KILL, 0, 0, [], -1, source=amb)
+if small not in got:
+    die("less than me", "a smaller enemy standing with her is a legal choice")
+if big in got:
+    die("less than me", "a BIGGER enemy is not 'less Might than me'")
+if elsewhere in got:
+    die("less than me", "'here' -- an enemy at the other battlefield is out")
+ok("'less Might than me' reads the source's own Might, and only 'here'")
+
+# Effective Might on both sides: pump the small one out of range.
+combat.set_might_mod(s, T, small, 20)
+if small in _res.legal_targets(s, T, _KILL, 0, 0, [], -1, source=amb):
+    die("less than me", "the comparison must read EFFECTIVE Might, so a unit "
+                        "pumped in the response window leaves range")
+ok("...and both sides are effective Might, so a trick answers it")
+
+print("\n\033[32mall static tests passed\033[0m")

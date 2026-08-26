@@ -44,7 +44,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                CT_ENEMIES_AT_TARGET, COND_READY_ENEMY_HERE,
                                COND_FIRST_TURN, COND_WAS_MIGHTY,
                                COND_FEWER_RUNES_THAN_OPP,
-                               COND_PAID_ADDITIONAL,
+                               COND_PAID_ADDITIONAL, COND_TARGET_EMPOWERED,
                                COND_LEGION, COND_LEVEL, COND_NONE,
                                COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
@@ -246,6 +246,15 @@ def _matches(state: GameState, table: CardTable, spec: TargetSpec, perm: int,
         other = chosen[spec.less_might_than]
         if other < 0 or combat.might(state, table, perm) >= combat.might(
                 state, table, other):
+            return False
+    # "...with less Might than ME" -- the same comparison against the ability's
+    # SOURCE, which is not a slot. A dead or non-permanent source has no Might
+    # to compare against, so nothing qualifies rather than everything.
+    if spec.less_might_than_source:
+        if source < 0 or state.perms[source, P_ALIVE] != 1:
+            return False
+        if combat.might(state, table, perm) >= combat.might(
+                state, table, source):
             return False
     # "a gear with Energy cost no more than {1 energy}" -- the same restriction
     # `_trash_card_ok` already applied to a card in a pile, now on the board.
@@ -762,6 +771,13 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
                     and int(state.perms[i, P_CTRL]) == seat
                     and table.is_type(int(state.perms[i, P_CARD]), "Unit"))
         return total >= op.level
+    if op.cond == COND_TARGET_EMPOWERED:
+        # "If IT'S [Empowered]" -- the op's own target, read live at
+        # resolution. Not a restriction: the spell is played and the target
+        # chosen either way, and 355.9.b is why that matters here -- an
+        # opponent can answer by disempowering in the response window.
+        a = targets[op.target] if 0 <= op.target < len(targets) else -1
+        return a >= 0 and bool(int(state.perms[a, P_FLAGS]) & F_EMPOWERED)
     if op.cond == COND_PAID_ADDITIONAL:
         # "When you play me, IF YOU PAID the additional cost, ...". Recorded on
         # the row as the card was played, because the payment is a moment that

@@ -749,9 +749,10 @@ ok("...and 'ready your runes' readies all of them, not a capped number")
 # donor is untouched. That is the whole card -- one exhaust reused across the
 # board, and the donors keep theirs.
 #
-# An A_ACTIVATE used to be identified by its permanent alone, because
-# `_activate` takes the FIRST activated ability and no card has two.
-# Heimerdinger holds many, so the arg carries a packed (permanent, donor).
+# An A_ACTIVATE used to be identified by its permanent alone. Heimerdinger
+# holds many abilities, so the arg carries a packed (permanent, donor) -- and
+# since Legion Marauder and Tools of Empire print two activated abilities each,
+# it carries an ability INDEX too. All three round-trip through one encoding.
 
 HEIMER = T.id_of("Heimerdinger - Inventor")
 DARK_ICE = T.id_of("Heart of Dark Ice")      # Exhaust: give a unit +3 Might
@@ -759,10 +760,25 @@ HEIM_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit")
                  and not T.is_token(c) and int(T.might[c]) >= 3)
 
 for _perm, _donor in ((0, 0), (5, 5), (3, 7), (47, 0), (0, 47)):
-    if A.unpack_activate(A.pack_activate(_perm, _donor)) != (_perm, _donor):
+    if A.unpack_activate(A.pack_activate(_perm, _donor)) != (_perm, _donor, 0):
         die("heimer", f"the packed activate arg must round-trip "
                       f"({_perm}, {_donor})")
 ok("a packed (permanent, donor) activate arg round-trips")
+
+# ...and so does an own-permanent ability index, in a band that leaves every
+# older value meaning what it did.
+for _perm in (0, 5, 47):
+    for _k in (0, 1, 2, 5):
+        got = A.unpack_activate(A.pack_activate(_perm, _perm, _k))
+        if got != (_perm, _perm, _k):
+            die("heimer", f"(perm={_perm}, k={_k}) round-tripped to {got}")
+_all = {A.pack_activate(p, p, k) for p in range(48) for k in range(4)}
+_all |= {A.pack_activate(p, d) for p in range(48) for d in range(48) if p != d}
+_all |= {A.pack_legend_activate(k) for k in range(A.MAX_LEGEND_ACT)}
+if len(_all) != 48 * 4 + 48 * 47 + A.MAX_LEGEND_ACT:
+    die("heimer", "two different activations collided on one arg -- the bands "
+                  "overlap, and a policy would be choosing blind")
+ok("...and the three bands never collide: every activation has its own arg")
 
 s = GameState()
 s.phase, s.active, s.priority = MAIN, 0, 0
@@ -772,7 +788,8 @@ u = s.add_permanent(HEIM_BODY, 0, bf_loc(0))
 before = _combat.might(s, T, u)
 
 borrowed = [a for a in A.legal_actions(s, T, V1, 0)
-            if a.kind == A.A_ACTIVATE and A.unpack_activate(a.arg) == (h, d)]
+            if a.kind == A.A_ACTIVATE
+            and A.unpack_activate(a.arg) == (h, d, 0)]
 if not borrowed:
     die("heimer", "Heimerdinger should be offered the gear's Exhaust ability")
 A.apply(s, T, V1, borrowed[0])

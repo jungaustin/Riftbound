@@ -253,11 +253,28 @@ def _played_bits(table: CardTable, card: int) -> int:
 # and every consumer reads it as one int. A plain row stays a plain row, so
 # nothing that already exists changes meaning; only the borrowed case is
 # encoded, and `arg >= MAX_PERMS` is the tag.
-def pack_activate(perm: int, donor: int) -> int:
-    """(activating permanent, ability donor) -> one action arg."""
-    if donor == perm:
+def pack_activate(perm: int, donor: int, k: int = 0) -> int:
+    """(activating permanent, ability donor, ability index) -> one action arg.
+
+    `k` indexes the permanent's activated abilities. It used to not exist,
+    because the comment below `unpack_activate` asserted that "a permanent
+    prints at most one activated ability" -- true of the pool as scripted, and
+    false of the pool as printed. Legion Marauder's [Empower] prints two costs
+    ("pay EITHER"), which 827.1.c.1 expands into two abilities; Tools of Empire
+    prints an [Empower] and an Exhaust ability. `activatable` used to `break`
+    after the first, so the second was simply unreachable -- a card on the
+    board that could not do half of what it says.
+
+    Encoded as a band ABOVE the legend band so that every arg that already had
+    a meaning keeps it: k == 0 is the bare row it always was.
+    """
+    if donor != perm:
+        assert k == 0, "a borrowed ability is selected by its Exhaust cost, " \
+                       "not by index -- see `activatable`"
+        return MAX_PERMS * (donor + 1) + perm
+    if k == 0:
         return perm
-    return MAX_PERMS * (donor + 1) + perm
+    return PERM_ACT_K0 + (k - 1) * MAX_PERMS + perm
 
 
 def pick_card(state: GameState, arg: int) -> int:
@@ -292,19 +309,23 @@ def pick_card(state: GameState, arg: int) -> int:
     return -1
 
 
-def unpack_activate(arg: int) -> tuple[int, int]:
-    """The inverse. Returns (permanent, donor); donor == permanent if its own.
+def unpack_activate(arg: int) -> tuple[int, int, int]:
+    """The inverse. Returns (permanent, donor, ability index).
 
-    Never call this on a LEGEND activation -- ask `is_legend_activate` first.
-    A legend's arg lives in a band above every packed pair and decodes to an
-    ability index, not to rows; run through here it would come back as two
-    plausible-looking permanent indices.
+    `donor == permanent` for an ordinary activation. Never call this on a
+    LEGEND activation -- ask `is_legend_activate` first. A legend's arg lives
+    in its own band and decodes to an ability index, not to rows; run through
+    here it would come back as two plausible-looking permanent indices.
     """
     assert not is_legend_activate(arg), (
         "a legend activation carries an ability index, not a (perm, donor) pair")
     if arg < MAX_PERMS:
-        return arg, arg
-    return arg % MAX_PERMS, arg // MAX_PERMS - 1
+        return arg, arg, 0
+    if arg >= PERM_ACT_K0:
+        rest = arg - PERM_ACT_K0
+        perm = rest % MAX_PERMS
+        return perm, perm, rest // MAX_PERMS + 1
+    return arg % MAX_PERMS, arg // MAX_PERMS - 1, 0
 
 
 # A legend activation reuses `A_ACTIVATE` because it IS one -- 151.2 makes no
@@ -312,21 +333,31 @@ def unpack_activate(arg: int) -> tuple[int, int]:
 # targeting and finalization path for a source that behaves identically once it
 # is on the Chain. The arg says which ability instead of which row: the legend
 # is always the acting seat's own (107.4.d fixes it in place, so there is no
-# choosing between legends), and a legend may print SEVERAL activated abilities
-# where a permanent prints at most one.
+# choosing between legends).
 #
-# The band starts above every value `pack_activate` can produce, which for
-# donor == MAX_PERMS - 1 and perm == MAX_PERMS - 1 is MAX_PERMS*(MAX_PERMS+1)-1.
+# The band starts above every value the (perm, donor) pair can produce, which
+# for donor == MAX_PERMS - 1 and perm == MAX_PERMS - 1 is
+# MAX_PERMS*(MAX_PERMS+1)-1. It is CLOSED rather than open-ended, because the
+# own-ability-index band sits above it.
 LEGEND_ACT0 = MAX_PERMS * (MAX_PERMS + 1)
+# A reserve rather than a measurement: the widest legend in the pool prints one
+# activated ability, and sizing the band to that would make the next printing
+# silently collide with a permanent's arg. `pack_legend_activate` asserts.
+MAX_LEGEND_ACT = 8
+# Own ability #k of a permanent, for k >= 1. See `pack_activate`.
+PERM_ACT_K0 = LEGEND_ACT0 + MAX_LEGEND_ACT
 
 
 def pack_legend_activate(k: int) -> int:
     """The k-th activated ability of the acting seat's own legend."""
+    assert k < MAX_LEGEND_ACT, (
+        f"legend ability index {k} is past the reserved band; raise "
+        f"MAX_LEGEND_ACT (it sits below PERM_ACT_K0)")
     return LEGEND_ACT0 + k
 
 
 def is_legend_activate(arg: int) -> bool:
-    return arg >= LEGEND_ACT0
+    return LEGEND_ACT0 <= arg < PERM_ACT_K0
 
 
 def legend_ability_index(arg: int) -> int:
@@ -402,7 +433,10 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
         if row[P_ALIVE] != 1 or int(row[P_CTRL]) != seat:
             continue
         card = int(row[P_CARD])
-        for ab in abilities_for(table, card):
+        # Enumerated, not first-match: a permanent may print more than one
+        # activated ability and they are genuinely different choices --
+        # Legion Marauder's two [Empower] costs are the card's whole decision.
+        for k, ab in enumerate(abilities_for(table, card)):
             if ab.trigger != TR_ACTIVATED:
                 continue
             if not chain.speed_ok(state, cfg, seat, ab.speed):
@@ -428,8 +462,7 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
             if ab.n_targets and not rsv.can_be_cast(state, table, ab, seat,
                                                     -1, i, card):
                 continue
-            out.append(pack_activate(i, i))
-            break
+            out.append(pack_activate(i, i, k))
 
     # Heimerdinger - Inventor: "I have all Exhaust abilities of all friendly
     # legends, units, and gear." He HAS them, so the ability is his: the
@@ -1345,16 +1378,28 @@ def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
     if is_legend_activate(perm):
         return _activate_legend(state, table, cfg, seat,
                                 legend_ability_index(perm))
-    perm, donor = unpack_activate(perm)
+    perm, donor, k = unpack_activate(perm)
     # The SPEC comes from the donor; the SOURCE stays the activating permanent.
     # For an ordinary activation the two are the same permanent. `item_spec`
     # already reads C_CARD and C_SRC independently, so a borrowed ability needs
     # nothing new on the Chain.
     card = int(state.perms[donor, P_CARD])
-    idx = next(k for k, ab in enumerate(abilities_for(table, card))
-               if ab.trigger == TR_ACTIVATED
-               and (donor == perm or ab.cost_exhaust))
+    if donor == perm:
+        # The arg carries the index, so two abilities on one permanent are two
+        # distinguishable actions rather than one that always picks the first.
+        idx = k
+    else:
+        # A BORROWED ability is selected by its Exhaust cost instead --
+        # Heimerdinger has "all Exhaust abilities", so the cost is the filter
+        # and there is nothing for an index to choose between. No card in the
+        # pool prints two Exhaust abilities; if one does, this picks the first
+        # and the assert in `pack_activate` is where that starts being wrong.
+        idx = next(j for j, ab in enumerate(abilities_for(table, card))
+                   if ab.trigger == TR_ACTIVATED and ab.cost_exhaust)
     spec = abilities_for(table, card)[idx]
+    assert spec.trigger == TR_ACTIVATED, (
+        f"A_ACTIVATE named ability {idx} of {table.names[card]!r}, "
+        f"which is not an activated ability")
 
     # "When you use an activated ability of a GEAR" -- Prize of Progress. Fired
     # as the ability is activated (151.2.a makes that the moment it is played),
