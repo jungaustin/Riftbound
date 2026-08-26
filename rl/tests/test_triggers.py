@@ -2193,3 +2193,328 @@ if int(_s.pend_phase) >= 0 or int(_s.phase) != MAIN:
     die("dusk", f"a suspended turn must resume all the way to Main; ended in "
                 f"phase {int(_s.phase)} with pend_phase {int(_s.pend_phase)}")
 ok("a suspended turn always resumes, through Channel and Draw, into Main")
+
+
+# ---------------------------------------------------------------------------
+print("\n[26] a watcher states which SIDE of an event it wants")
+
+# `fire_watchers` used to be called for the dying unit's controller alone, so
+# "when an ENEMY unit dies" had no firing site at all. A death now fires for
+# both seats and each watcher matches on the subject's side -- which means the
+# default (`subject_enemy=False`) has to keep meaning "friendly", or every
+# existing death watcher would double.
+from rl.engine.state import P_CTRL
+from rl.engine.effects import TR_BEGINNING
+
+PYKE = T.id_of("Pyke - Returned")        # once/turn, an ENEMY unit dies -> Gold
+VIKTOR = T.id_of("Viktor - Leader")      # another FRIENDLY non-Recruit dies
+GOLD = T.id_of("Gold // Buff")
+
+
+def golds(s, seat=0):
+    return sum(1 for i in range(s.n_perms)
+               if int(s.perms[i, P_CARD]) == GOLD
+               and s.perms[i, P_ALIVE] == 1
+               and int(s.perms[i, P_CTRL]) == seat)
+
+
+def pyke_board(loc, victim_seat):
+    s = fresh(hand=[])
+    s.add_permanent(PYKE, 0, loc, is_unit=True)
+    victim = s.add_permanent(PLAIN2, victim_seat, bf_loc(0), is_unit=True)
+    return s, victim
+
+
+s, victim = pyke_board(bf_loc(0), victim_seat=1)
+combat.destroy(s, T, victim)
+drain_all(s)
+if golds(s) != 1:
+    die("enemy death", f"an enemy death must pay Pyke once, got {golds(s)}")
+ok("'when an ENEMY unit dies' fires from the other seat's death")
+
+s, victim = pyke_board(bf_loc(0), victim_seat=0)
+combat.destroy(s, T, victim)
+drain_all(s)
+if golds(s):
+    die("enemy death", "a FRIENDLY death fired an enemy-only watcher")
+ok("...and never for one of your own, which is a different card")
+
+# "While I'm at a battlefield" is about PYKE, not about where the enemy died.
+s, victim = pyke_board(base_loc(0), victim_seat=1)
+combat.destroy(s, T, victim)
+drain_all(s)
+if golds(s):
+    die("enemy death", "Pyke in a base must collect nothing")
+ok("...and only while HE is at a battlefield, wherever the death happened")
+
+# "Once each turn", and the stamp must be spent only on an event he wanted:
+# a friendly death first, an enemy death second, and he must still be paid.
+s = fresh(hand=[])
+s.add_permanent(PYKE, 0, bf_loc(0), is_unit=True)
+mine = s.add_permanent(PLAIN2, 0, bf_loc(0), is_unit=True)
+theirs = s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+combat.destroy(s, T, mine)
+drain_all(s)
+combat.destroy(s, T, theirs)
+drain_all(s)
+if golds(s) != 1:
+    die("once each turn", "a friendly death spent the turn's one use of an "
+                          "ability that never wanted it")
+ok("...and the once-per-turn stamp is spent only by a matching event")
+
+# Two enemy deaths in one turn pay once.
+s = fresh(hand=[])
+s.add_permanent(PYKE, 0, bf_loc(0), is_unit=True)
+a = s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+b = s.add_permanent(PLAIN2, 1, bf_loc(0), is_unit=True)
+combat.destroy(s, T, a)
+drain_all(s)
+combat.destroy(s, T, b)
+drain_all(s)
+if golds(s) != 1:
+    die("once each turn", f"two enemy deaths paid {golds(s)} times, not once")
+ok("...while a second enemy death in the same turn pays nothing")
+
+# The control: an existing friendly-death watcher must be unaffected by the
+# extra firing pass, and must not fire on an enemy death either.
+RECRUIT_TOK = T.id_of("Recruit (271) // Buff")
+
+
+def viktor_sees(victim_seat):
+    """Recruits Viktor makes when a unit of `victim_seat` dies."""
+    s = fresh(hand=[])
+    s.add_permanent(VIKTOR, 0, bf_loc(0), is_unit=True)
+    victim = s.add_permanent(PLAIN2, victim_seat, bf_loc(0), is_unit=True)
+    combat.destroy(s, T, victim)
+    drain_all(s)
+    return sum(1 for i in range(s.n_perms)
+               if int(s.perms[i, P_CARD]) == RECRUIT_TOK
+               and s.perms[i, P_ALIVE] == 1)
+
+
+if viktor_sees(0) != 1:
+    die("friendly death", "a friendly-death watcher stopped firing, or fired "
+                          "twice now that the death fires for both seats")
+if viktor_sees(1):
+    die("friendly death", "a friendly-death watcher fired on an enemy death "
+                          "-- the default side must still be 'friendly'")
+ok("...and a friendly-death watcher still fires once, on friends only")
+
+
+# ---------------------------------------------------------------------------
+print("\n[27] a play watcher can name the KIN it watches for")
+
+GEM = T.id_of("Gentle Gemdragon")        # play me OR another Dragon -> ready 2
+DRAGON = next(c for c in range(T.n) if T.is_type(c, "Unit")
+              and "Dragon" in T.tags[c] and c != GEM and not T.is_token(c)
+              and int(T.energy[c]) <= 4)
+
+
+def spent_after(played, with_gem):
+    """Exhausted runes left after seat 0 plays `played`.
+
+    Measured against the SAME play without a Gemdragon on the board, because
+    the play itself exhausts runes and the two numbers only mean something
+    against each other.
+    """
+    s = fresh(hand=[played], runes=6)
+    s.runes_spent[0, 0] = 4
+    if with_gem:
+        s.add_permanent(GEM, 0, base_loc(0), is_unit=True)
+    play(s, V1, 0, base_loc(0))
+    drain_all(s)
+    return int(s.runes_spent[0].sum())
+
+
+if spent_after(DRAGON, False) - spent_after(DRAGON, True) != 2:
+    die("kin", "another Dragon must wake the Gemdragon and ready 2 runes")
+ok("'or another Dragon' fires on a play of the kin it names")
+
+if spent_after(PLAIN2, False) - spent_after(PLAIN2, True) != 0:
+    die("kin", "a non-Dragon fired a Dragon watcher")
+ok("...and on nothing else, which is what the tag restriction is for")
+
+# Her own arrival is TR_PLAY_ME. The watcher would ALSO see it -- one play, two
+# abilities reading the same sentence -- and `subject_not_self` is what makes
+# the card pay once. Counted as abilities put in flight, since the two would be
+# indistinguishable in runes.
+s = fresh(hand=[GEM], runes=6)
+s.runes_spent[0, 0] = 4
+play(s, V1, 0, base_loc(0))
+in_flight = int(s.n_chain) + int(s.n_trig)
+if in_flight != 1:
+    die("kin", f"playing her put {in_flight} abilities in flight, not 1 -- "
+               f"'me OR another Dragon' is one payout for one play")
+paid = int(s.runes_spent[0].sum())      # her own cost is already exhausted
+drain_all(s)
+if paid - int(s.runes_spent[0].sum()) != 2:
+    die("kin", "her own arrival readies 2, the same as any other Dragon's")
+ok("...and her own arrival pays once, not once per reading of the sentence")
+
+
+# ---------------------------------------------------------------------------
+print("\n[28] snapshots: what was true when it happened")
+
+# "[Deathknell] If I was [Mighty], draw 2." 740.2 makes Mighty 5+ EFFECTIVE
+# Might, so a combat trick supplies it -- and expires while the Deathknell is
+# still waiting on the Chain. The answer has to be taken as he dies.
+HERO = T.id_of("Unsung Hero")
+
+
+def unsung(bonus):
+    s = fresh(hand=[])
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN2
+    row = s.add_permanent(HERO, 0, bf_loc(0), is_unit=True)
+    if bonus:
+        combat.set_might_mod(s, T, row, bonus)
+    before = int(s.n_hand[0])
+    combat.destroy(s, T, row)
+    chain.place(s, T, V1, 0)          # flush the queue onto the Chain (808)
+    drain(s, V1)
+    return int(s.n_hand[0]) - before
+
+
+need = 5 - int(T.might[HERO])
+if unsung(0) != 0:
+    die("was mighty", "a body under 5 Might is not Mighty and draws nothing")
+ok("Unsung Hero below 5 Might draws nothing")
+
+if unsung(need) != 2:
+    die("was mighty", "5+ EFFECTIVE Might is Mighty (740.2) -- a buff counts")
+ok("...and a BUFF to 5 Might makes him Mighty, read as he dies")
+
+
+# "If you control fewer runes than an opponent at the start of your Beginning
+# Phase." A comparison between two boards, not a threshold.
+BACCAI = T.id_of("Forsaken Baccai")
+
+
+def baccai(mine, theirs):
+    s = fresh(hand=[])
+    s.runes_ready[:, :] = 0
+    s.runes_ready[0, 0] = mine
+    s.runes_ready[1, 0] = theirs
+    row = s.add_permanent(BACCAI, 0, base_loc(0), is_unit=True)
+    before = combat.might(s, T, row)
+    chain_mod.fire_watchers(s, T, 0, TR_BEGINNING)
+    drain_all(s)
+    return combat.might(s, T, row) - before
+
+
+if baccai(mine=2, theirs=5) != 1:
+    die("fewer runes", "behind on runes, the catch-up clause pays")
+ok("'fewer runes than an opponent' pays while you are behind")
+
+if baccai(mine=5, theirs=5) != 0:
+    die("fewer runes", "level on runes is not FEWER -- the clause is strict")
+ok("...and stops the moment the counts level, unlike a fixed threshold")
+
+
+# ---------------------------------------------------------------------------
+print("\n[29] two more transcriptions, each on machinery already here")
+
+# Fretful Feline: "when I become ready" is the same TR_READIED that Awaken
+# fires, narrowed to herself.
+FELINE = T.id_of("Fretful Feline")
+before, after = after_awaken(FELINE, ready=False)
+if after != before + 2:
+    die("feline", "an exhausted Feline wakes up +2")
+before, after = after_awaken(FELINE, ready=True)
+if after != before:
+    die("feline", "a unit already ready has not BECOME ready")
+ok("Fretful Feline grows on the transition, not on the flag")
+
+# Corina Veraza: "when I move TO a battlefield, play three Recruits HERE" --
+# `here` is where she arrived (T_CTX2), and a retreat to base fires nothing.
+CORINA = T.id_of("Corina Veraza")
+RECRUIT = T.id_of("Recruit (271) // Buff")
+
+
+def corina_to(dest, start):
+    s = fresh(hand=[])
+    row = s.add_permanent(CORINA, 0, start, is_unit=True)
+    s.bf_ctrl[:] = -1
+    A.apply(s, T, V1, A.Action(A.A_DECLARE, dest))
+    A.apply(s, T, V1, A.Action(A.A_ADD, row))
+    A.apply(s, T, V1, A.Action(A.A_COMMIT))
+    drain_all(s)
+    return s, [i for i in range(s.n_perms)
+               if int(s.perms[i, P_CARD]) == RECRUIT
+               and s.perms[i, P_ALIVE] == 1]
+
+
+st, made = corina_to(bf_loc(0), base_loc(0))
+if len(made) != 3:
+    die("corina", f"expected 3 Recruits on arrival, got {len(made)}")
+if any(int(st.perms[i, P_LOC]) != bf_loc(0) for i in made):
+    die("corina", "'here' on a move trigger is where she ARRIVED (T_CTX2), "
+                  "not the base she left")
+ok("Corina's three Recruits arrive with her, at the battlefield she moved to")
+
+st, made = corina_to(base_loc(0), bf_loc(0))
+if made:
+    die("corina", "a retreat to base is not a move TO A BATTLEFIELD")
+ok("...and a retreat to base makes none, which is the printed condition")
+
+# Sona: "at the end of your turn, IF I'M AT A BATTLEFIELD, ready up to 4
+# friendly runes." Holding ground is the price of the refund.
+#
+# Driven through the real A_END_TURN, because the interesting half is the
+# PHASE, not the card: 317's triggers need a priority window, and `end_turn`
+# runs straight into `compact_permanents`, which refuses to run with a trigger
+# still queued. The Ending Phase therefore suspends the same way the Beginning
+# Phase does. Until this landed, TR_END_OF_TURN had no firing site anywhere and
+# both cards that use it were quietly dead.
+SONA = T.id_of("Sona, Harmonious")
+
+
+def sona_at(loc):
+    s = fresh(hand=[])
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN2
+    s.runes_spent[0, 0] = 4
+    s.add_permanent(SONA, 0, loc, is_unit=True)
+    A.apply(s, T, V1, A.Action(A.A_END_TURN, 0))
+    drain_all(s)
+    return 4 - int(s.runes_spent[0].sum())
+
+
+if sona_at(bf_loc(0)) != 4:
+    die("sona", "at a battlefield she readies 4 at the end of your turn")
+ok("Sona refunds four runes, fired by the Ending Phase itself")
+
+if sona_at(base_loc(0)) != 0:
+    die("sona", "back at base the condition fails and nothing is readied")
+ok("...and only while she is at a battlefield, which is what she costs")
+
+# The turn must still END. A suspension that never resumes is a deadlock, and
+# it looks exactly like a card that did nothing.
+s = fresh(hand=[])
+s.n_deck[:] = 20
+s.deck[:, :20] = PLAIN2
+s.runes_spent[0, 0] = 4
+s.add_permanent(SONA, 0, bf_loc(0), is_unit=True)
+A.apply(s, T, V1, A.Action(A.A_END_TURN, 0))
+drain_all(s)
+if int(s.pend_phase) >= 0:
+    die("sona", "the Ending Phase suspended and never resumed")
+if int(s.active) != 1 or int(s.phase) != MAIN:
+    die("sona", f"the turn did not pass: active={int(s.active)} "
+                f"phase={int(s.phase)}")
+ok("...and the turn resumes through the cleanup and passes to the opponent")
+
+# The legend half of the same trigger: "at the end of your turn, ready 2
+# runes" is printed on Annie - Dark Child, who has no `perms` row at all.
+ANNIE = T.id_of("Annie - Dark Child")
+s = fresh(hand=[])
+s.n_deck[:] = 20
+s.deck[:, :20] = PLAIN2
+s.legend[0] = ANNIE
+s.runes_spent[0, 0] = 4
+A.apply(s, T, V1, A.Action(A.A_END_TURN, 0))
+drain_all(s)
+if 4 - int(s.runes_spent[0].sum()) != 2:
+    die("annie", "a LEGEND's end-of-turn ability fires too -- it has no row "
+                 "to walk, so it is asked separately")
+ok("...and a legend's end-of-turn ability fires from the same step")

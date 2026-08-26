@@ -337,6 +337,12 @@ def fire_watchers(state: GameState, table: CardTable, seat: int,
     happened to a DIFFERENT permanent, so it needs the event's subject and, for
     an "another" clause, the one permanent that must not count as a watcher.
     """
+    # Whether the event happened to somebody ELSE'S permanent, decided from the
+    # subject rather than from the caller: `seat` here is the WATCHER's
+    # controller, so "an enemy unit died" is the same call with the subject on
+    # the other side. An event with no subject at all (a discard, a score) is
+    # nobody's, and reads as friendly so the default watchers still fire.
+    subj_enemy = subj >= 0 and int(state.perms[subj, P_CTRL]) != seat
     for w in range(state.n_perms):
         if w == exclude or state.perms[w, P_ALIVE] != 1:
             continue
@@ -344,6 +350,11 @@ def fire_watchers(state: GameState, table: CardTable, seat: int,
             continue
         for ab in abilities_for(table, int(state.perms[w, P_CARD])):
             if ab.trigger != trigger:
+                continue
+            # "when an ENEMY unit dies" against "when another FRIENDLY unit
+            # dies". Both readings are printed, so neither can be the default
+            # that a missing flag falls into -- the flag has to MATCH.
+            if bool(ab.subject_enemy) != subj_enemy:
                 continue
             # "when you choose or ready ME" -- the watcher is the subject, not
             # a bystander. Without this the card reads "...a friendly unit".
@@ -358,8 +369,20 @@ def fire_watchers(state: GameState, table: CardTable, seat: int,
             if ab.subject_lacks_tag and subj >= 0 and ab.subject_lacks_tag in \
                     table.tags[int(state.perms[subj, P_CARD])]:
                 continue
+            # "...or another DRAGON" -- the mirror, a tag it must carry.
+            if ab.subject_tag and not (subj >= 0 and ab.subject_tag in
+                                       table.tags[int(state.perms[subj,
+                                                                  P_CARD])]):
+                continue
+            # "while I'm at a battlefield" -- about the WATCHER's own ground,
+            # not the subject's. Pyke in a base collects nothing.
+            if ab.subject_at_battlefield and not is_battlefield(
+                    int(state.perms[w, P_LOC])):
+                continue
             # "The FIRST TIME ... each turn" -- one stamp per permanent per
-            # turn, the same field Zilean's once-each-turn uses.
+            # turn, the same field Zilean's once-each-turn uses. Stamped LAST,
+            # after every other filter has passed: an event the ability did not
+            # want must not spend the turn's one use of it.
             if ab.once_each_turn:
                 if int(state.once_used[w]) == int(state.turn):
                     continue
@@ -405,6 +428,12 @@ def fire_play_unit(state: GameState, table: CardTable, seat: int,
                 continue
             if ab.subject_lacks_tag and perm >= 0 and ab.subject_lacks_tag in \
                     table.tags[int(state.perms[perm, P_CARD])]:
+                continue
+            # "...or another DRAGON" -- a tag the played card must carry. Asked
+            # of the CARD rather than of `perm`, because a play watcher has to
+            # answer before the permanent exists in some paths and the card is
+            # the thing that was played either way.
+            if ab.subject_tag and ab.subject_tag not in table.tags[card]:
                 continue
             # Vex needs somewhere to point [Stun], and that is the permanent
             # just played -- not a target, so it rides as the subject the same

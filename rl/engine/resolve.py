@@ -42,7 +42,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                CT_MY_BATTLEFIELDS, CT_MY_MIGHTY_UNITS,
                                CT_MY_OTHER_BATTLEFIELDS,
                                CT_ENEMIES_AT_TARGET, COND_READY_ENEMY_HERE,
-                               COND_FIRST_TURN,
+                               COND_FIRST_TURN, COND_WAS_MIGHTY,
+                               COND_FEWER_RUNES_THAN_OPP,
                                COND_LEGION, COND_LEVEL, COND_NONE,
                                COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
@@ -75,7 +76,8 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                OP_RECYCLE_SELF,
                                OP_SEE_HAND, OP_SEE_FACEDOWN,
                                OP_GRANT_KEYWORD,
-                               TR_PLAY_ME, T_CTX, T_CTX2, T_HERE, T_MY_BASE,
+                               TR_PLAY_ME, T_COMBAT,
+                               T_CTX, T_CTX2, T_HERE, T_MY_BASE,
                                T_OWNER_BASE, T_SELF, T_SUBJECT,
                                TOKEN_DOUBLERS,
                                CardSpec, Op, pack_trash, unpack_trash,
@@ -85,12 +87,14 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
                              LOOK_TYPE_BIT,
                              COST_NO_ENERGY, COST_PRINTED,
                              F_BUFFED,
-                             F_DIED_ALONE, F_EMPOWERED, F_LEGION, F_NO_MOVE,
+                             F_DIED_ALONE, F_DIED_MIGHTY,
+                             F_EMPOWERED, F_LEGION, F_NO_MOVE,
                              GRANT_IDX, N_BF, N_SEATS, P_ALIVE,
                              PT_GEAR, PT_SPELL, PT_UNIT,
                              P_FLAGS,
                              P_CARD, P_CTRL, P_DMG, P_LOC, P_MIGHT_MOD,
                              P_READY, GameState,
+                             LOC_NONE,
                              base_loc, bf_index, bf_loc,
                              bf_src_index, is_bf_src,
                              is_legend_src,
@@ -756,6 +760,24 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
                     and int(state.perms[i, P_CTRL]) == seat
                     and table.is_type(int(state.perms[i, P_CARD]), "Unit"))
         return total >= op.level
+    if op.cond == COND_WAS_MIGHTY:
+        # 740.2 -- Mighty is 5+ Might, and "I WAS Mighty" asks about the moment
+        # of death. Reads the flag `combat._destroy` recorded then, for the same
+        # reason COND_DIED_ALONE does: the Deathknell resolves a priority window
+        # later, over a row whose buffs may already have been cleared.
+        return dead_source >= 0 and bool(
+            int(state.perms[dead_source, P_FLAGS]) & F_DIED_MIGHTY)
+    if op.cond == COND_FEWER_RUNES_THAN_OPP:
+        # "If you control FEWER runes than an opponent" -- both boards counted
+        # the way COND_FEW_RUNES counts one: ready plus spent, because an
+        # exhausted rune is still controlled.
+        if seat < 0:
+            return False
+        mine = int(state.runes_ready[seat].sum() + state.runes_spent[seat].sum())
+        other = 1 - seat
+        theirs = int(state.runes_ready[other].sum()
+                     + state.runes_spent[other].sum())
+        return mine < theirs
     if op.cond == COND_FEW_RUNES:
         # "If you control N or fewer runes." Runes on the BOARD -- ready plus
         # spent -- because an exhausted rune is still controlled; the ones left
@@ -831,12 +853,23 @@ def _sweep(state: GameState, table: CardTable, op: Op, seat: int,
     spare = (_slot(state, still_legal, op.except_target, source, ctx,
                    seat, subj, ctx2)
              if op.except_target != -1 else -1)
+    # A sweep that NAMES a location and cannot find one reaches nothing. The
+    # location goes missing in two ordinary ways -- the source of an `at=T_HERE`
+    # ability died in the response window (383.2.c.2), and `T_COMBAT` is asked
+    # outside a Showdown -- and in both the card's own words scope it to a place
+    # that is not there. Falling through to the unscoped branch instead turned
+    # "deal 4 to all enemy units HERE" into a board wipe, which is the one
+    # answer that is never right.
+    if op.at != -1 and where < 0:
+        return []
     out = []
     for i in range(state.n_perms):
         r = state.perms[i]
         if r[P_ALIVE] != 1 or i == spare:
             continue
         if not table.is_type(int(r[P_CARD]), "Unit"):
+            continue
+        if op.tag and op.tag not in table.tags[int(r[P_CARD])]:
             continue
         loc = int(r[P_LOC])
         if where >= 0:
@@ -878,6 +911,12 @@ def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
         return base_loc(seat) if seat >= 0 else -1
     if idx == T_SUBJECT:
         return subj
+    if idx == T_COMBAT:
+        # 459 -- the contested battlefield. `showdown_bf` is the battlefield
+        # INDEX, not a location, and the two are different numbers; conflating
+        # them would point "in combat" at a base.
+        bf = int(state.showdown_bf)
+        return bf_loc(bf) if bf >= 0 else LOC_NONE
 
     return still_legal[idx] if 0 <= idx < len(still_legal) else -1
 

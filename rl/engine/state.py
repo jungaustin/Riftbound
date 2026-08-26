@@ -181,6 +181,13 @@ PT_UNIT, PT_GEAR, PT_SPELL = 1, 2, 4
 # a status the rules name -- so it is turn-scoped like [Stun]'s, and cleared by
 # the same end-of-turn sweep.
 F_NO_MOVE = 1 << 7
+# "[Deathknell] - If I was [Mighty], draw 2" (Unsung Hero). Past tense, and
+# the same snapshot problem F_DIED_ALONE has: 808.1.d.2 queues the Deathknell
+# before the card reaches the Trash and the Chain then takes priority passes,
+# so by resolution the row's Might modifiers have been cleared and every buff
+# that made it Mighty is gone. 740.2 defines Mighty as 5+ EFFECTIVE Might, so
+# the answer has to be taken while the unit is still standing.
+F_DIED_MIGHTY = 1 << 8
 
 # Keywords an effect can GRANT to a permanent. Values, not bits: [Assault 3]
 # and [Assault 2] are different grants, and 807.1.b.2 calls the number the

@@ -2127,4 +2127,96 @@ if st.perms[foe, P_ALIVE] == 1:
     die("ruin runner", "damage does not CHOOSE, so it must still kill")
 ok("...while damage, which chooses nothing, still kills it")
 
+
+# ---------------------------------------------------------------------------
+print("\n[23] a sweep is scoped by its location, its side, and its kin")
+
+# "Deal 2 to all enemy units IN COMBAT" (Cannon Barrage). "In combat" is 459's
+# contested battlefield -- every unit standing there is an Attacker or a
+# Defender -- so the sweep is scoped to `showdown_bf` and reaches defenders
+# too, which the `attacking` designation would have spared.
+BARRAGE = _SPECS["Cannon Barrage"]
+
+st = _board()
+st.showdown_bf = 0
+here_foe = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+here_mine = st.add_permanent(_PLAIN[2], 0, _bf(0), is_unit=True)
+away_foe = st.add_permanent(_PLAIN[2], 1, _bf(1), is_unit=True)
+base_foe = st.add_permanent(_PLAIN[2], 1, _base(1), is_unit=True)
+resolve.resolve(st, T, CFG, BARRAGE, 0, [], -1, from_hand=True)
+if int(st.perms[here_foe, P_DMG]) != 2:
+    die("in combat", "the enemy at the contested battlefield took no damage")
+if int(st.perms[here_mine, P_DMG]):
+    die("in combat", "'enemy units' must not reach your own")
+if int(st.perms[away_foe, P_DMG]) or int(st.perms[base_foe, P_DMG]):
+    die("in combat", "an enemy off the contested battlefield is not in combat")
+ok("'in combat' is the contested battlefield, both sides of it")
+
+# Outside a Showdown there IS no contested battlefield, and a sweep that names
+# a location it cannot find must reach nothing. Falling through to the unscoped
+# branch instead would make this a board wipe -- the one answer never right.
+st = _board()
+st.showdown_bf = -1
+foe = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+mine = st.add_permanent(_PLAIN[2], 0, _base(0), is_unit=True)
+resolve.resolve(st, T, CFG, BARRAGE, 0, [], -1, from_hand=True)
+if int(st.perms[foe, P_DMG]) or int(st.perms[mine, P_DMG]):
+    die("in combat", "with no combat running the sweep must find no units")
+ok("...and with no Showdown it hits nothing rather than everything")
+
+# The same guard, reached the other way: an ability's `at=T_HERE` sweep whose
+# source died in the response window (383.2.c.2). Renekton's "deal 2 to all
+# enemy units here" has no "here" left once he is a corpse.
+from rl.engine.effects import abilities_for as _abils
+RENEKTON = T.id_of("Renekton, Rage Fueled")
+st = _board()
+st.runes_ready[0, :] = 0                       # so COND_FEW_RUNES holds
+src = st.add_permanent(RENEKTON, 0, _bf(0), is_unit=True)
+near = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+far = st.add_permanent(_PLAIN[2], 1, _bf(1), is_unit=True)
+st.perms[src, P_ALIVE] = 0                     # answered before it resolved
+resolve.resolve(st, T, CFG, _abils(T, RENEKTON)[0], 0, [], -1,
+                from_hand=False, source=src)
+if int(st.perms[far, P_DMG]):
+    die("dead source", "a dead source's 'here' swept the whole board")
+if int(st.perms[near, P_DMG]):
+    die("dead source", "383.2.c.2 -- an ability may not reference a source "
+                       "that has left the board")
+ok("a dead source's 'here' sweeps nothing, not everything (383.2.c.2)")
+
+# "Give your MECHS +1 Might this turn" (Danger Zone) -- a kin restriction on a
+# sweep. Still not a target: no count, no choice.
+DANGER = _SPECS["Danger Zone"]
+MECH = next(c for c in range(T.n) if T.is_type(c, "Unit")
+            and "Mech" in T.tags[c] and not T.is_token(c))
+st = _board()
+my_mech = st.add_permanent(MECH, 0, _base(0), is_unit=True)
+my_other = st.add_permanent(_PLAIN[2], 0, _base(0), is_unit=True)
+their_mech = st.add_permanent(MECH, 1, _bf(0), is_unit=True)
+resolve.resolve(st, T, CFG, DANGER, 0, [], -1, from_hand=True)
+if _cbt.might(st, T, my_mech) != int(T.might[MECH]) + 1:
+    die("kin", "your own Mech missed the pump")
+if _cbt.might(st, T, my_other) != int(T.might[_PLAIN[2]]):
+    die("kin", "a non-Mech was pumped; 'your Mechs' is a kin restriction")
+if _cbt.might(st, T, their_mech) != int(T.might[MECH]):
+    die("kin", "'YOUR Mechs' must not reach the opponent's")
+ok("'your Mechs' narrows a sweep by tag as well as by side")
+
+
+# ---------------------------------------------------------------------------
+print("\n[24] two slots, related by location rather than by battlefield")
+
+# Heroic Charge: "Give a friendly unit +1 Might and [Stun] an enemy unit at ITS
+# LOCATION." A base is a location too, so the relation must not require either
+# unit to be standing on a battlefield.
+CHARGE = _SPECS["Heroic Charge"]
+st = _board()
+mine_base = st.add_permanent(_PLAIN[2], 0, _base(0), is_unit=True)
+foe_base = st.add_permanent(_PLAIN[2], 1, _base(0), is_unit=True)
+foe_bf = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+got = resolve.legal_targets(st, T, CHARGE, 1, 0, [mine_base], -1)
+if got != [foe_base]:
+    die("heroic charge", f"'at its location' gave {got}, expected [{foe_base}]")
+ok("'at its location' reaches a shared BASE, not only a battlefield")
+
 print("\n\033[32mall effect tests passed\033[0m")

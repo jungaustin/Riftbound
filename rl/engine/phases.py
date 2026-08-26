@@ -468,14 +468,37 @@ def resume_turn(state: GameState, table: CardTable, cfg: Config,
     return log
 
 
-# TR_END_OF_TURN is DELIBERATELY not fired here. "At the end of your turn" is
-# a triggered ability, so it belongs on the Chain with a priority window -- but
-# `ending` runs straight into `compact_permanents`, which asserts no trigger is
-# queued (compaction repoints the rows a queued trigger holds). Firing it here
-# and draining it inline would skip the window; firing it and leaving it queued
-# trips the assert. Doing it properly needs a pending end-of-turn state so the
-# action layer can drain the Chain before the cleanup, which is a phase-machine
-# change rather than a card. Sona, Harmonious is the only card waiting on it.
+def fire_end_of_turn(state: GameState, table: CardTable) -> None:
+    """Queue "at the end of your turn" abilities for the turn player (317).
+
+    **Not fired inside `end_turn`, and that is the whole shape of it.** These
+    are triggered abilities, so 383.3 puts them on the Chain with a priority
+    window -- but `end_turn` runs straight into `compact_permanents`, which
+    asserts the trigger queue is empty because compaction repoints the very
+    rows a queued trigger holds. Draining inline would skip the window; leaving
+    them queued trips the assert.
+
+    So the Ending Phase splits the same way the Beginning Phase already does
+    (315.2): this queues, the action layer drains the Chain through real
+    priority, and `actions._resume_phase` runs the cleanup afterwards. The turn
+    player's own turn is what "your turn" means, so nothing fires on the
+    opponent's.
+
+    A legend is not a permanent and has no row to walk, so it is asked
+    separately -- the same split `_queue_bf_trigger` makes for battlefields.
+    """
+    from rl.engine.chain import queue as chain_queue
+    from rl.engine.chain import fire_watchers
+    from rl.engine.effects import TR_END_OF_TURN, legend_abilities_for
+    from rl.engine.state import legend_src
+    seat = int(state.active)
+    fire_watchers(state, table, seat, TR_END_OF_TURN)
+    lcard = int(state.legend[seat])
+    if lcard >= 0 and any(a.trigger == TR_END_OF_TURN
+                          for a in legend_abilities_for(table, lcard)):
+        chain_queue(state, TR_END_OF_TURN, legend_src(seat), -1, who=seat)
+
+
 def end_turn(state: GameState, cfg: Config, table: CardTable | None = None) -> None:
     ending(state)
     control_cleanup(state)

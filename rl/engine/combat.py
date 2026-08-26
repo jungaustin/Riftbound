@@ -59,7 +59,7 @@ from rl.engine.effects import (CNT_BOARD, CNT_NONE, CNT_TRASH,
                                TR_DEATH, TR_MOVE, abilities_for,
                                statics_for)
 from rl.engine.state import (GRANT_IDX, P_MIGHT_MOD, F_BUFFED,
-                             F_DIED_ALONE,
+                             F_DIED_ALONE, F_DIED_MIGHTY,
                              BEGINNING,
                              F_EMPOWERED, F_NON_UNIT, F_NO_COMBAT_DAMAGE,
                              F_NO_MOVE,
@@ -627,8 +627,14 @@ def _destroy(state: GameState, table: CardTable, perm: int,
     # is (808.1.d.2), so both see the same board.
     if not state.has_flag(perm, F_NON_UNIT):
         from rl.engine.chain import fire_watchers
-        fire_watchers(state, table, int(row[P_CTRL]), TR_OTHER_DIES,
-                      subj=perm, exclude=perm)
+        # Fired for BOTH seats, because "when an enemy unit dies" (Pyke -
+        # Returned) is the same event seen from the other side. `fire_watchers`
+        # walks one seat's permanents and each watcher states which side it
+        # wants through `subject_enemy`, so the opposite seat's pass turns up
+        # nothing unless a card asked for it.
+        for who in (int(row[P_CTRL]), 1 - int(row[P_CTRL])):
+            fire_watchers(state, table, who, TR_OTHER_DIES,
+                          subj=perm, exclude=perm)
 
     if any(a.trigger == TR_DEATH for a in abilities_for(table, int(row[P_CARD]))):
         loc, ctrl = int(row[P_LOC]), int(row[P_CTRL])
@@ -639,6 +645,12 @@ def _destroy(state: GameState, table: CardTable, perm: int,
                   and not state.has_flag(i, F_NON_UNIT)]
         if not others:
             row[P_FLAGS] |= F_DIED_ALONE
+        # 740.2 -- "I'm Mighty while I have 5+ Might", read here because the
+        # question a Deathknell asks is past tense and the row's modifiers do
+        # not survive to resolution. `might` rather than the printed value:
+        # a unit is Mighty because of a buff just as much as because of print.
+        if might(state, table, perm) >= 5:
+            row[P_FLAGS] |= F_DIED_MIGHTY
         chain_queue(state, TR_DEATH, perm, loc)
     row[P_ALIVE] = 0
     seat, card = int(row[P_CTRL]), int(row[P_CARD])

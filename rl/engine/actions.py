@@ -68,7 +68,7 @@ from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
                              COST_PRINTED, DEST_BANISH, DEST_HAND,
                              C_REPEAT, DEST_TOP, LOOK_TYPE_BIT,
                              DEST_RECYCLE,
-                             C_SRC, MAIN,
+                             C_SRC, MAIN, ENDING,
                              MAX_CHAIN, MAX_PERMS, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
                              P_LOC, P_READY, GameState, base_loc, bf_loc,
@@ -844,6 +844,18 @@ def _settle(state: GameState, table: CardTable, cfg: Config) -> dict:
     raise AssertionError("the Cleanup keeps queueing triggers")
 
 
+def _finish_turn(state: GameState, table: CardTable, cfg: Config) -> dict:
+    """The cleanup half of ending a turn, once nothing is left on the Chain.
+
+    Reached directly when no end-of-turn ability fired, and through
+    `_resume_phase` when one did -- so the two paths cannot drift.
+    """
+    phases.end_turn(state, cfg, table)
+    if not is_terminal(state):
+        return phases.start_turn(state, table, cfg)
+    return {}
+
+
 def _resume_phase(state: GameState, table: CardTable, cfg: Config,
                   log: dict) -> dict:
     """Finish a turn suspended mid-Beginning-Phase, if one is (315.2).
@@ -862,6 +874,14 @@ def _resume_phase(state: GameState, table: CardTable, cfg: Config,
         return log
     if is_terminal(state):
         state.pend_phase = -1
+        return log
+    if int(state.pend_phase) == ENDING:
+        # The other suspension: the Ending Phase's triggers have resolved, so
+        # the cleanup that could not run while they were queued runs now.
+        state.pend_phase = -1
+        log.update(_finish_turn(state, table, cfg))
+        if state.n_trig or state.n_chain:
+            log.update(_settle(state, table, cfg))
         return log
     log.update(phases.resume_turn(state, table, cfg))
     # Resuming is itself a trigger site: scoring a Hold fires TR_HOLD and the
@@ -1045,10 +1065,19 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
         return combat.retreat(state, table, cfg, action.arg)
 
     if k == A_END_TURN:
-        phases.end_turn(state, cfg, table)
-        if not is_terminal(state):
-            return phases.start_turn(state, table, cfg)
-        return {}
+        # 317 -- "at the end of your turn" abilities go on the Chain first and
+        # take a real priority window, exactly as the Beginning Step's do
+        # (315.2). If any fired, the turn SUSPENDS here and `_resume_phase`
+        # runs the cleanup once the Chain is empty; the alternative is a
+        # cleanup that compacts rows a queued trigger is still pointing at.
+        #
+        # Nothing suspends when nothing triggered, which is every turn in v0.
+        phases.fire_end_of_turn(state, table)
+        if state.n_trig or state.n_chain:
+            state.phase = ENDING
+            state.pend_phase = ENDING
+            return _settle(state, table, cfg)
+        return _finish_turn(state, table, cfg)
 
     raise ValueError(f"unknown action kind {k}")
 

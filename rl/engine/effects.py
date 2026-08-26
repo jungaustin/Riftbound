@@ -167,6 +167,12 @@ T_SUBJECT = -7
 # means "this battlefield" -- true only while the source is still standing on
 # it. See `state.C_CTX2` for why all three exist.
 T_CTX2 = -8
+# The contested battlefield of the Combat now running (459). Not a choice and
+# not anybody's "here": Cannon Barrage is played from a hand, by either player,
+# and "all enemy units IN COMBAT" means the ones standing on the ground being
+# fought over. Outside a Showdown it decodes to `LOC_NONE`, and a sweep scoped
+# to a location that does not exist reaches nothing -- see `_sweep`.
+T_COMBAT = -9
 
 # --- conditions, checked at resolution ------------------------------------
 (COND_NONE, COND_FROM_HAND, COND_ANY_TARGET_TEMPORARY,
@@ -177,7 +183,19 @@ T_CTX2 = -8
  COND_NOT_DIED_ALONE, COND_CTX_BATTLEFIELD, COND_SELF_AT_BF,
  COND_N_OTHERS_HERE, COND_OTHERS_MIGHT,
  COND_READY_ENEMY_HERE, COND_CTX2_BATTLEFIELD,
- COND_FIRST_TURN, COND_DEFENDING_ALONE) = range(20)
+ COND_FIRST_TURN, COND_DEFENDING_ALONE,
+ COND_WAS_MIGHTY, COND_FEWER_RUNES_THAN_OPP) = range(22)
+
+# COND_WAS_MIGHTY is Unsung Hero's "[Deathknell] - If I was [Mighty], draw 2".
+# Past tense, so it reads the `F_DIED_MIGHTY` snapshot taken as the unit died
+# rather than its row now: by the time a Deathknell resolves the turn's Might
+# modifiers may already have been swept, and 740.2's 5+ Might is exactly the
+# kind of fact a buff supplies.
+#
+# COND_FEWER_RUNES_THAN_OPP is Forsaken Baccai's "if you control FEWER runes
+# than an opponent". A comparison between two boards, which is what separates
+# it from COND_FEW_RUNES's fixed threshold -- the card is a catch-up mechanic
+# and turns itself off the moment the rune counts level.
 
 # COND_FIRST_TURN is The Arena's Greatest: "at the start of EACH PLAYER'S FIRST
 # Beginning Phase". `state.turn` counts ROUNDS rather than plies -- it advances
@@ -440,6 +458,11 @@ class Op(NamedTuple):
     at: int = -1              # slot (or T_*) giving the location to sweep
     who: int = W_ANY          # whose units the sweep reaches
     except_target: int = -1   # slot whose unit is spared -- "each OTHER unit"
+    # "Give your MECHS +1 Might" (Danger Zone) -- a tag the swept units must
+    # carry. Empty reaches every unit, which is what the mass effects that name
+    # no kin print. A restriction and not a target (355.10): there is still no
+    # count and no choice, so the opponent cannot answer by making one illegal.
+    tag: str = ""
     # "all units AT BATTLEFIELDS" -- printed on the mass-damage cards and NOT
     # on the mass Might reduction, which reaches units at bases too. A property
     # of the card, so it lives here rather than being a default.
@@ -626,6 +649,11 @@ class Ability(NamedTuple):
     # must NOT carry. Viktor makes Recruits, so without this he would feed
     # on his own tokens and never stop.
     subject_lacks_tag: str | None = None
+    # "When you play me or another DRAGON" -- a tag the subject must carry, the
+    # mirror of `subject_lacks_tag`. Gentle Gemdragon's second ability watches
+    # its kin and nothing else; without this it would fire on every unit played
+    # and be a strictly better card than the one printed.
+    subject_tag: str | None = None
     # "The FIRST TIME ... each turn" -- gated on `state.once_used`, the same
     # per-permanent turn stamp Zilean's once-each-turn uses. Spent when the
     # trigger fires, so a second death in the same turn does nothing.
@@ -1794,6 +1822,63 @@ SPECS: dict[str, CardSpec] = {
         ops=(Op(OP_SWAP_LOC, target=0, target_b=1,
                 cond=COND_ANY_TARGET_TEMPORARY),
              Op(OP_DRAW, n=1)),
+    ),
+
+    # [Reaction] Deal 2 to all enemy units in combat.
+    #
+    # **"In combat" is a place, not a designation.** 459 makes every unit at
+    # the contested battlefield an Attacker or a Defender the moment Combat
+    # begins, so "in combat" is exactly "at `showdown_bf`" -- which is why this
+    # is a location-scoped sweep and not the `attacking` flag. The flag would
+    # have spared every defender, and the card kills defenders.
+    #
+    # Untargeted (355.10), so the opponent cannot answer by making one of them
+    # illegal; the only answer is to change what is standing there.
+    "Cannon Barrage": CardSpec(
+        speed=SPEED_REACTION,
+        ops=(Op(OP_DAMAGE_ALL, n=2, at=T_COMBAT, who=W_ENEMY),),
+    ),
+
+    # [Reaction] [Repeat] {1 energy}{any rune} Give your Mechs +1 Might
+    # this turn.
+    #
+    # [Repeat] is already machinery: `table.repeat_energy`/`repeat_power` carry
+    # the additional cost and `chain.resolve_top` runs the ops a second time
+    # (820.1.d), so the card only has to say what one execution does. What was
+    # missing is the kin restriction -- `tag` -- because every mass Might
+    # effect before this one reached all of a side's units.
+    #
+    # No location clause, so it reaches your Mechs at bases too.
+    "Danger Zone": CardSpec(
+        speed=SPEED_REACTION,
+        ops=(Op(OP_MODIFY_MIGHT_ALL, n=1, who=W_FRIENDLY, tag="Mech"),),
+    ),
+
+    # [Reaction] Draw 1 for each of your [Mighty] units.
+    # 740.2's 5+ Might, counted live at resolution -- so a Might trick played
+    # in response to this genuinely draws another card, which is the whole
+    # reason the card is a Reaction.
+    "Show of Strength": CardSpec(
+        speed=SPEED_REACTION,
+        ops=(Op(OP_DRAW, n=1, n_from_count=CT_MY_MIGHTY_UNITS),),
+    ),
+
+    # [Action] Give a friendly unit +1 Might this turn and [Stun] an enemy
+    # unit at its location.
+    #
+    # "At ITS location" relates the second slot to the first, and it is a
+    # LOCATION relation rather than a battlefield one: two friendly and enemy
+    # units can share a base as easily as a battlefield, and REL_SAME_BF
+    # compares the two locations without requiring either to be a battlefield.
+    #
+    # Both are targets, chosen at finalization, so growing the friendly unit
+    # commits to which enemy can be stunned before the opponent responds.
+    "Heroic Charge": CardSpec(
+        speed=SPEED_ACTION,
+        targets=(TargetSpec(who=W_FRIENDLY),
+                 TargetSpec(who=W_ENEMY, rel=REL_SAME_BF, rel_to=0)),
+        ops=(Op(OP_MODIFY_MIGHT, target=0, n=1),
+             Op(OP_STUN, target=1)),
     ),
 }
 
@@ -3660,11 +3745,135 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
                 ops=(Op(OP_CREATE_TOKEN, n=1, token=SPRITE_TOKEN, ready=True),)),
     ),
 
-    # Ferrous Forerunner, Carrion Dredger and Honest Broker are deliberately
-    # absent. Their Deathknells play Mech, Bird and Gold tokens, and none of
-    # those token cards exist in `data/cards.json` -- only Recruit and Sprite
-    # do. There is nothing to instantiate, so they stay substituted rather
-    # than approximated with the wrong body.
+    # When I become ready, give me +2 Might this turn.
+    #
+    # TR_READIED is the exhausted -> ready TRANSITION, and the Awaken Phase is
+    # the reliable source of one: a unit that spent the turn exhausted wakes up
+    # bigger every turn ([[riftbound-awaken-counts-as-readying]]). A unit that
+    # was already ready has not become ready and this does not fire, which is
+    # what keeps it from being a free +2 every turn regardless.
+    #
+    # `subject_is_self` because `fire_watchers` walks the whole board: without
+    # it the card would read "when a friendly unit becomes ready".
+    "Fretful Feline": (
+        Ability(TR_READIED, subject_is_self=True,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=2),)),
+    ),
+
+    # When I attack or defend, give one of your OTHER units HERE +3 Might and
+    # [Tank] this turn.
+    #
+    # The pair is the point: [Tank] makes the target take combat damage first
+    # (807) and +3 Might is what lets it survive doing so, so the two ops are
+    # one effect and both point at the same slot. Yuumi herself is excluded by
+    # `not_self`, and `same_loc_as_source` is "here" -- the contested
+    # battlefield, since she has to be standing there to be attacking from it.
+    "Yuumi - Magical Cat": (
+        Ability(TR_ATTACK_OR_DEFEND,
+                targets=(TargetSpec(who=W_FRIENDLY, not_self=True,
+                                    same_loc_as_source=True),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=3),
+                     Op(OP_GRANT_KEYWORD, target=0, keyword="Tank", n=1))),
+    ),
+
+    # [Accelerate] When I move to a battlefield, play three 1 Might Recruit
+    # unit tokens here.
+    #
+    # "Here" on a move trigger is where she ARRIVED, which is `T_CTX2` and not
+    # `T_HERE`: the trigger sits on the Chain through a response window, and if
+    # she is answered before it resolves the tokens still land on the ground
+    # she was moving to. COND_CTX2_BATTLEFIELD is the "to a battlefield" half --
+    # a retreat to base fires nothing.
+    "Corina Veraza": (
+        Ability(TR_MOVE,
+                ops=(Op(OP_CREATE_TOKEN, n=3, token=RECRUIT_TOKEN,
+                        target=T_CTX2, cond=COND_CTX2_BATTLEFIELD),)),
+    ),
+
+    # At the end of your turn, if I'm at a battlefield, ready up to 4 friendly
+    # runes.
+    #
+    # End of YOUR turn, so the runes come back before the opponent's -- the
+    # same reason Targon's Peak defers its readying rather than performing it
+    # ([[riftbound-tapping-out-costs-the-opponents-turn]]). The condition is
+    # what she costs: holding ground is the price of the refund.
+    "Sona, Harmonious": (
+        Ability(TR_END_OF_TURN,
+                ops=(Op(OP_READY_RUNES, n=4, cond=COND_SELF_AT_BF),)),
+    ),
+
+    # [Hidden] [Backline] Once each turn, when an ENEMY unit dies while I'm at
+    # a battlefield, play a Gold gear token exhausted.
+    #
+    # The first watcher in the pool that wants the other side's deaths. A death
+    # fires TR_OTHER_DIES for both seats and each watcher states which side it
+    # meant, so "when another friendly unit dies" and this one are the same
+    # trigger read from opposite ends.
+    #
+    # Both of its own clauses are about PYKE, not about the unit that died:
+    # `subject_at_battlefield` is "while I'm at a battlefield", and
+    # `once_each_turn` is spent only when everything else has already matched.
+    "Pyke - Returned": (
+        Ability(TR_OTHER_DIES, subject_enemy=True, subject_at_battlefield=True,
+                once_each_turn=True,
+                ops=(Op(OP_CREATE_TOKEN, target=T_MY_BASE, n=1,
+                        token=GOLD_TOKEN),)),
+    ),
+
+    # When you play me OR ANOTHER DRAGON, ready up to 2 runes.
+    #
+    # Two abilities for one sentence, because "me" and "another Dragon" are two
+    # different events: the first is TR_PLAY_ME, the second is a watcher on the
+    # plays that follow. `subject_not_self` on the watcher is what keeps her own
+    # arrival from paying twice.
+    "Gentle Gemdragon": (
+        Ability(TR_PLAY_ME, ops=(Op(OP_READY_RUNES, n=2),)),
+        Ability(TR_PLAY_UNIT, subject_tag="Dragon", subject_not_self=True,
+                ops=(Op(OP_READY_RUNES, n=2),)),
+    ),
+
+    # [Deathknell] If I was [Mighty], draw 2.
+    #
+    # Past tense, and that is the whole implementation question: 740.2 makes
+    # Mighty 5+ EFFECTIVE Might, so a combat trick can supply it -- and the
+    # trick expires with the turn while the Deathknell waits on the Chain. The
+    # answer is snapshotted as he dies, the same way "died alone" is.
+    "Unsung Hero": (
+        Ability(TR_DEATH, ops=(Op(OP_DRAW, n=2, cond=COND_WAS_MIGHTY),)),
+    ),
+
+    # If you control fewer runes than an opponent at the start of your
+    # Beginning Phase, give me +1 Might this turn.
+    #
+    # A catch-up clause: it compares two rune boards rather than testing a
+    # threshold, so it switches off the moment you draw level. Phase-timed, so
+    # it asks the question once a turn and the answer holds for that turn even
+    # if the counts move afterwards.
+    "Forsaken Baccai": (
+        Ability(TR_BEGINNING,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=1,
+                        cond=COND_FEWER_RUNES_THAN_OPP),)),
+    ),
+
+    # If you control fewer runes than an opponent at the start of your
+    # Beginning Phase, give me +2 Might and [Ganking] this turn.
+    #
+    # The same clause paying out twice as much, plus the keyword that makes it
+    # matter: [Ganking] lets him move battlefield-to-battlefield, so the turn
+    # you are behind on runes is the turn he can reach the ground you need.
+    "Oasis Raider": (
+        Ability(TR_BEGINNING,
+                ops=(Op(OP_MODIFY_MIGHT, target=T_SELF, n=2,
+                        cond=COND_FEWER_RUNES_THAN_OPP),
+                     Op(OP_GRANT_KEYWORD, target=T_SELF, keyword="Ganking",
+                        n=1, cond=COND_FEWER_RUNES_THAN_OPP))),
+    ),
+
+    # Ferrous Forerunner, Carrion Dredger and Honest Broker used to be listed
+    # here as deliberately absent: their Deathknells play Mech, Bird and Gold
+    # tokens and `data/cards.json` shipped only Recruit and Sprite. That gap is
+    # closed -- `data/tokens.json` supplies rule 187's eleven tokens -- and all
+    # three are scripted above.
 }
 
 
