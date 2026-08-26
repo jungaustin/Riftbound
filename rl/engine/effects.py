@@ -184,7 +184,14 @@ T_COMBAT = -9
  COND_N_OTHERS_HERE, COND_OTHERS_MIGHT,
  COND_READY_ENEMY_HERE, COND_CTX2_BATTLEFIELD,
  COND_FIRST_TURN, COND_DEFENDING_ALONE,
- COND_WAS_MIGHTY, COND_FEWER_RUNES_THAN_OPP) = range(22)
+ COND_WAS_MIGHTY, COND_FEWER_RUNES_THAN_OPP,
+ COND_PAID_ADDITIONAL) = range(23)
+
+# COND_PAID_ADDITIONAL is "when you play me, IF YOU PAID THE ADDITIONAL COST,
+# ...". A snapshot on the permanent (`F_PAID_ADDITIONAL`), not a live question:
+# the payment happens as the card is played and the trigger resolves a priority
+# window later, by which time nothing else on the board records it. See
+# `PLAY_COSTS` for the costs themselves.
 
 # COND_WAS_MIGHTY is Unsung Hero's "[Deathknell] - If I was [Mighty], draw 2".
 # Past tense, so it reads the `F_DIED_MIGHTY` snapshot taken as the unit died
@@ -836,6 +843,44 @@ ENTERS_READY_IF: dict[str, int] = {
     # ready." Past tense -- see `state.died_in_beginning`.
     "Shadow Watcher": ER_DIED_IN_BEGINNING,
 }
+
+# Printed OPTIONAL ADDITIONAL COSTS, in runes, paid as the card is played.
+#
+# **The same shape as [Accelerate], and deliberately the same action.** 805.2
+# makes [Accelerate] an Optional Additional Cost paid *as* the unit is played,
+# and `A_PLAY_AT_FAST` already folds it into the destination choice so that
+# where to put the unit and whether to pay extra stay one decision. A card that
+# prints its own optional additional cost is that same decision with a
+# different payload, so it rides the same action rather than adding a second
+# one -- and no card in the pool prints both, which is asserted where they meet.
+#
+# What differs is what paying BUYS. [Accelerate] buys entering ready (805.6, a
+# replacement). These buy a clause in the card's own text: "when you play me,
+# IF YOU PAID THE ADDITIONAL COST, ...". So paying sets `F_PAID_ADDITIONAL` on
+# the permanent and the trigger reads it through `COND_PAID_ADDITIONAL` -- a
+# snapshot on the row, like F_LEGION, because the ability resolves a priority
+# window after the payment happened.
+#
+# **The Power is domain-bound to the card's own domain in every printed case**,
+# which is what `plan_payment` already does for [Accelerate] under 805.1.a.1.
+# All six read "{X rune}" where X is the card's single domain; if one ever
+# prints a rune it does not itself have, this registry is where that shows up.
+PLAY_COSTS: dict[str, tuple[int, int]] = {
+    # "You may pay {1 energy}{Fury rune} as an additional cost to play me."
+    "Blast Corps Cadet": (1, 1),
+    # "As you play me, you may pay {Calm rune} as an additional cost."
+    "Clockwork Keeper": (0, 1),
+    # "You may pay {Mind rune} as an additional cost to play me."
+    "Frostcoat Cub": (0, 1),
+    # "You may pay {Order rune} as an additional cost to play me."
+    "Masa, Crashing Thunder": (0, 1),
+    # "You may pay {Fury rune} as an additional cost to play me."
+    "Pyke - Dockside Butcher": (0, 1),
+    # "You may pay {1 energy} as an additional cost to play me." No rune at all,
+    # which is why the pair is (energy, power) rather than a domain.
+    "Sea Monkey": (1, 0),
+}
+
 
 PLAY_PERMISSIONS: dict[str, int] = {
     # [Ambush] I can be played to a battlefield where there are enemy units.
@@ -3867,6 +3912,67 @@ ABILITIES: dict[str, tuple[Ability, ...]] = {
                         cond=COND_FEWER_RUNES_THAN_OPP),
                      Op(OP_GRANT_KEYWORD, target=T_SELF, keyword="Ganking",
                         n=1, cond=COND_FEWER_RUNES_THAN_OPP))),
+    ),
+
+    # --- printed optional additional costs (see PLAY_COSTS) ---------------
+    # Each of these is one sentence: "you may pay X as an additional cost to
+    # play me", then "when you play me, IF YOU PAID the additional cost, ...".
+    # The cost is in `PLAY_COSTS` and is paid through `A_PLAY_AT_FAST`, the
+    # same action [Accelerate] uses; the ability here reads the snapshot the
+    # payment left. Nothing is conditional about the TRIGGER -- it fires
+    # either way and the ops fizzle, which is 355.9.b's distinction between a
+    # restriction and a condition, and it matters because a target is still
+    # chosen for a Masa played without the rune.
+    #
+    # ...deal 2 to a unit at a battlefield.
+    "Blast Corps Cadet": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY, at_battlefield=True,
+                                    optional=True),),
+                ops=(Op(OP_DAMAGE, target=0, n=2,
+                        cond=COND_PAID_ADDITIONAL),)),
+    ),
+
+    # ...draw 1.
+    "Clockwork Keeper": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_DRAW, n=1, cond=COND_PAID_ADDITIONAL),)),
+    ),
+
+    # ...give a unit -2 Might this turn. No printed floor, so 143.2.b's general
+    # floor of 0 applies rather than Stupefy's stricter minimum of 1.
+    "Frostcoat Cub": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ANY, optional=True),),
+                ops=(Op(OP_MODIFY_MIGHT, target=0, n=-2,
+                        cond=COND_PAID_ADDITIONAL),)),
+    ),
+
+    # ...[Stun] an enemy unit at a battlefield.
+    "Masa, Crashing Thunder": (
+        Ability(TR_PLAY_ME,
+                targets=(TargetSpec(who=W_ENEMY, at_battlefield=True,
+                                    optional=True),),
+                ops=(Op(OP_STUN, target=0, cond=COND_PAID_ADDITIONAL),)),
+    ),
+
+    # [Hidden] [Ganking] ...ready me and give me +2 Might this turn.
+    # Both halves are conditional, so each op carries the condition: a Pyke
+    # played without the rune is an ordinary 3-Might body that entered
+    # exhausted, which is the whole choice the card offers.
+    "Pyke - Dockside Butcher": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_READY, target=T_SELF, cond=COND_PAID_ADDITIONAL),
+                     Op(OP_MODIFY_MIGHT, target=T_SELF, n=2,
+                        cond=COND_PAID_ADDITIONAL))),
+    ),
+
+    # ...buff me. 702.3 caps a unit at one Buff counter, which OP_BUFF already
+    # enforces, so paying twice over two copies is not a stacking play.
+    "Sea Monkey": (
+        Ability(TR_PLAY_ME,
+                ops=(Op(OP_BUFF, target=T_SELF,
+                        cond=COND_PAID_ADDITIONAL),)),
     ),
 
     # Ferrous Forerunner, Carrion Dredger and Honest Broker used to be listed

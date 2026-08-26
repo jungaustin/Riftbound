@@ -197,6 +197,18 @@ def accelerate_cost(table: CardTable, card: int) -> tuple[int, int] | None:
     return (1, 1)
 
 
+def printed_add_cost(table: CardTable, card: int) -> tuple[int, int] | None:
+    """The card's own printed optional additional cost, or None.
+
+    Separate from `accelerate_cost` because the two buy different things -- one
+    entering ready (805.6), the other a clause in the card's text -- but both
+    are Optional Additional Costs paid as the card is played (805.2), so they
+    share `A_PLAY_AT_FAST` and the same `plan_payment` call.
+    """
+    from rl.engine.effects import PLAY_COSTS
+    return PLAY_COSTS.get(table.names[card])
+
+
 def plan_payment(state: GameState, table: CardTable, seat: int, card: int,
                  extra_energy: int = 0,
                  extra_power: int = 0) -> list[int] | None:

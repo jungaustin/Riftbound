@@ -188,6 +188,13 @@ F_NO_MOVE = 1 << 7
 # that made it Mighty is gone. 740.2 defines Mighty as 5+ EFFECTIVE Might, so
 # the answer has to be taken while the unit is still standing.
 F_DIED_MIGHTY = 1 << 8
+# "When you play me, IF YOU PAID THE ADDITIONAL COST, ...". Six cards print an
+# optional additional cost in runes and then a trigger that asks whether it was
+# paid; the payment happens as the card is played and the trigger resolves a
+# priority window later, so like F_LEGION it is recorded on the row rather than
+# re-derived. [Accelerate] needs no flag because what it buys -- entering ready
+# -- is visible on the board.
+F_PAID_ADDITIONAL = 1 << 9
 
 # Keywords an effect can GRANT to a permanent. Values, not bits: [Assault 3]
 # and [Assault 2] are different grants, and 807.1.b.2 calls the number the

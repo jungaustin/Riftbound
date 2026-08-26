@@ -2518,3 +2518,90 @@ if 4 - int(s.runes_spent[0].sum()) != 2:
     die("annie", "a LEGEND's end-of-turn ability fires too -- it has no row "
                  "to walk, so it is asked separately")
 ok("...and a legend's end-of-turn ability fires from the same step")
+
+
+# ---------------------------------------------------------------------------
+print("\n[30] a printed OPTIONAL ADDITIONAL COST, and the clause it buys")
+
+# 805.2 -- an Optional Additional Cost is paid as the card is played, so it
+# belongs to the destination decision rather than a later one; `A_PLAY_AT_FAST`
+# already carried [Accelerate] and now carries these six too. What differs is
+# what paying BUYS: [Accelerate] buys entering ready (805.6), a printed cost
+# buys a clause in the card's own text.
+from rl.config import DOMAINS as _DOMAINS
+DOM_BODY = _DOMAINS.index("Body")
+
+KEEPER = T.id_of("Clockwork Keeper")     # {Calm rune} -> draw 1
+PYKE_D = T.id_of("Pyke - Dockside Butcher")   # {Fury rune} -> ready me, +2
+
+
+def play_paying(card, pay, runes=6):
+    s = fresh(hand=[card], runes=runes)
+    s.n_deck[:] = 20
+    s.deck[:, :20] = PLAIN2
+    A.apply(s, T, V1, A.Action(A.A_PLAY, 0))
+    kind = A.A_PLAY_AT_FAST if pay else A.A_PLAY_AT
+    legal = A.legal_actions(s, T, V1, A.acting_seat(s))
+    act = next((a for a in legal if a.kind == kind and a.arg == base_loc(0)),
+               None)
+    if act is None:
+        die("add cost", f"{T.names[card]!r} was not offered "
+                        f"{'the paid' if pay else 'the plain'} play")
+    A.apply(s, T, V1, act)
+    drain_all(s)
+    row = next(i for i in range(s.n_perms)
+               if int(s.perms[i, P_CARD]) == card and s.perms[i, P_ALIVE] == 1)
+    return s, row
+
+
+s, _ = play_paying(KEEPER, pay=True)
+if int(s.n_hand[0]) != 1:
+    die("add cost", f"paying {{Calm rune}} draws 1; hand is {int(s.n_hand[0])}")
+ok("paying the printed additional cost turns its clause on")
+
+s, _ = play_paying(KEEPER, pay=False)
+if int(s.n_hand[0]) != 0:
+    die("add cost", "declining must draw nothing -- the clause is conditional")
+ok("...and declining plays the same card without it")
+
+# The runes: the paid play really costs more. Measured against the plain play
+# of the same card, because the card's own cost is in both numbers -- and
+# measured on the rune BOARD, not on what is exhausted: {Calm rune} is Power,
+# and Power is paid by RECYCLING a rune to the bottom of the Rune Deck
+# (416.1.b). The cost shows up as a smaller board, not as a spent column.
+def board(st):
+    return int(st.runes_ready[0].sum() + st.runes_spent[0].sum())
+
+
+paid, _ = play_paying(KEEPER, pay=True)
+free, _ = play_paying(KEEPER, pay=False)
+if board(paid) != board(free) - 1:
+    die("add cost", f"a Power cost costs a rune off the board: paid "
+                    f"{board(paid)} vs plain {board(free)}")
+ok("...and it is a real cost -- one rune of attrition, not a free rider")
+
+# A printed cost must NOT make the unit enter ready -- that is [Accelerate]'s
+# payload and conflating the two would hand six units haste they never printed.
+s, row = play_paying(PYKE_D, pay=False)
+if s.perms[row, P_READY]:
+    die("add cost", "359.2.c -- a unit enters exhausted")
+s, row = play_paying(PYKE_D, pay=True)
+if not s.perms[row, P_READY]:
+    die("add cost", "Pyke's OWN clause readies him -- 'ready me and +2 Might'")
+if combat.might(s, T, row) != int(T.might[PYKE_D]) + 2:
+    die("add cost", "...and the second half of the same clause is the +2")
+ok("Pyke's readying is his printed clause, not [Accelerate]'s replacement")
+
+# Unaffordable means not offered: 355.8's cousin for costs. Energy is generic
+# (163.1.a) so any two runes pay the card itself, but {Calm rune} is Power and
+# 163.2 binds it to its domain -- with no Calm rune on the board there is
+# nothing to recycle for it.
+s = fresh(hand=[KEEPER], runes=0)
+s.runes_ready[0, DOM_BODY] = 3
+A.apply(s, T, V1, A.Action(A.A_PLAY, 0))
+kinds = {a.kind for a in A.legal_actions(s, T, V1, A.acting_seat(s))}
+if A.A_PLAY_AT_FAST in kinds:
+    die("add cost", "an unaffordable additional cost must not be offered")
+if A.A_PLAY_AT not in kinds:
+    die("add cost", "...while the card itself is still perfectly playable")
+ok("an unaffordable additional cost is not offered, and the card still is")

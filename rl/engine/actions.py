@@ -37,6 +37,7 @@ from rl.engine import resolve as rsv
 # Payment lives in `cost` so combat can ask about affordability without
 # importing the action layer. Re-exported: callers still say A.plan_payment.
 from rl.engine.cost import (MULTI_DOMAIN_POWER_IS_PERMISSIVE, accelerate_cost,
+                            printed_add_cost,
                             ability_energy, card_domains, pay,
                             pay_ability_cost,
                             plan_ability_cost, plan_flow, plan_payment,
@@ -62,7 +63,8 @@ from rl.engine.effects import (legend_abilities_for,
 # location, a Chain uid, or a packed card id, none of which is a row.
 _PERM_SLOT_KINDS = frozenset({TK_UNIT})
 from rl.engine.state import (C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST,
-                             F_EMPOWERED, F_LEGION, P_FLAGS,
+                             F_EMPOWERED, F_LEGION, F_PAID_ADDITIONAL,
+                             P_FLAGS,
                              PT_GEAR, PT_SPELL, PT_UNIT,
                              C_DEST, COST_FLOW, COST_NO_ENERGY,
                              COST_PRINTED, DEST_BANISH, DEST_HAND,
@@ -338,6 +340,24 @@ def _look_type_bit(table: CardTable, card: int) -> int:
         if table.is_type(card, name):
             bit |= b
     return bit
+
+
+def optional_add_cost(table: CardTable, card: int) -> tuple[int, int] | None:
+    """The one optional additional cost a card may be played with, or None.
+
+    [Accelerate] (805.1.a) and a printed "you may pay X as an additional cost"
+    are the same kind of thing paid at the same moment, and `A_PLAY_AT_FAST`
+    carries both. **No card in the pool prints both**, which the assert pins:
+    if one ever does, the action space needs two offers rather than one and
+    silently dropping the second would be a card that cannot be played as
+    printed.
+    """
+    acc = accelerate_cost(table, card)
+    printed = printed_add_cost(table, card)
+    assert acc is None or printed is None, (
+        f"{table.names[card]!r} prints two optional additional costs; "
+        f"A_PLAY_AT_FAST can only offer one")
+    return acc if acc is not None else printed
 
 
 def _main_open(state: GameState, seat: int) -> bool:
@@ -658,7 +678,11 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         # where to put it and whether to pay for haste are the same decision,
         # and splitting them would offer a second decision point with two
         # options and no new information.
-        acc = accelerate_cost(table, card)
+        # A card's own printed optional additional cost rides the SAME action:
+        # 805.2 makes both this and [Accelerate] a cost paid as the card is
+        # played, so both belong to this decision. What they buy differs and
+        # `_resolve_play` decides that; here they are one offer.
+        acc = optional_add_cost(table, card)
         if acc is not None and plan_payment(state, table, seat, card,
                                             acc[0], acc[1]) is not None:
             out += [Action(A_PLAY_AT_FAST, loc) for loc in dsts]
@@ -1536,9 +1560,15 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     """
     idx = state.pend_play
     card = int(state.hand[seat, idx])
-    extra = accelerate_cost(table, card) if fast else None
-    assert not fast or extra is not None, "accelerated a card without [Accelerate]"
+    extra = optional_add_cost(table, card) if fast else None
+    assert not fast or extra is not None, \
+        "paid an optional additional cost on a card that prints none"
     ee, ep = extra if extra else (0, 0)
+    # WHICH cost was paid decides what it bought. [Accelerate] buys entering
+    # ready (805.6); a printed one buys a clause in the card's own text, read
+    # later through `F_PAID_ADDITIONAL`. Both are `fast`, and conflating them
+    # would have every one of these six units enter ready as well.
+    accelerated = fast and accelerate_cost(table, card) is not None
     recycle = plan_payment(state, table, seat, card, ee, ep)
     assert recycle is not None, "unaffordable card reached _resolve_play"
     pay(state, table, seat, card, recycle, ee, ep)
@@ -1569,11 +1599,17 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     # the point the condition is read.
     if not table.is_token(card):
         state.played_types[seat] |= _played_bits(table, card)
-    enters_ready = fast or not is_unit or _enters_ready(state, table, seat, card)
+    enters_ready = (accelerated or not is_unit
+                    or _enters_ready(state, table, seat, card))
     src = state.add_permanent(card, seat, loc, ready=enters_ready,
                               is_unit=is_unit)
     if legion:
         state.perms[src, P_FLAGS] |= F_LEGION
+    # Snapshotted for the same reason [Legion] is: "when you play me, IF YOU
+    # PAID the additional cost" resolves a priority window later, and by then
+    # nothing else records that the payment happened.
+    if fast and not accelerated:
+        state.perms[src, P_FLAGS] |= F_PAID_ADDITIONAL
     # "When you play a unit" watchers -- Lillia. Queued after the permanent is
     # on the board, so a watcher that is itself the unit being played sees a
     # consistent board.

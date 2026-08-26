@@ -44,6 +44,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                CT_ENEMIES_AT_TARGET, COND_READY_ENEMY_HERE,
                                COND_FIRST_TURN, COND_WAS_MIGHTY,
                                COND_FEWER_RUNES_THAN_OPP,
+                               COND_PAID_ADDITIONAL,
                                COND_LEGION, COND_LEVEL, COND_NONE,
                                COND_ONLY_UNIT_THERE,
                                LOC_BOUND, OP_COUNTER, OP_DAMAGE,
@@ -89,6 +90,7 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_FINAL, C_UID, COST_FREE,
                              F_BUFFED,
                              F_DIED_ALONE, F_DIED_MIGHTY,
                              F_EMPOWERED, F_LEGION, F_NO_MOVE,
+                             F_PAID_ADDITIONAL,
                              GRANT_IDX, N_BF, N_SEATS, P_ALIVE,
                              PT_GEAR, PT_SPELL, PT_UNIT,
                              P_FLAGS,
@@ -760,6 +762,15 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
                     and int(state.perms[i, P_CTRL]) == seat
                     and table.is_type(int(state.perms[i, P_CARD]), "Unit"))
         return total >= op.level
+    if op.cond == COND_PAID_ADDITIONAL:
+        # "When you play me, IF YOU PAID the additional cost, ...". Recorded on
+        # the row as the card was played, because the payment is a moment that
+        # has passed by the time this trigger resolves -- the same reading
+        # [Legion] needs. `dead_source` too: the unit can be answered in the
+        # response window and the clause is still about what was paid.
+        who = source if source >= 0 else dead_source
+        return who >= 0 and bool(
+            int(state.perms[who, P_FLAGS]) & F_PAID_ADDITIONAL)
     if op.cond == COND_WAS_MIGHTY:
         # 740.2 -- Mighty is 5+ Might, and "I WAS Mighty" asks about the moment
         # of death. Reads the flag `combat._destroy` recorded then, for the same
