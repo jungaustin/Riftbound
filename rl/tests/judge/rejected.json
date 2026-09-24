@@ -1,0 +1,66 @@
+[
+ {
+  "id": 11368,
+  "reason": "Rule 432.1: doubling increases Might by its CURRENT value, which already includes Forbidding Waste's -2 (3-2=1, doubled to 2). The ruling doubles the pre-penalty 3 to reach 4. Engine answers 2."
+ },
+ {
+  "id": 12510,
+  "reason": "Rule 359.3.e.2 -- a target is illegal at resolution if it no longer meets the spell's targeting requirements. Moonfall's battlefield must be one 'where you have units'; once Flurry of Blades kills them, the battlefield is an illegal target and the instructions that act on it are ignored (359.3.e.5). Engine: Moonfall does nothing."
+ },
+ {
+  "id": 10211,
+  "reason": "Rules 477.3.e.1.a / 477.3.e.2.a / 479: increases to Might are applied FIRST and decreases LAST, and 479's own worked example puts a passive whose outcome depends on an increase after that increase. Leona - Zealot's '-8 Might, to a minimum of 1' therefore recomputes against the increased value: a stunned 4 Might unit given +2 is 4+2=6, then -8 to a minimum of 1, i.e. 1 Might. The ruling adds the increase on top of the floor (1+1=2), the one order the layer rules exclude. Engine answers 1; cases_21.py asserts only the floor itself."
+ },
+ {
+  "id": 10147,
+  "reason": "Rules 464.2.b-464.2.e: start-of-showdown effects (step 1) become Pending before the Attacker/Defender designations (step 2) and the attack triggers those designations cause (step 4), so Diana - Lunari's showdown trigger is placed on the Chain UNDER Kha'Zix, Evolving Hunter's attack trigger and resolves after it. #10254 rules exactly that for the same two cards; this answer has Diana resolve first. Engine follows #10254 (cases_22.py)."
+ },
+ {
+  "id": 9818,
+  "reason": "Rule 419.4.a: a spell is played when its play is COMPLETED at resolution, so 'when a player plays a spell' (Abandoned Hall) triggers after Ride The Wind has resolved, by which time Fizz stands at the Hall. #10217 rules exactly that ('Abandoned Hall triggers when a spell finishes resolving'); this answer has the trigger placed at the moment of casting. Engine follows 419.4.a / #10217."
+ },
+ {
+  "id": 9264,
+  "reason": "Rules 464.2.c.3 / 442.1.a: the Attacker and Defender designations exist only once a Combat opens, and a move into an EMPTY battlefield opens a non-combat Showdown, so 'When I attack' (Azir - Sovereign) does not trigger there. #9415 (Rek'Sai - Swarm Queen into an empty battlefield: no attack trigger) and #9971 (Atakhan attacks only once a Zenith Blade brings combat) rule the same way; this answer has Azir's attack trigger fire on an empty battlefield."
+ },
+ {
+  "id": 9227,
+  "reason": "Rule 419.4.a: 'when you play a spell' triggers when the act of playing the card has been COMPLETED, i.e. once Heedless Resurrection has finished resolving -- by which time its effect has already put Diana, No Longer Human on the board, so she sees the spell and gets +2. The answer's own sequence says 'if Diana were already on the board, she would trigger upon the resolution', and it closes with 'I could not fully verify this ruling against the retrieved rules'. Engine follows 419.4.a (Diana ends at 5)."
+ },
+ {
+  "id": 8857,
+  "reason": "Says a Showdown 'cannot change its type once it has begun'. 316.8.b.1.a says the opposite in as many words: units of another player arriving during a Non-Combat Showdown 'will cause the Showdown to become a Combat Showdown in the following cleanup', and 323.14 and 460.1 repeat it."
+ },
+ {
+  "id": 8607,
+  "reason": "Says Defy can counter Rebuke. Defy counters a spell costing 'no more than {4 energy} and no more than {any rune}', and Rebuke costs {2 energy}{2 power}: two Power is more than {any rune}, so Rebuke is out of range whatever the timing."
+ },
+ {
+  "id": 8437,
+  "reason": "Says Relentless Pursuit cannot be played without an Equipment, while admitting in the same sentence that attaching one is optional. The card reads 'up to one Equipment', and 352.13 makes 'up to' satisfiable by zero -- the same rule ruling #8460 applies to Salvage."
+ },
+ {
+  "id": 7694,
+  "reason": "Says Gust's '3 Might or less' is read only when the target is declared. 359.3.e.2 says a target is illegal AS THE SPELL RESOLVES if it no longer meets the targeting requirements, and 359.3.e.3's example only makes sense under that re-check. The case asserts the rule."
+ },
+ {
+  "id": 7440,
+  "reason": "Says a unit killed by combat damage and saved by Zhonya's Hourglass 'dies twice' and Imperial Decree's delayed kill finishes it. The Hourglass HEALS the unit as it recalls it, so once either death is replaced there is no nonzero damage left for 143.2.a, and the other death never happens. The engine spends the Hourglass on one of the two and the unit lives; two kills DO get through when there are two damage events (asserted as #8930)."
+ },
+ {
+  "id": 6896,
+  "reason": "Says Baited Hook's target Might is 'declared when the cost is paid' and cannot be shrunk in response. The kill is not the cost: 377.1/403.1.a make the cost only what precedes the ':' ({1 energy}{Order rune}, Exhaust), and 'Kill a friendly unit' is the effect. So the kill -- and the 'Might up to 1 more than the killed unit' ceiling it sets -- happens at resolution, after the response window, exactly as the same FAQ's #6996 (asserted in cases_72) requires. The engine reads the Might at resolution."
+ },
+ {
+  "id": 6887,
+  "reason": "Says a unit played out of Reinforce's resolution has no [Legion] because Reinforce is not yet the 'first card played'. 812.1.c makes Legion read FINALIZATION, not completion -- 'as long as a card different than the one with the Legion ability has been Finalized by you on the same turn' -- and 419.4.b's own example turns Legion on for a spell that was COUNTERED. Reinforce is finalized before it resolves, so the revealed unit's Legion is active. The cost-reduction half of the answer is right."
+ },
+ {
+  "id": 6775,
+  "reason": "Says a 'you may' trigger like Tideturner's is decided at RESOLUTION. 402.1 is explicit that when the first part of a triggered ability's effect is 'you may', its controller decides whether to perform it NOW -- as the ability goes on the Chain -- and 402.1.a removes it from the Chain if they decline. The other half of the answer (targets chosen during activation, before the opponent may react) is right and is what the engine does: it asks the 'may' first, then the target, and only then passes priority."
+ },
+ {
+  "id": 6656,
+  "reason": "Says a unit that leaves a Combat's battlefield and returns during the same Showdown gets no second 'when I attack/defend' trigger, because \"attack and defend triggers only trigger the first time a unit gains the attacker or defender designation\". There is no such rule. 323.2.c makes a designated unit at any other location LOSE that designation in the Cleanup, and 323.2.a then hands a designation to any undesignated unit present at the battlefield -- so a unit that walks out and back in is designated afresh and its trigger condition is met again. FAQ #6364 answers the same question the opposite way for Yasuo (Flash home, Zenith Blade back in, second attack trigger) and agrees with the rules; #6385 (the OTHER units leaving does not re-trigger the one that stayed) is consistent with both, because the unit that stayed never lost its designation. The engine was fixed to match 323.2.a/c and asserts #6364 in cases_81."
+ }
+]
