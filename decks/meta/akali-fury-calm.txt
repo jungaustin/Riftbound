@@ -1,0 +1,38 @@
+# Akali Fury/Calm (user-supplied 2026-08-31, source not recorded)
+Legend: Akali - Rogue Assassin
+Champion: Akali, Deadly Weapon
+Main Deck:
+3x Astral Heron
+1x Darius - Trifarian
+2x Blitzcrank - Impassive
+1x Noxus Hopeful
+3x Kai'Sa, Survivor
+3x Stellacorn Herder
+2x Mischievous Marai
+3x Mournful Witness
+2x Back Off
+2x Falling Star
+1x Block
+3x Discipline
+1x Not So Fast
+3x Defy
+3x Shuriken Flip
+1x Sterak's Gage
+3x Zhonya's Hourglass
+2x Long Sword
+Battlefields:
+1x Sigil of the Storm
+1x Forgotten Monument
+1x Void Gate
+Runes:
+6x Fury Rune
+6x Calm Rune
+Sideboard:
+2x Ferrous Forerunner
+2x Disarming Rake
+1x Thermo Beam
+1x En Garde
+1x Against the Odds
+1x Not So Fast
+1x Akali, Silent
+1x Decree of Focus
