@@ -30,7 +30,7 @@ from rl.engine import game
 from rl.engine.cardtable import CardTable
 from rl.engine.state import (F_STUNNED, N_BF, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
                              P_DMG, P_FLAGS, P_LOC, P_READY, PHASE_NAMES,
-                             GameState, base_loc, bf_index, bf_loc,
+                             GameState, base_loc, bf_index, bf_loc, fd_slots,
                              is_battlefield)
 
 
@@ -98,7 +98,7 @@ def view(state: GameState, table: CardTable, cfg: Config, seat: int,
     P("")
 
     P("--- BATTLEFIELDS ---")
-    for i in range(N_BF):
+    for i in state.live_bfs():
         card = int(state.bf_card[i])
         name = table.names[card] if card >= 0 else "?"
         scored = [s for s in range(N_SEATS) if state.bf_scored[s, i]]
@@ -107,13 +107,14 @@ def view(state: GameState, table: CardTable, cfg: Config, seat: int,
           + (f"  scored: {[_who(s, seat) for s in scored]}" if scored else ""))
         L.extend(_side(state, table, bf_loc(i), seat))
         # 107.3.f: the zone is public, the card is not.
-        owner = int(state.fd_owner[i])
-        if owner < 0:
-            P("       facedown: -")
-        elif owner == seat:
-            P(f"       facedown: yours, {table.names[int(state.fd_card[i])]}")
-        else:
-            P("       facedown: opponent's, face down")
+        shown = []
+        for k in fd_slots(i):
+            owner = int(state.fd_owner[k])
+            if owner < 0:
+                continue
+            shown.append(table.names[int(state.fd_card[k])] if owner == seat
+                         else "opponent's, face down")
+        P(f"       facedown: {', '.join(shown) if shown else '-'}")
     P("")
 
     for s, label in ((seat, "YOUR BASE"), (foe, "OPPONENT BASE")):

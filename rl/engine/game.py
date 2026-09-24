@@ -46,6 +46,9 @@ def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
     """
     s = GameState()
     s.rng = np.random.default_rng(seed)
+    # 194.3, and the curriculum's annealed value rather than the rulebook's --
+    # cards that read the Victory Score must read the game being played.
+    s.victory_score = int(cfg.victory_score)
 
     for seat in range(N_SEATS):
         deck = list(decks[seat])
@@ -63,6 +66,12 @@ def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
 
     for i, bf in enumerate(battlefields):
         s.bf_card[i] = bf
+        # "Increase the points needed to win the game by 1" (Aspirant's
+        # Climb) -- read as the battlefields are laid out, because it changes
+        # the game's Victory Score rather than anything on the board.
+        from rl.engine.effects import BF_SCORE_RULES
+        _rule = BF_SCORE_RULES.get(table.names[bf], {})
+        s.victory_bonus += int(_rule.get("victory_plus", 0))
 
     # 111 -- each player separates their Champion Legend into the Legend Zone.
     # Ready to begin with: 174.2.b establishes it at the start of the game, and

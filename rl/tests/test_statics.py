@@ -30,8 +30,8 @@ from rl.engine import resolve
 from rl.engine.effects import SPECS
 from rl.engine.cardtable import full_table
 from rl.engine.cost import card_domains, plan_payment
-from rl.engine.state import (F_EMPOWERED, MAIN, P_ALIVE, P_DMG, P_LOC,
-                             GameState, base_loc, bf_loc)
+from rl.engine.state import (F_EMPOWERED, MAIN, P_ALIVE, P_CARD, P_DMG, P_LOC,
+                             P_READY, GameState, base_loc, bf_loc)
 
 T = full_table()
 CFG = replace(Config().at_victory_score(3), units_only=False)
@@ -185,9 +185,11 @@ ok("the static counts toward the floor: the token lands on exactly 1")
 print("\n[5] the coverage metric credits them")
 
 from rl.decks import plays_as_printed
-from rl.engine.effects import STATICS
+from rl.engine.effects import PARTIAL_TRANSCRIPTIONS, STATICS
 
 for name in STATICS:
+    if name in PARTIAL_TRANSCRIPTIONS:
+        continue                  # knowingly incomplete, knowingly uncounted
     if not plays_as_printed(T, T.id_of(name)):
         die("coverage", f"{name!r} has a static spec but is not counted")
 ok(f"all {len(STATICS)} cards with statics count as played as printed")
@@ -466,6 +468,388 @@ if combat.perm_kw(s, T, mate, "Shield") != 0:
     die("taric", "the grant must be Taric's -- it has to stop when he dies")
 ok("...and it is his: the grant lapses the moment he leaves the board")
 
+# ---------------------------------------------------------------------------
+print("\n[Find Your Center] a cost gated on the SCOREBOARD")
+# "If an opponent's score is within 3 points of the Victory Score, this costs
+# {2 energy} less." A catch-up discount, and the first static whose gate is
+# neither a board state nor a player resource but the score itself.
+from rl.engine.cost import effective_energy as _eff
+
+_FYC = T.id_of("Find Your Center")
+_printed = int(T.energy[_FYC])
+if _printed != 3:
+    die("fyc", f"fixture assumes a printed cost of 3, card prints {_printed}")
+
+
+def _cost_at(points, victory):
+    st = GameState()
+    st.victory_score = victory
+    st.points[1] = points
+    return _eff(st, T, 0, _FYC)
+
+
+if _cost_at(1, 5) != _printed:
+    die("fyc", "an opponent 4 points away is not 'within 3'")
+if _cost_at(2, 5) != _printed - 2:
+    die("fyc", "'within 3' of a Victory Score of 5 means a score of 2")
+if _cost_at(5, 5) != _printed - 2:
+    die("fyc", "an opponent at the Victory Score is certainly within 3 of it")
+ok("the discount turns on exactly when an opponent comes within 3")
+
+# Read against `state.victory_score`, not a literal 8 -- the curriculum anneals
+# it, and a card keying on the Victory Score has to key on the one in play.
+if _cost_at(4, 8) != _printed:
+    die("fyc", "at a Victory Score of 8 a score of 4 is 4 away, not within 3")
+if _cost_at(5, 8) != _printed - 2:
+    die("fyc", "at a Victory Score of 8 the discount starts at 5")
+ok("...and it tracks the game's Victory Score, not a hardcoded 8")
+
+# It is the OPPONENT's score that matters. Your own lead does not discount it.
+_mine = GameState()
+_mine.victory_score = 5
+_mine.points[0] = 5
+if _eff(_mine, T, 0, _FYC) != _printed:
+    die("fyc", "'an OPPONENT's score' must not read the caster's own")
+ok("...and only an opponent's score, never your own")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Ambessa, The Wolf] an [Empowered] damage wall")
+# "[Empower] {3 energy}{Body rune}  [Empowered][>] I have +3 Might and can't be
+# dealt damage unless I'm in combat."
+#
+# 828.1.b.1 makes the whole clause the Empowered Ability, and its two halves
+# are different kinds of continuous effect -- a Might bonus and a damage
+# prevention -- so it is two statics, both gated on the status (828.1.c).
+from rl.engine.state import F_EMPOWERED as _F_EMP
+
+_AMB = T.id_of("Ambessa, The Wolf")
+
+
+def _ambessa(empowered=False, fighting=False):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_AMB, 0, bf_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st, row
+
+
+_printed = int(T.might[_AMB])
+_s, _r = _ambessa()
+if combat.might(_s, T, _r) != _printed:
+    die("ambessa", "un-Empowered she is a vanilla body")
+if not combat.mark_damage(_s, T, _r, 2) and int(_s.perms[_r, P_DMG]) != 2:
+    die("ambessa", "un-Empowered she takes damage normally")
+ok("un-Empowered, neither half of the dependent ability is on")
+
+_s, _r = _ambessa(empowered=True)
+if combat.might(_s, T, _r) != _printed + 3:
+    die("ambessa", "Empowered she has +3 Might")
+if combat.mark_damage(_s, T, _r, 3) or int(_s.perms[_r, P_DMG]) != 0:
+    die("ambessa", "Empowered and out of combat she cannot be dealt damage; "
+                   f"{int(_s.perms[_r, P_DMG])} was marked")
+ok("Empowered out of combat: +3 Might, and damage is refused outright")
+
+# "Unless I'm in combat" is the exception, and it is why the prevention lives
+# in `mark_damage` -- combat damage only reaches units that are in a Combat.
+_s, _r = _ambessa(empowered=True, fighting=True)
+combat.mark_damage(_s, T, _r, 3)
+if int(_s.perms[_r, P_DMG]) != 3:
+    die("ambessa", "in combat the prevention lifts and damage lands")
+ok("...and in combat the prevention lifts")
+
+# 827.1.c.1 -- "use only if not Empowered", read off OP_EMPOWER rather than
+# written per card.
+_s, _r = _ambessa()
+if not [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "[Empower] must be offered while she is not Empowered")
+_s, _r = _ambessa(empowered=True)
+if [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "827.1.c.1 -- an Empowered object cannot be Empowered again")
+ok("[Empower] is offered once and refused thereafter (827.1.c.1)")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Escaped Grayback] [Empower] paid with a BODY, not with runes")
+# "[Empower] -- Kill a friendly unit.  [Empowered][>] I have +2 Might."
+#
+# 151.2.a makes activating an ability like playing a card, so the 820 machinery
+# a printed "as an additional cost to play me" already used pays this too --
+# the only new thing was the field on `Ability`.
+_EG = T.id_of("Escaped Grayback")
+_MATE = T.id_of("First Mate")
+
+
+def _grayback(with_ally=True):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_EG, 0, bf_loc(0))
+    ally = st.add_permanent(_MATE, 0, bf_loc(0)) if with_ally else -1
+    return st, row, ally
+
+
+_s, _g, _ally = _grayback()
+if combat.might(_s, T, _g) != int(T.might[_EG]):
+    die("grayback", "un-Empowered she is a vanilla body")
+_acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]
+if not _acts:
+    die("grayback", "[Empower] must be offered when a friendly unit can die")
+A.apply(_s, T, CFG_V1, _acts[0])
+if int(_s.pend_cost_kill) < 0:
+    die("grayback", "activating must stop to have its kill cost paid, not "
+                    "finalize straight through it")
+_choices = {a.arg for a in A.legal_actions(_s, T, CFG_V1, 0)}
+if _choices != {_g, _ally}:
+    die("grayback", "'a friendly unit' is every friendly unit, herself "
+                    f"included; offered {sorted(_choices)}")
+A.apply(_s, T, CFG_V1, A.Action(A.A_TARGET, _ally))
+if _s.perms[_ally, P_ALIVE]:
+    die("grayback", "the chosen unit is killed to pay the cost")
+for _ in range(8):
+    _seat = A.acting_seat(_s)
+    if _seat < 0 or (not _s.n_chain and not _s.n_trig):
+        break
+    A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _seat)[0])
+if combat.might(_s, T, _g) != int(T.might[_EG]) + 2:
+    die("grayback", "once Empowered she has +2 Might")
+ok("[Empower] costs a friendly body, and the +2 follows the status")
+
+# 820's unpayable-cost gate is asserted at the level it can be asserted at.
+# There is no BOARD that makes this card's cost unpayable -- she is herself a
+# friendly unit, so while she is alive to activate anything she is also a legal
+# choice. So the honest test is of the predicate the gate consults, not of a
+# position that cannot exist: an ENEMY unit must not be able to pay it.
+from rl.engine import resolve as _rsv_g
+from rl.engine.effects import ABILITIES as _ABIL
+
+_s2, _g2, _ally2 = _grayback()
+_foe = _s2.add_permanent(_MATE, 1, bf_loc(0))
+_spec2 = _ABIL["Escaped Grayback"][0]
+_payers = set(_rsv_g.cost_kill_targets(_s2, T, _spec2, 0, -1))
+if _foe in _payers:
+    die("grayback", "'a FRIENDLY unit' must not reach the opponent's board")
+if _payers != {_g2, _ally2}:
+    die("grayback", f"the payers are her own side only; got {sorted(_payers)}")
+ok("...and 'a friendly unit' never reaches the opponent's units")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Applied Researchers] a discount granted by ANOTHER permanent")
+# "[Empowered][>] Your spells cost {1 energy}{any rune} less, to a minimum of
+# {1 energy}."
+#
+# Two things `cost.py` documented as unimplemented: the Power side of a
+# discount, and a discount printed on a permanent that applies to cards still
+# in hand. Both were needed by this one line.
+from rl.engine.cost import (effective_energy as _eff_e,
+                            effective_power as _eff_p)
+
+_AR = T.id_of("Applied Researchers")
+
+
+def _researchers(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_AR, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_SPELL = T.id_of("Back Off")            # 3 energy, 0 power
+_CHEAP = T.id_of("Defy")                # 1 energy, 1 power -- tests the floor
+_UNIT = T.id_of("First Mate")
+
+_off = _researchers(False)
+if _eff_e(_off, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "un-Empowered, nothing is discounted")
+ok("un-Empowered the discount is off")
+
+_on = _researchers(True)
+if _eff_e(_on, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("researchers", "Empowered, your spells cost {1 energy} less")
+if _eff_p(_on, T, 0, _CHEAP) != int(T.power[_CHEAP]) - 1:
+    die("researchers", "...and {any rune} less -- the POWER half, which had no "
+                       "discount machinery at all before this card")
+ok("Empowered: spells cost 1 Energy and 1 Power less")
+
+# 356.4.e -- "to a minimum of {1 energy}" binds to THIS discount, and Defy
+# already costs exactly 1.
+if _eff_e(_on, T, 0, _CHEAP) != 1:
+    die("researchers", "the floor holds a 1-Energy spell at 1, not 0")
+ok("...and the stated minimum floors the Energy half at 1")
+
+# "Your SPELLS" -- her own units and gear pay full price.
+if _eff_e(_on, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("researchers", "'your spells' must not reach units")
+ok("...and only spells: units and gear pay full price")
+
+# The discount belongs to its controller, not to both players.
+if _eff_e(_on, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "'YOUR spells' is the controller's, never the "
+                       "opponent's")
+ok("...and only for the seat that controls her")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Vex - Cheerless] cost INCREASES, and 356.3 before 356.4")
+# "While I'm in combat, friendly spells cost {1 energy}{any rune} less to a
+# minimum of {1 energy}, and enemy spells cost {1 energy}{any rune} more."
+_VEX = T.id_of("Vex - Cheerless")
+
+
+def _vex(fighting):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.add_permanent(_VEX, 0, bf_loc(0))
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st
+
+
+_calm = _vex(False)
+if _eff_e(_calm, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "out of combat she modifies nothing")
+if _eff_e(_calm, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "...for either player")
+ok("out of combat, neither half applies")
+
+_fight = _vex(True)
+if _eff_e(_fight, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("vex", "in combat, HER side's spells cost 1 less")
+if _eff_e(_fight, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("vex", "...and the opponent's cost 1 MORE -- a 356.3 increase, which "
+               "`apply_discounts` cannot express (it never raises a cost)")
+if _eff_p(_fight, T, 1, _CHEAP) != int(T.power[_CHEAP]) + 1:
+    die("vex", "the Power half raises too")
+ok("in combat: her spells cheaper, the opponent's dearer, on both components")
+
+# The scope is read off HER controller, so the tax follows whose she is.
+if _eff_e(_fight, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("vex", "'spells' must not reach units on either side")
+ok("...and 'spells' still means spells, for both players")
+
+# 356.4.e again: the floor binds the discount it is printed on, and Defy is
+# already at the minimum.
+if _eff_e(_fight, T, 0, _CHEAP) != 1:
+    die("vex", "her own 1-Energy spell is floored at 1, not reduced to 0")
+ok("...and the stated minimum floors her own discount at 1")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Helm of Suppression] 'instead' as two statics that add")
+# "Opponents' spells cost {1 energy} more. If this is [Empowered], they cost
+# {1 energy}{any rune} more INSTEAD."
+_HELM = T.id_of("Helm of Suppression")
+
+
+def _helm(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_HELM, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_base = _helm(False)
+if _eff_e(_base, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "opponents' spells cost {1 energy} more")
+if _eff_p(_base, T, 1, _SPELL) != int(T.power[_SPELL]):
+    die("helm", "...and no Power until it is Empowered")
+if _eff_e(_base, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("helm", "'OPPONENTS' spells' never taxes its own controller")
+ok("un-Empowered: the opponent pays {1 energy} more, its owner nothing")
+
+_emp = _helm(True)
+if _eff_e(_emp, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "'instead' must not stack the Energy halves -- {1 energy} "
+                "before and {1 energy} after, never {2 energy}")
+if _eff_p(_emp, T, 1, _SPELL) != int(T.power[_SPELL]) + 1:
+    die("helm", "Empowered adds the Power symbol")
+ok("...and Empowered adds only the rune: {1 energy}{any rune}, not {2 energy}")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Kayle, Justified] Empowered as a COUNT, not a flag")
+# "[Empower] {3 energy}. I can be [Empowered] up to three times. I have +2
+# Might for each time I'm [Empowered]. While I'm [Empowered] three times, I
+# have [Deflect 3] and [Ganking]."
+from rl.engine.effects import empower_limit as _limit
+from rl.engine.state import P_EMPOWER as _P_EMP
+
+_KAYLE = T.id_of("Kayle, Justified")
+
+if _limit(T, _KAYLE) != 3:
+    die("kayle", "her printed cap is three")
+if _limit(T, T.id_of("Ambessa, The Wolf")) != 1:
+    die("kayle", "827.1.c.1 -- every other card caps at one")
+
+_s = GameState()
+_s.n_deck[:] = 20
+_s.phase = 4
+_s.active = 0
+_s.priority = 0
+_s.runes_ready[:, :] = 9
+_k = _s.add_permanent(_KAYLE, 0, bf_loc(0))
+_printed = int(T.might[_KAYLE])
+_seen = []
+for _i in range(5):
+    _acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0)
+             if a.kind == A.A_ACTIVATE]
+    _seen.append((_s.empower_count(_k), combat.might(_s, T, _k), len(_acts)))
+    if not _acts:
+        break
+    A.apply(_s, T, CFG_V1, _acts[0])
+    for _ in range(6):
+        _st = A.acting_seat(_s)
+        if _st < 0 or (not _s.n_chain and not _s.n_trig):
+            break
+        A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _st)[0])
+
+_want = [(0, _printed, 1), (1, _printed + 2, 1), (2, _printed + 4, 1),
+         (3, _printed + 6, 0)]
+if _seen != _want:
+    die("kayle", f"expected {_want} (count, might, offers), got {_seen}")
+ok("she Empowers three times, +2 Might each, and is refused a fourth")
+
+if combat.perm_kw(_s, T, _k, "Deflect") != 3:
+    die("kayle", "at three she has [Deflect 3]")
+if not combat.perm_kw(_s, T, _k, "Ganking"):
+    die("kayle", "...and [Ganking]")
+ok("...and at exactly three she gains [Deflect 3] and [Ganking]")
+
+# The flag is a FLOOR on the count, so a status granted without the column
+# still reads as Empowered -- and does not hand out a second Empower.
+_s2 = GameState()
+_s2.n_deck[:] = 20
+_s2.phase = 4
+_s2.active = 0
+_s2.priority = 0
+_s2.runes_ready[:, :] = 9
+_a2 = _s2.add_permanent(T.id_of("Ambessa, The Wolf"), 0, bf_loc(0))
+_s2.set_flag(_a2, _F_EMP)                     # flag only, column untouched
+if _s2.empower_count(_a2) != 1:
+    die("kayle", "the flag must floor the count at 1, or the two disagree")
+if [a for a in A.legal_actions(_s2, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("kayle", "a permanent Empowered by flag alone must not be offered a "
+                 "second Empower")
+ok("...and the flag floors the count, so the two can never disagree")
+
+
 print("\n\033[32mall static tests passed\033[0m")
 
 # ---------------------------------------------------------------------------
@@ -617,6 +1001,388 @@ if combat.perm_kw(s, T, mate, "Shield") != 0:
     die("taric", "the grant must be Taric's -- it has to stop when he dies")
 ok("...and it is his: the grant lapses the moment he leaves the board")
 
+# ---------------------------------------------------------------------------
+print("\n[Find Your Center] a cost gated on the SCOREBOARD")
+# "If an opponent's score is within 3 points of the Victory Score, this costs
+# {2 energy} less." A catch-up discount, and the first static whose gate is
+# neither a board state nor a player resource but the score itself.
+from rl.engine.cost import effective_energy as _eff
+
+_FYC = T.id_of("Find Your Center")
+_printed = int(T.energy[_FYC])
+if _printed != 3:
+    die("fyc", f"fixture assumes a printed cost of 3, card prints {_printed}")
+
+
+def _cost_at(points, victory):
+    st = GameState()
+    st.victory_score = victory
+    st.points[1] = points
+    return _eff(st, T, 0, _FYC)
+
+
+if _cost_at(1, 5) != _printed:
+    die("fyc", "an opponent 4 points away is not 'within 3'")
+if _cost_at(2, 5) != _printed - 2:
+    die("fyc", "'within 3' of a Victory Score of 5 means a score of 2")
+if _cost_at(5, 5) != _printed - 2:
+    die("fyc", "an opponent at the Victory Score is certainly within 3 of it")
+ok("the discount turns on exactly when an opponent comes within 3")
+
+# Read against `state.victory_score`, not a literal 8 -- the curriculum anneals
+# it, and a card keying on the Victory Score has to key on the one in play.
+if _cost_at(4, 8) != _printed:
+    die("fyc", "at a Victory Score of 8 a score of 4 is 4 away, not within 3")
+if _cost_at(5, 8) != _printed - 2:
+    die("fyc", "at a Victory Score of 8 the discount starts at 5")
+ok("...and it tracks the game's Victory Score, not a hardcoded 8")
+
+# It is the OPPONENT's score that matters. Your own lead does not discount it.
+_mine = GameState()
+_mine.victory_score = 5
+_mine.points[0] = 5
+if _eff(_mine, T, 0, _FYC) != _printed:
+    die("fyc", "'an OPPONENT's score' must not read the caster's own")
+ok("...and only an opponent's score, never your own")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Ambessa, The Wolf] an [Empowered] damage wall")
+# "[Empower] {3 energy}{Body rune}  [Empowered][>] I have +3 Might and can't be
+# dealt damage unless I'm in combat."
+#
+# 828.1.b.1 makes the whole clause the Empowered Ability, and its two halves
+# are different kinds of continuous effect -- a Might bonus and a damage
+# prevention -- so it is two statics, both gated on the status (828.1.c).
+from rl.engine.state import F_EMPOWERED as _F_EMP
+
+_AMB = T.id_of("Ambessa, The Wolf")
+
+
+def _ambessa(empowered=False, fighting=False):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_AMB, 0, bf_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st, row
+
+
+_printed = int(T.might[_AMB])
+_s, _r = _ambessa()
+if combat.might(_s, T, _r) != _printed:
+    die("ambessa", "un-Empowered she is a vanilla body")
+if not combat.mark_damage(_s, T, _r, 2) and int(_s.perms[_r, P_DMG]) != 2:
+    die("ambessa", "un-Empowered she takes damage normally")
+ok("un-Empowered, neither half of the dependent ability is on")
+
+_s, _r = _ambessa(empowered=True)
+if combat.might(_s, T, _r) != _printed + 3:
+    die("ambessa", "Empowered she has +3 Might")
+if combat.mark_damage(_s, T, _r, 3) or int(_s.perms[_r, P_DMG]) != 0:
+    die("ambessa", "Empowered and out of combat she cannot be dealt damage; "
+                   f"{int(_s.perms[_r, P_DMG])} was marked")
+ok("Empowered out of combat: +3 Might, and damage is refused outright")
+
+# "Unless I'm in combat" is the exception, and it is why the prevention lives
+# in `mark_damage` -- combat damage only reaches units that are in a Combat.
+_s, _r = _ambessa(empowered=True, fighting=True)
+combat.mark_damage(_s, T, _r, 3)
+if int(_s.perms[_r, P_DMG]) != 3:
+    die("ambessa", "in combat the prevention lifts and damage lands")
+ok("...and in combat the prevention lifts")
+
+# 827.1.c.1 -- "use only if not Empowered", read off OP_EMPOWER rather than
+# written per card.
+_s, _r = _ambessa()
+if not [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "[Empower] must be offered while she is not Empowered")
+_s, _r = _ambessa(empowered=True)
+if [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "827.1.c.1 -- an Empowered object cannot be Empowered again")
+ok("[Empower] is offered once and refused thereafter (827.1.c.1)")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Escaped Grayback] [Empower] paid with a BODY, not with runes")
+# "[Empower] -- Kill a friendly unit.  [Empowered][>] I have +2 Might."
+#
+# 151.2.a makes activating an ability like playing a card, so the 820 machinery
+# a printed "as an additional cost to play me" already used pays this too --
+# the only new thing was the field on `Ability`.
+_EG = T.id_of("Escaped Grayback")
+_MATE = T.id_of("First Mate")
+
+
+def _grayback(with_ally=True):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_EG, 0, bf_loc(0))
+    ally = st.add_permanent(_MATE, 0, bf_loc(0)) if with_ally else -1
+    return st, row, ally
+
+
+_s, _g, _ally = _grayback()
+if combat.might(_s, T, _g) != int(T.might[_EG]):
+    die("grayback", "un-Empowered she is a vanilla body")
+_acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]
+if not _acts:
+    die("grayback", "[Empower] must be offered when a friendly unit can die")
+A.apply(_s, T, CFG_V1, _acts[0])
+if int(_s.pend_cost_kill) < 0:
+    die("grayback", "activating must stop to have its kill cost paid, not "
+                    "finalize straight through it")
+_choices = {a.arg for a in A.legal_actions(_s, T, CFG_V1, 0)}
+if _choices != {_g, _ally}:
+    die("grayback", "'a friendly unit' is every friendly unit, herself "
+                    f"included; offered {sorted(_choices)}")
+A.apply(_s, T, CFG_V1, A.Action(A.A_TARGET, _ally))
+if _s.perms[_ally, P_ALIVE]:
+    die("grayback", "the chosen unit is killed to pay the cost")
+for _ in range(8):
+    _seat = A.acting_seat(_s)
+    if _seat < 0 or (not _s.n_chain and not _s.n_trig):
+        break
+    A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _seat)[0])
+if combat.might(_s, T, _g) != int(T.might[_EG]) + 2:
+    die("grayback", "once Empowered she has +2 Might")
+ok("[Empower] costs a friendly body, and the +2 follows the status")
+
+# 820's unpayable-cost gate is asserted at the level it can be asserted at.
+# There is no BOARD that makes this card's cost unpayable -- she is herself a
+# friendly unit, so while she is alive to activate anything she is also a legal
+# choice. So the honest test is of the predicate the gate consults, not of a
+# position that cannot exist: an ENEMY unit must not be able to pay it.
+from rl.engine import resolve as _rsv_g
+from rl.engine.effects import ABILITIES as _ABIL
+
+_s2, _g2, _ally2 = _grayback()
+_foe = _s2.add_permanent(_MATE, 1, bf_loc(0))
+_spec2 = _ABIL["Escaped Grayback"][0]
+_payers = set(_rsv_g.cost_kill_targets(_s2, T, _spec2, 0, -1))
+if _foe in _payers:
+    die("grayback", "'a FRIENDLY unit' must not reach the opponent's board")
+if _payers != {_g2, _ally2}:
+    die("grayback", f"the payers are her own side only; got {sorted(_payers)}")
+ok("...and 'a friendly unit' never reaches the opponent's units")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Applied Researchers] a discount granted by ANOTHER permanent")
+# "[Empowered][>] Your spells cost {1 energy}{any rune} less, to a minimum of
+# {1 energy}."
+#
+# Two things `cost.py` documented as unimplemented: the Power side of a
+# discount, and a discount printed on a permanent that applies to cards still
+# in hand. Both were needed by this one line.
+from rl.engine.cost import (effective_energy as _eff_e,
+                            effective_power as _eff_p)
+
+_AR = T.id_of("Applied Researchers")
+
+
+def _researchers(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_AR, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_SPELL = T.id_of("Back Off")            # 3 energy, 0 power
+_CHEAP = T.id_of("Defy")                # 1 energy, 1 power -- tests the floor
+_UNIT = T.id_of("First Mate")
+
+_off = _researchers(False)
+if _eff_e(_off, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "un-Empowered, nothing is discounted")
+ok("un-Empowered the discount is off")
+
+_on = _researchers(True)
+if _eff_e(_on, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("researchers", "Empowered, your spells cost {1 energy} less")
+if _eff_p(_on, T, 0, _CHEAP) != int(T.power[_CHEAP]) - 1:
+    die("researchers", "...and {any rune} less -- the POWER half, which had no "
+                       "discount machinery at all before this card")
+ok("Empowered: spells cost 1 Energy and 1 Power less")
+
+# 356.4.e -- "to a minimum of {1 energy}" binds to THIS discount, and Defy
+# already costs exactly 1.
+if _eff_e(_on, T, 0, _CHEAP) != 1:
+    die("researchers", "the floor holds a 1-Energy spell at 1, not 0")
+ok("...and the stated minimum floors the Energy half at 1")
+
+# "Your SPELLS" -- her own units and gear pay full price.
+if _eff_e(_on, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("researchers", "'your spells' must not reach units")
+ok("...and only spells: units and gear pay full price")
+
+# The discount belongs to its controller, not to both players.
+if _eff_e(_on, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "'YOUR spells' is the controller's, never the "
+                       "opponent's")
+ok("...and only for the seat that controls her")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Vex - Cheerless] cost INCREASES, and 356.3 before 356.4")
+# "While I'm in combat, friendly spells cost {1 energy}{any rune} less to a
+# minimum of {1 energy}, and enemy spells cost {1 energy}{any rune} more."
+_VEX = T.id_of("Vex - Cheerless")
+
+
+def _vex(fighting):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.add_permanent(_VEX, 0, bf_loc(0))
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st
+
+
+_calm = _vex(False)
+if _eff_e(_calm, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "out of combat she modifies nothing")
+if _eff_e(_calm, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "...for either player")
+ok("out of combat, neither half applies")
+
+_fight = _vex(True)
+if _eff_e(_fight, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("vex", "in combat, HER side's spells cost 1 less")
+if _eff_e(_fight, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("vex", "...and the opponent's cost 1 MORE -- a 356.3 increase, which "
+               "`apply_discounts` cannot express (it never raises a cost)")
+if _eff_p(_fight, T, 1, _CHEAP) != int(T.power[_CHEAP]) + 1:
+    die("vex", "the Power half raises too")
+ok("in combat: her spells cheaper, the opponent's dearer, on both components")
+
+# The scope is read off HER controller, so the tax follows whose she is.
+if _eff_e(_fight, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("vex", "'spells' must not reach units on either side")
+ok("...and 'spells' still means spells, for both players")
+
+# 356.4.e again: the floor binds the discount it is printed on, and Defy is
+# already at the minimum.
+if _eff_e(_fight, T, 0, _CHEAP) != 1:
+    die("vex", "her own 1-Energy spell is floored at 1, not reduced to 0")
+ok("...and the stated minimum floors her own discount at 1")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Helm of Suppression] 'instead' as two statics that add")
+# "Opponents' spells cost {1 energy} more. If this is [Empowered], they cost
+# {1 energy}{any rune} more INSTEAD."
+_HELM = T.id_of("Helm of Suppression")
+
+
+def _helm(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_HELM, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_base = _helm(False)
+if _eff_e(_base, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "opponents' spells cost {1 energy} more")
+if _eff_p(_base, T, 1, _SPELL) != int(T.power[_SPELL]):
+    die("helm", "...and no Power until it is Empowered")
+if _eff_e(_base, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("helm", "'OPPONENTS' spells' never taxes its own controller")
+ok("un-Empowered: the opponent pays {1 energy} more, its owner nothing")
+
+_emp = _helm(True)
+if _eff_e(_emp, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "'instead' must not stack the Energy halves -- {1 energy} "
+                "before and {1 energy} after, never {2 energy}")
+if _eff_p(_emp, T, 1, _SPELL) != int(T.power[_SPELL]) + 1:
+    die("helm", "Empowered adds the Power symbol")
+ok("...and Empowered adds only the rune: {1 energy}{any rune}, not {2 energy}")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Kayle, Justified] Empowered as a COUNT, not a flag")
+# "[Empower] {3 energy}. I can be [Empowered] up to three times. I have +2
+# Might for each time I'm [Empowered]. While I'm [Empowered] three times, I
+# have [Deflect 3] and [Ganking]."
+from rl.engine.effects import empower_limit as _limit
+from rl.engine.state import P_EMPOWER as _P_EMP
+
+_KAYLE = T.id_of("Kayle, Justified")
+
+if _limit(T, _KAYLE) != 3:
+    die("kayle", "her printed cap is three")
+if _limit(T, T.id_of("Ambessa, The Wolf")) != 1:
+    die("kayle", "827.1.c.1 -- every other card caps at one")
+
+_s = GameState()
+_s.n_deck[:] = 20
+_s.phase = 4
+_s.active = 0
+_s.priority = 0
+_s.runes_ready[:, :] = 9
+_k = _s.add_permanent(_KAYLE, 0, bf_loc(0))
+_printed = int(T.might[_KAYLE])
+_seen = []
+for _i in range(5):
+    _acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0)
+             if a.kind == A.A_ACTIVATE]
+    _seen.append((_s.empower_count(_k), combat.might(_s, T, _k), len(_acts)))
+    if not _acts:
+        break
+    A.apply(_s, T, CFG_V1, _acts[0])
+    for _ in range(6):
+        _st = A.acting_seat(_s)
+        if _st < 0 or (not _s.n_chain and not _s.n_trig):
+            break
+        A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _st)[0])
+
+_want = [(0, _printed, 1), (1, _printed + 2, 1), (2, _printed + 4, 1),
+         (3, _printed + 6, 0)]
+if _seen != _want:
+    die("kayle", f"expected {_want} (count, might, offers), got {_seen}")
+ok("she Empowers three times, +2 Might each, and is refused a fourth")
+
+if combat.perm_kw(_s, T, _k, "Deflect") != 3:
+    die("kayle", "at three she has [Deflect 3]")
+if not combat.perm_kw(_s, T, _k, "Ganking"):
+    die("kayle", "...and [Ganking]")
+ok("...and at exactly three she gains [Deflect 3] and [Ganking]")
+
+# The flag is a FLOOR on the count, so a status granted without the column
+# still reads as Empowered -- and does not hand out a second Empower.
+_s2 = GameState()
+_s2.n_deck[:] = 20
+_s2.phase = 4
+_s2.active = 0
+_s2.priority = 0
+_s2.runes_ready[:, :] = 9
+_a2 = _s2.add_permanent(T.id_of("Ambessa, The Wolf"), 0, bf_loc(0))
+_s2.set_flag(_a2, _F_EMP)                     # flag only, column untouched
+if _s2.empower_count(_a2) != 1:
+    die("kayle", "the flag must floor the count at 1, or the two disagree")
+if [a for a in A.legal_actions(_s2, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("kayle", "a permanent Empowered by flag alone must not be offered a "
+                 "second Empower")
+ok("...and the flag floors the count, so the two can never disagree")
+
+
 print("\n\033[32mall static tests passed\033[0m")
 
 
@@ -666,7 +1432,10 @@ if int(s.pend_double[0]) >= 0:
 ok("...and 'Once each turn' spends the opportunity for the rest of the turn")
 
 # A new turn re-arms it: the stamp is compared against the turn, not cleared.
-s.turn += 1
+# `ply`, not `turn` -- `turn` is a ROUND, so bumping it skipped the opponent's
+# turn entirely and the test encoded the bug: "once each turn" silently covered
+# both players' turns in a round.
+s.ply += 1
 play_tokens(s)
 if int(s.pend_double[0]) < 0:
     die("zilean", "the once-each-turn stamp must re-arm on a new turn")
@@ -721,6 +1490,388 @@ s.perms[tar, P_ALIVE] = 0
 if combat.perm_kw(s, T, mate, "Shield") != 0:
     die("taric", "the grant must be Taric's -- it has to stop when he dies")
 ok("...and it is his: the grant lapses the moment he leaves the board")
+
+# ---------------------------------------------------------------------------
+print("\n[Find Your Center] a cost gated on the SCOREBOARD")
+# "If an opponent's score is within 3 points of the Victory Score, this costs
+# {2 energy} less." A catch-up discount, and the first static whose gate is
+# neither a board state nor a player resource but the score itself.
+from rl.engine.cost import effective_energy as _eff
+
+_FYC = T.id_of("Find Your Center")
+_printed = int(T.energy[_FYC])
+if _printed != 3:
+    die("fyc", f"fixture assumes a printed cost of 3, card prints {_printed}")
+
+
+def _cost_at(points, victory):
+    st = GameState()
+    st.victory_score = victory
+    st.points[1] = points
+    return _eff(st, T, 0, _FYC)
+
+
+if _cost_at(1, 5) != _printed:
+    die("fyc", "an opponent 4 points away is not 'within 3'")
+if _cost_at(2, 5) != _printed - 2:
+    die("fyc", "'within 3' of a Victory Score of 5 means a score of 2")
+if _cost_at(5, 5) != _printed - 2:
+    die("fyc", "an opponent at the Victory Score is certainly within 3 of it")
+ok("the discount turns on exactly when an opponent comes within 3")
+
+# Read against `state.victory_score`, not a literal 8 -- the curriculum anneals
+# it, and a card keying on the Victory Score has to key on the one in play.
+if _cost_at(4, 8) != _printed:
+    die("fyc", "at a Victory Score of 8 a score of 4 is 4 away, not within 3")
+if _cost_at(5, 8) != _printed - 2:
+    die("fyc", "at a Victory Score of 8 the discount starts at 5")
+ok("...and it tracks the game's Victory Score, not a hardcoded 8")
+
+# It is the OPPONENT's score that matters. Your own lead does not discount it.
+_mine = GameState()
+_mine.victory_score = 5
+_mine.points[0] = 5
+if _eff(_mine, T, 0, _FYC) != _printed:
+    die("fyc", "'an OPPONENT's score' must not read the caster's own")
+ok("...and only an opponent's score, never your own")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Ambessa, The Wolf] an [Empowered] damage wall")
+# "[Empower] {3 energy}{Body rune}  [Empowered][>] I have +3 Might and can't be
+# dealt damage unless I'm in combat."
+#
+# 828.1.b.1 makes the whole clause the Empowered Ability, and its two halves
+# are different kinds of continuous effect -- a Might bonus and a damage
+# prevention -- so it is two statics, both gated on the status (828.1.c).
+from rl.engine.state import F_EMPOWERED as _F_EMP
+
+_AMB = T.id_of("Ambessa, The Wolf")
+
+
+def _ambessa(empowered=False, fighting=False):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_AMB, 0, bf_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st, row
+
+
+_printed = int(T.might[_AMB])
+_s, _r = _ambessa()
+if combat.might(_s, T, _r) != _printed:
+    die("ambessa", "un-Empowered she is a vanilla body")
+if not combat.mark_damage(_s, T, _r, 2) and int(_s.perms[_r, P_DMG]) != 2:
+    die("ambessa", "un-Empowered she takes damage normally")
+ok("un-Empowered, neither half of the dependent ability is on")
+
+_s, _r = _ambessa(empowered=True)
+if combat.might(_s, T, _r) != _printed + 3:
+    die("ambessa", "Empowered she has +3 Might")
+if combat.mark_damage(_s, T, _r, 3) or int(_s.perms[_r, P_DMG]) != 0:
+    die("ambessa", "Empowered and out of combat she cannot be dealt damage; "
+                   f"{int(_s.perms[_r, P_DMG])} was marked")
+ok("Empowered out of combat: +3 Might, and damage is refused outright")
+
+# "Unless I'm in combat" is the exception, and it is why the prevention lives
+# in `mark_damage` -- combat damage only reaches units that are in a Combat.
+_s, _r = _ambessa(empowered=True, fighting=True)
+combat.mark_damage(_s, T, _r, 3)
+if int(_s.perms[_r, P_DMG]) != 3:
+    die("ambessa", "in combat the prevention lifts and damage lands")
+ok("...and in combat the prevention lifts")
+
+# 827.1.c.1 -- "use only if not Empowered", read off OP_EMPOWER rather than
+# written per card.
+_s, _r = _ambessa()
+if not [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "[Empower] must be offered while she is not Empowered")
+_s, _r = _ambessa(empowered=True)
+if [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "827.1.c.1 -- an Empowered object cannot be Empowered again")
+ok("[Empower] is offered once and refused thereafter (827.1.c.1)")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Escaped Grayback] [Empower] paid with a BODY, not with runes")
+# "[Empower] -- Kill a friendly unit.  [Empowered][>] I have +2 Might."
+#
+# 151.2.a makes activating an ability like playing a card, so the 820 machinery
+# a printed "as an additional cost to play me" already used pays this too --
+# the only new thing was the field on `Ability`.
+_EG = T.id_of("Escaped Grayback")
+_MATE = T.id_of("First Mate")
+
+
+def _grayback(with_ally=True):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_EG, 0, bf_loc(0))
+    ally = st.add_permanent(_MATE, 0, bf_loc(0)) if with_ally else -1
+    return st, row, ally
+
+
+_s, _g, _ally = _grayback()
+if combat.might(_s, T, _g) != int(T.might[_EG]):
+    die("grayback", "un-Empowered she is a vanilla body")
+_acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]
+if not _acts:
+    die("grayback", "[Empower] must be offered when a friendly unit can die")
+A.apply(_s, T, CFG_V1, _acts[0])
+if int(_s.pend_cost_kill) < 0:
+    die("grayback", "activating must stop to have its kill cost paid, not "
+                    "finalize straight through it")
+_choices = {a.arg for a in A.legal_actions(_s, T, CFG_V1, 0)}
+if _choices != {_g, _ally}:
+    die("grayback", "'a friendly unit' is every friendly unit, herself "
+                    f"included; offered {sorted(_choices)}")
+A.apply(_s, T, CFG_V1, A.Action(A.A_TARGET, _ally))
+if _s.perms[_ally, P_ALIVE]:
+    die("grayback", "the chosen unit is killed to pay the cost")
+for _ in range(8):
+    _seat = A.acting_seat(_s)
+    if _seat < 0 or (not _s.n_chain and not _s.n_trig):
+        break
+    A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _seat)[0])
+if combat.might(_s, T, _g) != int(T.might[_EG]) + 2:
+    die("grayback", "once Empowered she has +2 Might")
+ok("[Empower] costs a friendly body, and the +2 follows the status")
+
+# 820's unpayable-cost gate is asserted at the level it can be asserted at.
+# There is no BOARD that makes this card's cost unpayable -- she is herself a
+# friendly unit, so while she is alive to activate anything she is also a legal
+# choice. So the honest test is of the predicate the gate consults, not of a
+# position that cannot exist: an ENEMY unit must not be able to pay it.
+from rl.engine import resolve as _rsv_g
+from rl.engine.effects import ABILITIES as _ABIL
+
+_s2, _g2, _ally2 = _grayback()
+_foe = _s2.add_permanent(_MATE, 1, bf_loc(0))
+_spec2 = _ABIL["Escaped Grayback"][0]
+_payers = set(_rsv_g.cost_kill_targets(_s2, T, _spec2, 0, -1))
+if _foe in _payers:
+    die("grayback", "'a FRIENDLY unit' must not reach the opponent's board")
+if _payers != {_g2, _ally2}:
+    die("grayback", f"the payers are her own side only; got {sorted(_payers)}")
+ok("...and 'a friendly unit' never reaches the opponent's units")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Applied Researchers] a discount granted by ANOTHER permanent")
+# "[Empowered][>] Your spells cost {1 energy}{any rune} less, to a minimum of
+# {1 energy}."
+#
+# Two things `cost.py` documented as unimplemented: the Power side of a
+# discount, and a discount printed on a permanent that applies to cards still
+# in hand. Both were needed by this one line.
+from rl.engine.cost import (effective_energy as _eff_e,
+                            effective_power as _eff_p)
+
+_AR = T.id_of("Applied Researchers")
+
+
+def _researchers(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_AR, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_SPELL = T.id_of("Back Off")            # 3 energy, 0 power
+_CHEAP = T.id_of("Defy")                # 1 energy, 1 power -- tests the floor
+_UNIT = T.id_of("First Mate")
+
+_off = _researchers(False)
+if _eff_e(_off, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "un-Empowered, nothing is discounted")
+ok("un-Empowered the discount is off")
+
+_on = _researchers(True)
+if _eff_e(_on, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("researchers", "Empowered, your spells cost {1 energy} less")
+if _eff_p(_on, T, 0, _CHEAP) != int(T.power[_CHEAP]) - 1:
+    die("researchers", "...and {any rune} less -- the POWER half, which had no "
+                       "discount machinery at all before this card")
+ok("Empowered: spells cost 1 Energy and 1 Power less")
+
+# 356.4.e -- "to a minimum of {1 energy}" binds to THIS discount, and Defy
+# already costs exactly 1.
+if _eff_e(_on, T, 0, _CHEAP) != 1:
+    die("researchers", "the floor holds a 1-Energy spell at 1, not 0")
+ok("...and the stated minimum floors the Energy half at 1")
+
+# "Your SPELLS" -- her own units and gear pay full price.
+if _eff_e(_on, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("researchers", "'your spells' must not reach units")
+ok("...and only spells: units and gear pay full price")
+
+# The discount belongs to its controller, not to both players.
+if _eff_e(_on, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "'YOUR spells' is the controller's, never the "
+                       "opponent's")
+ok("...and only for the seat that controls her")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Vex - Cheerless] cost INCREASES, and 356.3 before 356.4")
+# "While I'm in combat, friendly spells cost {1 energy}{any rune} less to a
+# minimum of {1 energy}, and enemy spells cost {1 energy}{any rune} more."
+_VEX = T.id_of("Vex - Cheerless")
+
+
+def _vex(fighting):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.add_permanent(_VEX, 0, bf_loc(0))
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st
+
+
+_calm = _vex(False)
+if _eff_e(_calm, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "out of combat she modifies nothing")
+if _eff_e(_calm, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "...for either player")
+ok("out of combat, neither half applies")
+
+_fight = _vex(True)
+if _eff_e(_fight, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("vex", "in combat, HER side's spells cost 1 less")
+if _eff_e(_fight, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("vex", "...and the opponent's cost 1 MORE -- a 356.3 increase, which "
+               "`apply_discounts` cannot express (it never raises a cost)")
+if _eff_p(_fight, T, 1, _CHEAP) != int(T.power[_CHEAP]) + 1:
+    die("vex", "the Power half raises too")
+ok("in combat: her spells cheaper, the opponent's dearer, on both components")
+
+# The scope is read off HER controller, so the tax follows whose she is.
+if _eff_e(_fight, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("vex", "'spells' must not reach units on either side")
+ok("...and 'spells' still means spells, for both players")
+
+# 356.4.e again: the floor binds the discount it is printed on, and Defy is
+# already at the minimum.
+if _eff_e(_fight, T, 0, _CHEAP) != 1:
+    die("vex", "her own 1-Energy spell is floored at 1, not reduced to 0")
+ok("...and the stated minimum floors her own discount at 1")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Helm of Suppression] 'instead' as two statics that add")
+# "Opponents' spells cost {1 energy} more. If this is [Empowered], they cost
+# {1 energy}{any rune} more INSTEAD."
+_HELM = T.id_of("Helm of Suppression")
+
+
+def _helm(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_HELM, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_base = _helm(False)
+if _eff_e(_base, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "opponents' spells cost {1 energy} more")
+if _eff_p(_base, T, 1, _SPELL) != int(T.power[_SPELL]):
+    die("helm", "...and no Power until it is Empowered")
+if _eff_e(_base, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("helm", "'OPPONENTS' spells' never taxes its own controller")
+ok("un-Empowered: the opponent pays {1 energy} more, its owner nothing")
+
+_emp = _helm(True)
+if _eff_e(_emp, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "'instead' must not stack the Energy halves -- {1 energy} "
+                "before and {1 energy} after, never {2 energy}")
+if _eff_p(_emp, T, 1, _SPELL) != int(T.power[_SPELL]) + 1:
+    die("helm", "Empowered adds the Power symbol")
+ok("...and Empowered adds only the rune: {1 energy}{any rune}, not {2 energy}")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Kayle, Justified] Empowered as a COUNT, not a flag")
+# "[Empower] {3 energy}. I can be [Empowered] up to three times. I have +2
+# Might for each time I'm [Empowered]. While I'm [Empowered] three times, I
+# have [Deflect 3] and [Ganking]."
+from rl.engine.effects import empower_limit as _limit
+from rl.engine.state import P_EMPOWER as _P_EMP
+
+_KAYLE = T.id_of("Kayle, Justified")
+
+if _limit(T, _KAYLE) != 3:
+    die("kayle", "her printed cap is three")
+if _limit(T, T.id_of("Ambessa, The Wolf")) != 1:
+    die("kayle", "827.1.c.1 -- every other card caps at one")
+
+_s = GameState()
+_s.n_deck[:] = 20
+_s.phase = 4
+_s.active = 0
+_s.priority = 0
+_s.runes_ready[:, :] = 9
+_k = _s.add_permanent(_KAYLE, 0, bf_loc(0))
+_printed = int(T.might[_KAYLE])
+_seen = []
+for _i in range(5):
+    _acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0)
+             if a.kind == A.A_ACTIVATE]
+    _seen.append((_s.empower_count(_k), combat.might(_s, T, _k), len(_acts)))
+    if not _acts:
+        break
+    A.apply(_s, T, CFG_V1, _acts[0])
+    for _ in range(6):
+        _st = A.acting_seat(_s)
+        if _st < 0 or (not _s.n_chain and not _s.n_trig):
+            break
+        A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _st)[0])
+
+_want = [(0, _printed, 1), (1, _printed + 2, 1), (2, _printed + 4, 1),
+         (3, _printed + 6, 0)]
+if _seen != _want:
+    die("kayle", f"expected {_want} (count, might, offers), got {_seen}")
+ok("she Empowers three times, +2 Might each, and is refused a fourth")
+
+if combat.perm_kw(_s, T, _k, "Deflect") != 3:
+    die("kayle", "at three she has [Deflect 3]")
+if not combat.perm_kw(_s, T, _k, "Ganking"):
+    die("kayle", "...and [Ganking]")
+ok("...and at exactly three she gains [Deflect 3] and [Ganking]")
+
+# The flag is a FLOOR on the count, so a status granted without the column
+# still reads as Empowered -- and does not hand out a second Empower.
+_s2 = GameState()
+_s2.n_deck[:] = 20
+_s2.phase = 4
+_s2.active = 0
+_s2.priority = 0
+_s2.runes_ready[:, :] = 9
+_a2 = _s2.add_permanent(T.id_of("Ambessa, The Wolf"), 0, bf_loc(0))
+_s2.set_flag(_a2, _F_EMP)                     # flag only, column untouched
+if _s2.empower_count(_a2) != 1:
+    die("kayle", "the flag must floor the count at 1, or the two disagree")
+if [a for a in A.legal_actions(_s2, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("kayle", "a permanent Empowered by flag alone must not be offered a "
+                 "second Empower")
+ok("...and the flag floors the count, so the two can never disagree")
+
 
 print("\n\033[32mall static tests passed\033[0m")
 
@@ -808,6 +1959,388 @@ if combat.perm_kw(s, T, mate, "Shield") != 0:
     die("taric", "the grant must be Taric's -- it has to stop when he dies")
 ok("...and it is his: the grant lapses the moment he leaves the board")
 
+# ---------------------------------------------------------------------------
+print("\n[Find Your Center] a cost gated on the SCOREBOARD")
+# "If an opponent's score is within 3 points of the Victory Score, this costs
+# {2 energy} less." A catch-up discount, and the first static whose gate is
+# neither a board state nor a player resource but the score itself.
+from rl.engine.cost import effective_energy as _eff
+
+_FYC = T.id_of("Find Your Center")
+_printed = int(T.energy[_FYC])
+if _printed != 3:
+    die("fyc", f"fixture assumes a printed cost of 3, card prints {_printed}")
+
+
+def _cost_at(points, victory):
+    st = GameState()
+    st.victory_score = victory
+    st.points[1] = points
+    return _eff(st, T, 0, _FYC)
+
+
+if _cost_at(1, 5) != _printed:
+    die("fyc", "an opponent 4 points away is not 'within 3'")
+if _cost_at(2, 5) != _printed - 2:
+    die("fyc", "'within 3' of a Victory Score of 5 means a score of 2")
+if _cost_at(5, 5) != _printed - 2:
+    die("fyc", "an opponent at the Victory Score is certainly within 3 of it")
+ok("the discount turns on exactly when an opponent comes within 3")
+
+# Read against `state.victory_score`, not a literal 8 -- the curriculum anneals
+# it, and a card keying on the Victory Score has to key on the one in play.
+if _cost_at(4, 8) != _printed:
+    die("fyc", "at a Victory Score of 8 a score of 4 is 4 away, not within 3")
+if _cost_at(5, 8) != _printed - 2:
+    die("fyc", "at a Victory Score of 8 the discount starts at 5")
+ok("...and it tracks the game's Victory Score, not a hardcoded 8")
+
+# It is the OPPONENT's score that matters. Your own lead does not discount it.
+_mine = GameState()
+_mine.victory_score = 5
+_mine.points[0] = 5
+if _eff(_mine, T, 0, _FYC) != _printed:
+    die("fyc", "'an OPPONENT's score' must not read the caster's own")
+ok("...and only an opponent's score, never your own")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Ambessa, The Wolf] an [Empowered] damage wall")
+# "[Empower] {3 energy}{Body rune}  [Empowered][>] I have +3 Might and can't be
+# dealt damage unless I'm in combat."
+#
+# 828.1.b.1 makes the whole clause the Empowered Ability, and its two halves
+# are different kinds of continuous effect -- a Might bonus and a damage
+# prevention -- so it is two statics, both gated on the status (828.1.c).
+from rl.engine.state import F_EMPOWERED as _F_EMP
+
+_AMB = T.id_of("Ambessa, The Wolf")
+
+
+def _ambessa(empowered=False, fighting=False):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_AMB, 0, bf_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st, row
+
+
+_printed = int(T.might[_AMB])
+_s, _r = _ambessa()
+if combat.might(_s, T, _r) != _printed:
+    die("ambessa", "un-Empowered she is a vanilla body")
+if not combat.mark_damage(_s, T, _r, 2) and int(_s.perms[_r, P_DMG]) != 2:
+    die("ambessa", "un-Empowered she takes damage normally")
+ok("un-Empowered, neither half of the dependent ability is on")
+
+_s, _r = _ambessa(empowered=True)
+if combat.might(_s, T, _r) != _printed + 3:
+    die("ambessa", "Empowered she has +3 Might")
+if combat.mark_damage(_s, T, _r, 3) or int(_s.perms[_r, P_DMG]) != 0:
+    die("ambessa", "Empowered and out of combat she cannot be dealt damage; "
+                   f"{int(_s.perms[_r, P_DMG])} was marked")
+ok("Empowered out of combat: +3 Might, and damage is refused outright")
+
+# "Unless I'm in combat" is the exception, and it is why the prevention lives
+# in `mark_damage` -- combat damage only reaches units that are in a Combat.
+_s, _r = _ambessa(empowered=True, fighting=True)
+combat.mark_damage(_s, T, _r, 3)
+if int(_s.perms[_r, P_DMG]) != 3:
+    die("ambessa", "in combat the prevention lifts and damage lands")
+ok("...and in combat the prevention lifts")
+
+# 827.1.c.1 -- "use only if not Empowered", read off OP_EMPOWER rather than
+# written per card.
+_s, _r = _ambessa()
+if not [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "[Empower] must be offered while she is not Empowered")
+_s, _r = _ambessa(empowered=True)
+if [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "827.1.c.1 -- an Empowered object cannot be Empowered again")
+ok("[Empower] is offered once and refused thereafter (827.1.c.1)")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Escaped Grayback] [Empower] paid with a BODY, not with runes")
+# "[Empower] -- Kill a friendly unit.  [Empowered][>] I have +2 Might."
+#
+# 151.2.a makes activating an ability like playing a card, so the 820 machinery
+# a printed "as an additional cost to play me" already used pays this too --
+# the only new thing was the field on `Ability`.
+_EG = T.id_of("Escaped Grayback")
+_MATE = T.id_of("First Mate")
+
+
+def _grayback(with_ally=True):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_EG, 0, bf_loc(0))
+    ally = st.add_permanent(_MATE, 0, bf_loc(0)) if with_ally else -1
+    return st, row, ally
+
+
+_s, _g, _ally = _grayback()
+if combat.might(_s, T, _g) != int(T.might[_EG]):
+    die("grayback", "un-Empowered she is a vanilla body")
+_acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]
+if not _acts:
+    die("grayback", "[Empower] must be offered when a friendly unit can die")
+A.apply(_s, T, CFG_V1, _acts[0])
+if int(_s.pend_cost_kill) < 0:
+    die("grayback", "activating must stop to have its kill cost paid, not "
+                    "finalize straight through it")
+_choices = {a.arg for a in A.legal_actions(_s, T, CFG_V1, 0)}
+if _choices != {_g, _ally}:
+    die("grayback", "'a friendly unit' is every friendly unit, herself "
+                    f"included; offered {sorted(_choices)}")
+A.apply(_s, T, CFG_V1, A.Action(A.A_TARGET, _ally))
+if _s.perms[_ally, P_ALIVE]:
+    die("grayback", "the chosen unit is killed to pay the cost")
+for _ in range(8):
+    _seat = A.acting_seat(_s)
+    if _seat < 0 or (not _s.n_chain and not _s.n_trig):
+        break
+    A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _seat)[0])
+if combat.might(_s, T, _g) != int(T.might[_EG]) + 2:
+    die("grayback", "once Empowered she has +2 Might")
+ok("[Empower] costs a friendly body, and the +2 follows the status")
+
+# 820's unpayable-cost gate is asserted at the level it can be asserted at.
+# There is no BOARD that makes this card's cost unpayable -- she is herself a
+# friendly unit, so while she is alive to activate anything she is also a legal
+# choice. So the honest test is of the predicate the gate consults, not of a
+# position that cannot exist: an ENEMY unit must not be able to pay it.
+from rl.engine import resolve as _rsv_g
+from rl.engine.effects import ABILITIES as _ABIL
+
+_s2, _g2, _ally2 = _grayback()
+_foe = _s2.add_permanent(_MATE, 1, bf_loc(0))
+_spec2 = _ABIL["Escaped Grayback"][0]
+_payers = set(_rsv_g.cost_kill_targets(_s2, T, _spec2, 0, -1))
+if _foe in _payers:
+    die("grayback", "'a FRIENDLY unit' must not reach the opponent's board")
+if _payers != {_g2, _ally2}:
+    die("grayback", f"the payers are her own side only; got {sorted(_payers)}")
+ok("...and 'a friendly unit' never reaches the opponent's units")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Applied Researchers] a discount granted by ANOTHER permanent")
+# "[Empowered][>] Your spells cost {1 energy}{any rune} less, to a minimum of
+# {1 energy}."
+#
+# Two things `cost.py` documented as unimplemented: the Power side of a
+# discount, and a discount printed on a permanent that applies to cards still
+# in hand. Both were needed by this one line.
+from rl.engine.cost import (effective_energy as _eff_e,
+                            effective_power as _eff_p)
+
+_AR = T.id_of("Applied Researchers")
+
+
+def _researchers(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_AR, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_SPELL = T.id_of("Back Off")            # 3 energy, 0 power
+_CHEAP = T.id_of("Defy")                # 1 energy, 1 power -- tests the floor
+_UNIT = T.id_of("First Mate")
+
+_off = _researchers(False)
+if _eff_e(_off, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "un-Empowered, nothing is discounted")
+ok("un-Empowered the discount is off")
+
+_on = _researchers(True)
+if _eff_e(_on, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("researchers", "Empowered, your spells cost {1 energy} less")
+if _eff_p(_on, T, 0, _CHEAP) != int(T.power[_CHEAP]) - 1:
+    die("researchers", "...and {any rune} less -- the POWER half, which had no "
+                       "discount machinery at all before this card")
+ok("Empowered: spells cost 1 Energy and 1 Power less")
+
+# 356.4.e -- "to a minimum of {1 energy}" binds to THIS discount, and Defy
+# already costs exactly 1.
+if _eff_e(_on, T, 0, _CHEAP) != 1:
+    die("researchers", "the floor holds a 1-Energy spell at 1, not 0")
+ok("...and the stated minimum floors the Energy half at 1")
+
+# "Your SPELLS" -- her own units and gear pay full price.
+if _eff_e(_on, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("researchers", "'your spells' must not reach units")
+ok("...and only spells: units and gear pay full price")
+
+# The discount belongs to its controller, not to both players.
+if _eff_e(_on, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "'YOUR spells' is the controller's, never the "
+                       "opponent's")
+ok("...and only for the seat that controls her")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Vex - Cheerless] cost INCREASES, and 356.3 before 356.4")
+# "While I'm in combat, friendly spells cost {1 energy}{any rune} less to a
+# minimum of {1 energy}, and enemy spells cost {1 energy}{any rune} more."
+_VEX = T.id_of("Vex - Cheerless")
+
+
+def _vex(fighting):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.add_permanent(_VEX, 0, bf_loc(0))
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st
+
+
+_calm = _vex(False)
+if _eff_e(_calm, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "out of combat she modifies nothing")
+if _eff_e(_calm, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "...for either player")
+ok("out of combat, neither half applies")
+
+_fight = _vex(True)
+if _eff_e(_fight, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("vex", "in combat, HER side's spells cost 1 less")
+if _eff_e(_fight, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("vex", "...and the opponent's cost 1 MORE -- a 356.3 increase, which "
+               "`apply_discounts` cannot express (it never raises a cost)")
+if _eff_p(_fight, T, 1, _CHEAP) != int(T.power[_CHEAP]) + 1:
+    die("vex", "the Power half raises too")
+ok("in combat: her spells cheaper, the opponent's dearer, on both components")
+
+# The scope is read off HER controller, so the tax follows whose she is.
+if _eff_e(_fight, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("vex", "'spells' must not reach units on either side")
+ok("...and 'spells' still means spells, for both players")
+
+# 356.4.e again: the floor binds the discount it is printed on, and Defy is
+# already at the minimum.
+if _eff_e(_fight, T, 0, _CHEAP) != 1:
+    die("vex", "her own 1-Energy spell is floored at 1, not reduced to 0")
+ok("...and the stated minimum floors her own discount at 1")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Helm of Suppression] 'instead' as two statics that add")
+# "Opponents' spells cost {1 energy} more. If this is [Empowered], they cost
+# {1 energy}{any rune} more INSTEAD."
+_HELM = T.id_of("Helm of Suppression")
+
+
+def _helm(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_HELM, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_base = _helm(False)
+if _eff_e(_base, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "opponents' spells cost {1 energy} more")
+if _eff_p(_base, T, 1, _SPELL) != int(T.power[_SPELL]):
+    die("helm", "...and no Power until it is Empowered")
+if _eff_e(_base, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("helm", "'OPPONENTS' spells' never taxes its own controller")
+ok("un-Empowered: the opponent pays {1 energy} more, its owner nothing")
+
+_emp = _helm(True)
+if _eff_e(_emp, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "'instead' must not stack the Energy halves -- {1 energy} "
+                "before and {1 energy} after, never {2 energy}")
+if _eff_p(_emp, T, 1, _SPELL) != int(T.power[_SPELL]) + 1:
+    die("helm", "Empowered adds the Power symbol")
+ok("...and Empowered adds only the rune: {1 energy}{any rune}, not {2 energy}")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Kayle, Justified] Empowered as a COUNT, not a flag")
+# "[Empower] {3 energy}. I can be [Empowered] up to three times. I have +2
+# Might for each time I'm [Empowered]. While I'm [Empowered] three times, I
+# have [Deflect 3] and [Ganking]."
+from rl.engine.effects import empower_limit as _limit
+from rl.engine.state import P_EMPOWER as _P_EMP
+
+_KAYLE = T.id_of("Kayle, Justified")
+
+if _limit(T, _KAYLE) != 3:
+    die("kayle", "her printed cap is three")
+if _limit(T, T.id_of("Ambessa, The Wolf")) != 1:
+    die("kayle", "827.1.c.1 -- every other card caps at one")
+
+_s = GameState()
+_s.n_deck[:] = 20
+_s.phase = 4
+_s.active = 0
+_s.priority = 0
+_s.runes_ready[:, :] = 9
+_k = _s.add_permanent(_KAYLE, 0, bf_loc(0))
+_printed = int(T.might[_KAYLE])
+_seen = []
+for _i in range(5):
+    _acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0)
+             if a.kind == A.A_ACTIVATE]
+    _seen.append((_s.empower_count(_k), combat.might(_s, T, _k), len(_acts)))
+    if not _acts:
+        break
+    A.apply(_s, T, CFG_V1, _acts[0])
+    for _ in range(6):
+        _st = A.acting_seat(_s)
+        if _st < 0 or (not _s.n_chain and not _s.n_trig):
+            break
+        A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _st)[0])
+
+_want = [(0, _printed, 1), (1, _printed + 2, 1), (2, _printed + 4, 1),
+         (3, _printed + 6, 0)]
+if _seen != _want:
+    die("kayle", f"expected {_want} (count, might, offers), got {_seen}")
+ok("she Empowers three times, +2 Might each, and is refused a fourth")
+
+if combat.perm_kw(_s, T, _k, "Deflect") != 3:
+    die("kayle", "at three she has [Deflect 3]")
+if not combat.perm_kw(_s, T, _k, "Ganking"):
+    die("kayle", "...and [Ganking]")
+ok("...and at exactly three she gains [Deflect 3] and [Ganking]")
+
+# The flag is a FLOOR on the count, so a status granted without the column
+# still reads as Empowered -- and does not hand out a second Empower.
+_s2 = GameState()
+_s2.n_deck[:] = 20
+_s2.phase = 4
+_s2.active = 0
+_s2.priority = 0
+_s2.runes_ready[:, :] = 9
+_a2 = _s2.add_permanent(T.id_of("Ambessa, The Wolf"), 0, bf_loc(0))
+_s2.set_flag(_a2, _F_EMP)                     # flag only, column untouched
+if _s2.empower_count(_a2) != 1:
+    die("kayle", "the flag must floor the count at 1, or the two disagree")
+if [a for a in A.legal_actions(_s2, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("kayle", "a permanent Empowered by flag alone must not be offered a "
+                 "second Empower")
+ok("...and the flag floors the count, so the two can never disagree")
+
+
 print("\n\033[32mall static tests passed\033[0m")
 
 
@@ -831,7 +2364,11 @@ def swain_score(bits):
     s.phase, s.active, s.priority = _MAIN, 0, 0
     w = s.add_permanent(SWAIN, 0, bf_loc(0))
     s.played_types[0] = bits
-    resolve.resolve(s, T, CFG, SWAIN_AB, 0, [], -1, True, source=w)
+    # 383.2.a.1 -- the trio is part of the trigger condition, asked as it
+    # triggers; resolution does not ask again.
+    from rl.engine.chain import ability_cond_holds as _ach
+    if _ach(s, T, SWAIN_AB, 0, w):
+        resolve.resolve(s, T, CFG, SWAIN_AB, 0, [], -1, True, source=w)
     return int(s.points[0])
 
 
@@ -922,6 +2459,388 @@ if combat.perm_kw(s, T, mate, "Shield") != 0:
     die("taric", "the grant must be Taric's -- it has to stop when he dies")
 ok("...and it is his: the grant lapses the moment he leaves the board")
 
+# ---------------------------------------------------------------------------
+print("\n[Find Your Center] a cost gated on the SCOREBOARD")
+# "If an opponent's score is within 3 points of the Victory Score, this costs
+# {2 energy} less." A catch-up discount, and the first static whose gate is
+# neither a board state nor a player resource but the score itself.
+from rl.engine.cost import effective_energy as _eff
+
+_FYC = T.id_of("Find Your Center")
+_printed = int(T.energy[_FYC])
+if _printed != 3:
+    die("fyc", f"fixture assumes a printed cost of 3, card prints {_printed}")
+
+
+def _cost_at(points, victory):
+    st = GameState()
+    st.victory_score = victory
+    st.points[1] = points
+    return _eff(st, T, 0, _FYC)
+
+
+if _cost_at(1, 5) != _printed:
+    die("fyc", "an opponent 4 points away is not 'within 3'")
+if _cost_at(2, 5) != _printed - 2:
+    die("fyc", "'within 3' of a Victory Score of 5 means a score of 2")
+if _cost_at(5, 5) != _printed - 2:
+    die("fyc", "an opponent at the Victory Score is certainly within 3 of it")
+ok("the discount turns on exactly when an opponent comes within 3")
+
+# Read against `state.victory_score`, not a literal 8 -- the curriculum anneals
+# it, and a card keying on the Victory Score has to key on the one in play.
+if _cost_at(4, 8) != _printed:
+    die("fyc", "at a Victory Score of 8 a score of 4 is 4 away, not within 3")
+if _cost_at(5, 8) != _printed - 2:
+    die("fyc", "at a Victory Score of 8 the discount starts at 5")
+ok("...and it tracks the game's Victory Score, not a hardcoded 8")
+
+# It is the OPPONENT's score that matters. Your own lead does not discount it.
+_mine = GameState()
+_mine.victory_score = 5
+_mine.points[0] = 5
+if _eff(_mine, T, 0, _FYC) != _printed:
+    die("fyc", "'an OPPONENT's score' must not read the caster's own")
+ok("...and only an opponent's score, never your own")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Ambessa, The Wolf] an [Empowered] damage wall")
+# "[Empower] {3 energy}{Body rune}  [Empowered][>] I have +3 Might and can't be
+# dealt damage unless I'm in combat."
+#
+# 828.1.b.1 makes the whole clause the Empowered Ability, and its two halves
+# are different kinds of continuous effect -- a Might bonus and a damage
+# prevention -- so it is two statics, both gated on the status (828.1.c).
+from rl.engine.state import F_EMPOWERED as _F_EMP
+
+_AMB = T.id_of("Ambessa, The Wolf")
+
+
+def _ambessa(empowered=False, fighting=False):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_AMB, 0, bf_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st, row
+
+
+_printed = int(T.might[_AMB])
+_s, _r = _ambessa()
+if combat.might(_s, T, _r) != _printed:
+    die("ambessa", "un-Empowered she is a vanilla body")
+if not combat.mark_damage(_s, T, _r, 2) and int(_s.perms[_r, P_DMG]) != 2:
+    die("ambessa", "un-Empowered she takes damage normally")
+ok("un-Empowered, neither half of the dependent ability is on")
+
+_s, _r = _ambessa(empowered=True)
+if combat.might(_s, T, _r) != _printed + 3:
+    die("ambessa", "Empowered she has +3 Might")
+if combat.mark_damage(_s, T, _r, 3) or int(_s.perms[_r, P_DMG]) != 0:
+    die("ambessa", "Empowered and out of combat she cannot be dealt damage; "
+                   f"{int(_s.perms[_r, P_DMG])} was marked")
+ok("Empowered out of combat: +3 Might, and damage is refused outright")
+
+# "Unless I'm in combat" is the exception, and it is why the prevention lives
+# in `mark_damage` -- combat damage only reaches units that are in a Combat.
+_s, _r = _ambessa(empowered=True, fighting=True)
+combat.mark_damage(_s, T, _r, 3)
+if int(_s.perms[_r, P_DMG]) != 3:
+    die("ambessa", "in combat the prevention lifts and damage lands")
+ok("...and in combat the prevention lifts")
+
+# 827.1.c.1 -- "use only if not Empowered", read off OP_EMPOWER rather than
+# written per card.
+_s, _r = _ambessa()
+if not [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "[Empower] must be offered while she is not Empowered")
+_s, _r = _ambessa(empowered=True)
+if [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "827.1.c.1 -- an Empowered object cannot be Empowered again")
+ok("[Empower] is offered once and refused thereafter (827.1.c.1)")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Escaped Grayback] [Empower] paid with a BODY, not with runes")
+# "[Empower] -- Kill a friendly unit.  [Empowered][>] I have +2 Might."
+#
+# 151.2.a makes activating an ability like playing a card, so the 820 machinery
+# a printed "as an additional cost to play me" already used pays this too --
+# the only new thing was the field on `Ability`.
+_EG = T.id_of("Escaped Grayback")
+_MATE = T.id_of("First Mate")
+
+
+def _grayback(with_ally=True):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_EG, 0, bf_loc(0))
+    ally = st.add_permanent(_MATE, 0, bf_loc(0)) if with_ally else -1
+    return st, row, ally
+
+
+_s, _g, _ally = _grayback()
+if combat.might(_s, T, _g) != int(T.might[_EG]):
+    die("grayback", "un-Empowered she is a vanilla body")
+_acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]
+if not _acts:
+    die("grayback", "[Empower] must be offered when a friendly unit can die")
+A.apply(_s, T, CFG_V1, _acts[0])
+if int(_s.pend_cost_kill) < 0:
+    die("grayback", "activating must stop to have its kill cost paid, not "
+                    "finalize straight through it")
+_choices = {a.arg for a in A.legal_actions(_s, T, CFG_V1, 0)}
+if _choices != {_g, _ally}:
+    die("grayback", "'a friendly unit' is every friendly unit, herself "
+                    f"included; offered {sorted(_choices)}")
+A.apply(_s, T, CFG_V1, A.Action(A.A_TARGET, _ally))
+if _s.perms[_ally, P_ALIVE]:
+    die("grayback", "the chosen unit is killed to pay the cost")
+for _ in range(8):
+    _seat = A.acting_seat(_s)
+    if _seat < 0 or (not _s.n_chain and not _s.n_trig):
+        break
+    A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _seat)[0])
+if combat.might(_s, T, _g) != int(T.might[_EG]) + 2:
+    die("grayback", "once Empowered she has +2 Might")
+ok("[Empower] costs a friendly body, and the +2 follows the status")
+
+# 820's unpayable-cost gate is asserted at the level it can be asserted at.
+# There is no BOARD that makes this card's cost unpayable -- she is herself a
+# friendly unit, so while she is alive to activate anything she is also a legal
+# choice. So the honest test is of the predicate the gate consults, not of a
+# position that cannot exist: an ENEMY unit must not be able to pay it.
+from rl.engine import resolve as _rsv_g
+from rl.engine.effects import ABILITIES as _ABIL
+
+_s2, _g2, _ally2 = _grayback()
+_foe = _s2.add_permanent(_MATE, 1, bf_loc(0))
+_spec2 = _ABIL["Escaped Grayback"][0]
+_payers = set(_rsv_g.cost_kill_targets(_s2, T, _spec2, 0, -1))
+if _foe in _payers:
+    die("grayback", "'a FRIENDLY unit' must not reach the opponent's board")
+if _payers != {_g2, _ally2}:
+    die("grayback", f"the payers are her own side only; got {sorted(_payers)}")
+ok("...and 'a friendly unit' never reaches the opponent's units")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Applied Researchers] a discount granted by ANOTHER permanent")
+# "[Empowered][>] Your spells cost {1 energy}{any rune} less, to a minimum of
+# {1 energy}."
+#
+# Two things `cost.py` documented as unimplemented: the Power side of a
+# discount, and a discount printed on a permanent that applies to cards still
+# in hand. Both were needed by this one line.
+from rl.engine.cost import (effective_energy as _eff_e,
+                            effective_power as _eff_p)
+
+_AR = T.id_of("Applied Researchers")
+
+
+def _researchers(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_AR, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_SPELL = T.id_of("Back Off")            # 3 energy, 0 power
+_CHEAP = T.id_of("Defy")                # 1 energy, 1 power -- tests the floor
+_UNIT = T.id_of("First Mate")
+
+_off = _researchers(False)
+if _eff_e(_off, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "un-Empowered, nothing is discounted")
+ok("un-Empowered the discount is off")
+
+_on = _researchers(True)
+if _eff_e(_on, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("researchers", "Empowered, your spells cost {1 energy} less")
+if _eff_p(_on, T, 0, _CHEAP) != int(T.power[_CHEAP]) - 1:
+    die("researchers", "...and {any rune} less -- the POWER half, which had no "
+                       "discount machinery at all before this card")
+ok("Empowered: spells cost 1 Energy and 1 Power less")
+
+# 356.4.e -- "to a minimum of {1 energy}" binds to THIS discount, and Defy
+# already costs exactly 1.
+if _eff_e(_on, T, 0, _CHEAP) != 1:
+    die("researchers", "the floor holds a 1-Energy spell at 1, not 0")
+ok("...and the stated minimum floors the Energy half at 1")
+
+# "Your SPELLS" -- her own units and gear pay full price.
+if _eff_e(_on, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("researchers", "'your spells' must not reach units")
+ok("...and only spells: units and gear pay full price")
+
+# The discount belongs to its controller, not to both players.
+if _eff_e(_on, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "'YOUR spells' is the controller's, never the "
+                       "opponent's")
+ok("...and only for the seat that controls her")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Vex - Cheerless] cost INCREASES, and 356.3 before 356.4")
+# "While I'm in combat, friendly spells cost {1 energy}{any rune} less to a
+# minimum of {1 energy}, and enemy spells cost {1 energy}{any rune} more."
+_VEX = T.id_of("Vex - Cheerless")
+
+
+def _vex(fighting):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.add_permanent(_VEX, 0, bf_loc(0))
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st
+
+
+_calm = _vex(False)
+if _eff_e(_calm, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "out of combat she modifies nothing")
+if _eff_e(_calm, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "...for either player")
+ok("out of combat, neither half applies")
+
+_fight = _vex(True)
+if _eff_e(_fight, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("vex", "in combat, HER side's spells cost 1 less")
+if _eff_e(_fight, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("vex", "...and the opponent's cost 1 MORE -- a 356.3 increase, which "
+               "`apply_discounts` cannot express (it never raises a cost)")
+if _eff_p(_fight, T, 1, _CHEAP) != int(T.power[_CHEAP]) + 1:
+    die("vex", "the Power half raises too")
+ok("in combat: her spells cheaper, the opponent's dearer, on both components")
+
+# The scope is read off HER controller, so the tax follows whose she is.
+if _eff_e(_fight, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("vex", "'spells' must not reach units on either side")
+ok("...and 'spells' still means spells, for both players")
+
+# 356.4.e again: the floor binds the discount it is printed on, and Defy is
+# already at the minimum.
+if _eff_e(_fight, T, 0, _CHEAP) != 1:
+    die("vex", "her own 1-Energy spell is floored at 1, not reduced to 0")
+ok("...and the stated minimum floors her own discount at 1")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Helm of Suppression] 'instead' as two statics that add")
+# "Opponents' spells cost {1 energy} more. If this is [Empowered], they cost
+# {1 energy}{any rune} more INSTEAD."
+_HELM = T.id_of("Helm of Suppression")
+
+
+def _helm(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_HELM, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_base = _helm(False)
+if _eff_e(_base, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "opponents' spells cost {1 energy} more")
+if _eff_p(_base, T, 1, _SPELL) != int(T.power[_SPELL]):
+    die("helm", "...and no Power until it is Empowered")
+if _eff_e(_base, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("helm", "'OPPONENTS' spells' never taxes its own controller")
+ok("un-Empowered: the opponent pays {1 energy} more, its owner nothing")
+
+_emp = _helm(True)
+if _eff_e(_emp, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "'instead' must not stack the Energy halves -- {1 energy} "
+                "before and {1 energy} after, never {2 energy}")
+if _eff_p(_emp, T, 1, _SPELL) != int(T.power[_SPELL]) + 1:
+    die("helm", "Empowered adds the Power symbol")
+ok("...and Empowered adds only the rune: {1 energy}{any rune}, not {2 energy}")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Kayle, Justified] Empowered as a COUNT, not a flag")
+# "[Empower] {3 energy}. I can be [Empowered] up to three times. I have +2
+# Might for each time I'm [Empowered]. While I'm [Empowered] three times, I
+# have [Deflect 3] and [Ganking]."
+from rl.engine.effects import empower_limit as _limit
+from rl.engine.state import P_EMPOWER as _P_EMP
+
+_KAYLE = T.id_of("Kayle, Justified")
+
+if _limit(T, _KAYLE) != 3:
+    die("kayle", "her printed cap is three")
+if _limit(T, T.id_of("Ambessa, The Wolf")) != 1:
+    die("kayle", "827.1.c.1 -- every other card caps at one")
+
+_s = GameState()
+_s.n_deck[:] = 20
+_s.phase = 4
+_s.active = 0
+_s.priority = 0
+_s.runes_ready[:, :] = 9
+_k = _s.add_permanent(_KAYLE, 0, bf_loc(0))
+_printed = int(T.might[_KAYLE])
+_seen = []
+for _i in range(5):
+    _acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0)
+             if a.kind == A.A_ACTIVATE]
+    _seen.append((_s.empower_count(_k), combat.might(_s, T, _k), len(_acts)))
+    if not _acts:
+        break
+    A.apply(_s, T, CFG_V1, _acts[0])
+    for _ in range(6):
+        _st = A.acting_seat(_s)
+        if _st < 0 or (not _s.n_chain and not _s.n_trig):
+            break
+        A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _st)[0])
+
+_want = [(0, _printed, 1), (1, _printed + 2, 1), (2, _printed + 4, 1),
+         (3, _printed + 6, 0)]
+if _seen != _want:
+    die("kayle", f"expected {_want} (count, might, offers), got {_seen}")
+ok("she Empowers three times, +2 Might each, and is refused a fourth")
+
+if combat.perm_kw(_s, T, _k, "Deflect") != 3:
+    die("kayle", "at three she has [Deflect 3]")
+if not combat.perm_kw(_s, T, _k, "Ganking"):
+    die("kayle", "...and [Ganking]")
+ok("...and at exactly three she gains [Deflect 3] and [Ganking]")
+
+# The flag is a FLOOR on the count, so a status granted without the column
+# still reads as Empowered -- and does not hand out a second Empower.
+_s2 = GameState()
+_s2.n_deck[:] = 20
+_s2.phase = 4
+_s2.active = 0
+_s2.priority = 0
+_s2.runes_ready[:, :] = 9
+_a2 = _s2.add_permanent(T.id_of("Ambessa, The Wolf"), 0, bf_loc(0))
+_s2.set_flag(_a2, _F_EMP)                     # flag only, column untouched
+if _s2.empower_count(_a2) != 1:
+    die("kayle", "the flag must floor the count at 1, or the two disagree")
+if [a for a in A.legal_actions(_s2, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("kayle", "a permanent Empowered by flag alone must not be offered a "
+                 "second Empower")
+ok("...and the flag floors the count, so the two can never disagree")
+
+
 print("\n\033[32mall static tests passed\033[0m")
 
 
@@ -1010,6 +2929,388 @@ if m(s, plain_friend) != friend_printed:
 if m(s, gen) != gen_printed + 2:
     die("aurok", "'(including me)' -- he is a friendly Empowered unit too")
 ok("...and then reaches only Empowered units, himself among them")
+
+# ---------------------------------------------------------------------------
+print("\n[Find Your Center] a cost gated on the SCOREBOARD")
+# "If an opponent's score is within 3 points of the Victory Score, this costs
+# {2 energy} less." A catch-up discount, and the first static whose gate is
+# neither a board state nor a player resource but the score itself.
+from rl.engine.cost import effective_energy as _eff
+
+_FYC = T.id_of("Find Your Center")
+_printed = int(T.energy[_FYC])
+if _printed != 3:
+    die("fyc", f"fixture assumes a printed cost of 3, card prints {_printed}")
+
+
+def _cost_at(points, victory):
+    st = GameState()
+    st.victory_score = victory
+    st.points[1] = points
+    return _eff(st, T, 0, _FYC)
+
+
+if _cost_at(1, 5) != _printed:
+    die("fyc", "an opponent 4 points away is not 'within 3'")
+if _cost_at(2, 5) != _printed - 2:
+    die("fyc", "'within 3' of a Victory Score of 5 means a score of 2")
+if _cost_at(5, 5) != _printed - 2:
+    die("fyc", "an opponent at the Victory Score is certainly within 3 of it")
+ok("the discount turns on exactly when an opponent comes within 3")
+
+# Read against `state.victory_score`, not a literal 8 -- the curriculum anneals
+# it, and a card keying on the Victory Score has to key on the one in play.
+if _cost_at(4, 8) != _printed:
+    die("fyc", "at a Victory Score of 8 a score of 4 is 4 away, not within 3")
+if _cost_at(5, 8) != _printed - 2:
+    die("fyc", "at a Victory Score of 8 the discount starts at 5")
+ok("...and it tracks the game's Victory Score, not a hardcoded 8")
+
+# It is the OPPONENT's score that matters. Your own lead does not discount it.
+_mine = GameState()
+_mine.victory_score = 5
+_mine.points[0] = 5
+if _eff(_mine, T, 0, _FYC) != _printed:
+    die("fyc", "'an OPPONENT's score' must not read the caster's own")
+ok("...and only an opponent's score, never your own")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Ambessa, The Wolf] an [Empowered] damage wall")
+# "[Empower] {3 energy}{Body rune}  [Empowered][>] I have +3 Might and can't be
+# dealt damage unless I'm in combat."
+#
+# 828.1.b.1 makes the whole clause the Empowered Ability, and its two halves
+# are different kinds of continuous effect -- a Might bonus and a damage
+# prevention -- so it is two statics, both gated on the status (828.1.c).
+from rl.engine.state import F_EMPOWERED as _F_EMP
+
+_AMB = T.id_of("Ambessa, The Wolf")
+
+
+def _ambessa(empowered=False, fighting=False):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_AMB, 0, bf_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st, row
+
+
+_printed = int(T.might[_AMB])
+_s, _r = _ambessa()
+if combat.might(_s, T, _r) != _printed:
+    die("ambessa", "un-Empowered she is a vanilla body")
+if not combat.mark_damage(_s, T, _r, 2) and int(_s.perms[_r, P_DMG]) != 2:
+    die("ambessa", "un-Empowered she takes damage normally")
+ok("un-Empowered, neither half of the dependent ability is on")
+
+_s, _r = _ambessa(empowered=True)
+if combat.might(_s, T, _r) != _printed + 3:
+    die("ambessa", "Empowered she has +3 Might")
+if combat.mark_damage(_s, T, _r, 3) or int(_s.perms[_r, P_DMG]) != 0:
+    die("ambessa", "Empowered and out of combat she cannot be dealt damage; "
+                   f"{int(_s.perms[_r, P_DMG])} was marked")
+ok("Empowered out of combat: +3 Might, and damage is refused outright")
+
+# "Unless I'm in combat" is the exception, and it is why the prevention lives
+# in `mark_damage` -- combat damage only reaches units that are in a Combat.
+_s, _r = _ambessa(empowered=True, fighting=True)
+combat.mark_damage(_s, T, _r, 3)
+if int(_s.perms[_r, P_DMG]) != 3:
+    die("ambessa", "in combat the prevention lifts and damage lands")
+ok("...and in combat the prevention lifts")
+
+# 827.1.c.1 -- "use only if not Empowered", read off OP_EMPOWER rather than
+# written per card.
+_s, _r = _ambessa()
+if not [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "[Empower] must be offered while she is not Empowered")
+_s, _r = _ambessa(empowered=True)
+if [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "827.1.c.1 -- an Empowered object cannot be Empowered again")
+ok("[Empower] is offered once and refused thereafter (827.1.c.1)")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Escaped Grayback] [Empower] paid with a BODY, not with runes")
+# "[Empower] -- Kill a friendly unit.  [Empowered][>] I have +2 Might."
+#
+# 151.2.a makes activating an ability like playing a card, so the 820 machinery
+# a printed "as an additional cost to play me" already used pays this too --
+# the only new thing was the field on `Ability`.
+_EG = T.id_of("Escaped Grayback")
+_MATE = T.id_of("First Mate")
+
+
+def _grayback(with_ally=True):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_EG, 0, bf_loc(0))
+    ally = st.add_permanent(_MATE, 0, bf_loc(0)) if with_ally else -1
+    return st, row, ally
+
+
+_s, _g, _ally = _grayback()
+if combat.might(_s, T, _g) != int(T.might[_EG]):
+    die("grayback", "un-Empowered she is a vanilla body")
+_acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]
+if not _acts:
+    die("grayback", "[Empower] must be offered when a friendly unit can die")
+A.apply(_s, T, CFG_V1, _acts[0])
+if int(_s.pend_cost_kill) < 0:
+    die("grayback", "activating must stop to have its kill cost paid, not "
+                    "finalize straight through it")
+_choices = {a.arg for a in A.legal_actions(_s, T, CFG_V1, 0)}
+if _choices != {_g, _ally}:
+    die("grayback", "'a friendly unit' is every friendly unit, herself "
+                    f"included; offered {sorted(_choices)}")
+A.apply(_s, T, CFG_V1, A.Action(A.A_TARGET, _ally))
+if _s.perms[_ally, P_ALIVE]:
+    die("grayback", "the chosen unit is killed to pay the cost")
+for _ in range(8):
+    _seat = A.acting_seat(_s)
+    if _seat < 0 or (not _s.n_chain and not _s.n_trig):
+        break
+    A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _seat)[0])
+if combat.might(_s, T, _g) != int(T.might[_EG]) + 2:
+    die("grayback", "once Empowered she has +2 Might")
+ok("[Empower] costs a friendly body, and the +2 follows the status")
+
+# 820's unpayable-cost gate is asserted at the level it can be asserted at.
+# There is no BOARD that makes this card's cost unpayable -- she is herself a
+# friendly unit, so while she is alive to activate anything she is also a legal
+# choice. So the honest test is of the predicate the gate consults, not of a
+# position that cannot exist: an ENEMY unit must not be able to pay it.
+from rl.engine import resolve as _rsv_g
+from rl.engine.effects import ABILITIES as _ABIL
+
+_s2, _g2, _ally2 = _grayback()
+_foe = _s2.add_permanent(_MATE, 1, bf_loc(0))
+_spec2 = _ABIL["Escaped Grayback"][0]
+_payers = set(_rsv_g.cost_kill_targets(_s2, T, _spec2, 0, -1))
+if _foe in _payers:
+    die("grayback", "'a FRIENDLY unit' must not reach the opponent's board")
+if _payers != {_g2, _ally2}:
+    die("grayback", f"the payers are her own side only; got {sorted(_payers)}")
+ok("...and 'a friendly unit' never reaches the opponent's units")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Applied Researchers] a discount granted by ANOTHER permanent")
+# "[Empowered][>] Your spells cost {1 energy}{any rune} less, to a minimum of
+# {1 energy}."
+#
+# Two things `cost.py` documented as unimplemented: the Power side of a
+# discount, and a discount printed on a permanent that applies to cards still
+# in hand. Both were needed by this one line.
+from rl.engine.cost import (effective_energy as _eff_e,
+                            effective_power as _eff_p)
+
+_AR = T.id_of("Applied Researchers")
+
+
+def _researchers(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_AR, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_SPELL = T.id_of("Back Off")            # 3 energy, 0 power
+_CHEAP = T.id_of("Defy")                # 1 energy, 1 power -- tests the floor
+_UNIT = T.id_of("First Mate")
+
+_off = _researchers(False)
+if _eff_e(_off, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "un-Empowered, nothing is discounted")
+ok("un-Empowered the discount is off")
+
+_on = _researchers(True)
+if _eff_e(_on, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("researchers", "Empowered, your spells cost {1 energy} less")
+if _eff_p(_on, T, 0, _CHEAP) != int(T.power[_CHEAP]) - 1:
+    die("researchers", "...and {any rune} less -- the POWER half, which had no "
+                       "discount machinery at all before this card")
+ok("Empowered: spells cost 1 Energy and 1 Power less")
+
+# 356.4.e -- "to a minimum of {1 energy}" binds to THIS discount, and Defy
+# already costs exactly 1.
+if _eff_e(_on, T, 0, _CHEAP) != 1:
+    die("researchers", "the floor holds a 1-Energy spell at 1, not 0")
+ok("...and the stated minimum floors the Energy half at 1")
+
+# "Your SPELLS" -- her own units and gear pay full price.
+if _eff_e(_on, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("researchers", "'your spells' must not reach units")
+ok("...and only spells: units and gear pay full price")
+
+# The discount belongs to its controller, not to both players.
+if _eff_e(_on, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "'YOUR spells' is the controller's, never the "
+                       "opponent's")
+ok("...and only for the seat that controls her")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Vex - Cheerless] cost INCREASES, and 356.3 before 356.4")
+# "While I'm in combat, friendly spells cost {1 energy}{any rune} less to a
+# minimum of {1 energy}, and enemy spells cost {1 energy}{any rune} more."
+_VEX = T.id_of("Vex - Cheerless")
+
+
+def _vex(fighting):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.add_permanent(_VEX, 0, bf_loc(0))
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st
+
+
+_calm = _vex(False)
+if _eff_e(_calm, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "out of combat she modifies nothing")
+if _eff_e(_calm, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "...for either player")
+ok("out of combat, neither half applies")
+
+_fight = _vex(True)
+if _eff_e(_fight, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("vex", "in combat, HER side's spells cost 1 less")
+if _eff_e(_fight, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("vex", "...and the opponent's cost 1 MORE -- a 356.3 increase, which "
+               "`apply_discounts` cannot express (it never raises a cost)")
+if _eff_p(_fight, T, 1, _CHEAP) != int(T.power[_CHEAP]) + 1:
+    die("vex", "the Power half raises too")
+ok("in combat: her spells cheaper, the opponent's dearer, on both components")
+
+# The scope is read off HER controller, so the tax follows whose she is.
+if _eff_e(_fight, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("vex", "'spells' must not reach units on either side")
+ok("...and 'spells' still means spells, for both players")
+
+# 356.4.e again: the floor binds the discount it is printed on, and Defy is
+# already at the minimum.
+if _eff_e(_fight, T, 0, _CHEAP) != 1:
+    die("vex", "her own 1-Energy spell is floored at 1, not reduced to 0")
+ok("...and the stated minimum floors her own discount at 1")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Helm of Suppression] 'instead' as two statics that add")
+# "Opponents' spells cost {1 energy} more. If this is [Empowered], they cost
+# {1 energy}{any rune} more INSTEAD."
+_HELM = T.id_of("Helm of Suppression")
+
+
+def _helm(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_HELM, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_base = _helm(False)
+if _eff_e(_base, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "opponents' spells cost {1 energy} more")
+if _eff_p(_base, T, 1, _SPELL) != int(T.power[_SPELL]):
+    die("helm", "...and no Power until it is Empowered")
+if _eff_e(_base, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("helm", "'OPPONENTS' spells' never taxes its own controller")
+ok("un-Empowered: the opponent pays {1 energy} more, its owner nothing")
+
+_emp = _helm(True)
+if _eff_e(_emp, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "'instead' must not stack the Energy halves -- {1 energy} "
+                "before and {1 energy} after, never {2 energy}")
+if _eff_p(_emp, T, 1, _SPELL) != int(T.power[_SPELL]) + 1:
+    die("helm", "Empowered adds the Power symbol")
+ok("...and Empowered adds only the rune: {1 energy}{any rune}, not {2 energy}")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Kayle, Justified] Empowered as a COUNT, not a flag")
+# "[Empower] {3 energy}. I can be [Empowered] up to three times. I have +2
+# Might for each time I'm [Empowered]. While I'm [Empowered] three times, I
+# have [Deflect 3] and [Ganking]."
+from rl.engine.effects import empower_limit as _limit
+from rl.engine.state import P_EMPOWER as _P_EMP
+
+_KAYLE = T.id_of("Kayle, Justified")
+
+if _limit(T, _KAYLE) != 3:
+    die("kayle", "her printed cap is three")
+if _limit(T, T.id_of("Ambessa, The Wolf")) != 1:
+    die("kayle", "827.1.c.1 -- every other card caps at one")
+
+_s = GameState()
+_s.n_deck[:] = 20
+_s.phase = 4
+_s.active = 0
+_s.priority = 0
+_s.runes_ready[:, :] = 9
+_k = _s.add_permanent(_KAYLE, 0, bf_loc(0))
+_printed = int(T.might[_KAYLE])
+_seen = []
+for _i in range(5):
+    _acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0)
+             if a.kind == A.A_ACTIVATE]
+    _seen.append((_s.empower_count(_k), combat.might(_s, T, _k), len(_acts)))
+    if not _acts:
+        break
+    A.apply(_s, T, CFG_V1, _acts[0])
+    for _ in range(6):
+        _st = A.acting_seat(_s)
+        if _st < 0 or (not _s.n_chain and not _s.n_trig):
+            break
+        A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _st)[0])
+
+_want = [(0, _printed, 1), (1, _printed + 2, 1), (2, _printed + 4, 1),
+         (3, _printed + 6, 0)]
+if _seen != _want:
+    die("kayle", f"expected {_want} (count, might, offers), got {_seen}")
+ok("she Empowers three times, +2 Might each, and is refused a fourth")
+
+if combat.perm_kw(_s, T, _k, "Deflect") != 3:
+    die("kayle", "at three she has [Deflect 3]")
+if not combat.perm_kw(_s, T, _k, "Ganking"):
+    die("kayle", "...and [Ganking]")
+ok("...and at exactly three she gains [Deflect 3] and [Ganking]")
+
+# The flag is a FLOOR on the count, so a status granted without the column
+# still reads as Empowered -- and does not hand out a second Empower.
+_s2 = GameState()
+_s2.n_deck[:] = 20
+_s2.phase = 4
+_s2.active = 0
+_s2.priority = 0
+_s2.runes_ready[:, :] = 9
+_a2 = _s2.add_permanent(T.id_of("Ambessa, The Wolf"), 0, bf_loc(0))
+_s2.set_flag(_a2, _F_EMP)                     # flag only, column untouched
+if _s2.empower_count(_a2) != 1:
+    die("kayle", "the flag must floor the count at 1, or the two disagree")
+if [a for a in A.legal_actions(_s2, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("kayle", "a permanent Empowered by flag alone must not be offered a "
+                 "second Empower")
+ok("...and the flag floors the count, so the two can never disagree")
+
 
 print("\n\033[32mall static tests passed\033[0m")
 
@@ -1127,5 +3428,514 @@ if small in _res.legal_targets(s, T, _KILL, 0, 0, [], -1, source=amb):
     die("less than me", "the comparison must read EFFECTIVE Might, so a unit "
                         "pumped in the response window leaves range")
 ok("...and both sides are effective Might, so a trick answers it")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Level N] gates a static AND a play-time replacement (Scorchclaw)")
+SCORCHCLAW = T.id_of("Scorchclaw")
+BASE_MIGHT = int(T.might[SCORCHCLAW])
+
+# The Might half is continuous and read LIVE off XP -- there is no event and
+# nothing on the Chain, so crossing the threshold turns it on at that instant.
+s = fresh()
+claw = s.add_permanent(SCORCHCLAW, 0, bf_loc(0))
+if m(s, claw) != BASE_MIGHT:
+    die("scorchclaw", f"below [Level 3] it is a vanilla {BASE_MIGHT} Might")
+s.xp[0] = 2
+if m(s, claw) != BASE_MIGHT:
+    die("scorchclaw", "2 XP is below the [Level 3] threshold")
+s.xp[0] = 3
+if m(s, claw) != BASE_MIGHT + 1:
+    die("scorchclaw", "at 3 XP the +1 Might static should be live")
+ok("[Level 3] gates the Might static, exactly at the threshold")
+
+# ...and it is the CONTROLLER's XP, not a global pool.
+s.xp[0], s.xp[1] = 0, 9
+if m(s, claw) != BASE_MIGHT:
+    die("scorchclaw", "the gate must read its own controller's XP")
+ok("...and it reads the controller's XP, not the opponent's")
+
+# The "enter ready" half is a different mechanism: 359.2.c is decided once, as
+# the unit is played, so it cannot be a static. Below the gate it enters
+# exhausted like any unit.
+def _play_claw(xp):
+    st = GameState()
+    st.n_deck[:] = 10
+    st.deck[:, :10] = SPRITE
+    st.hand[0, 0] = SCORCHCLAW
+    st.n_hand[0] = 1
+    st.runes_ready[0, :] = 3
+    st.phase, st.active, st.priority = MAIN, 0, 0
+    st.xp[0] = xp
+    play = next(a for a in A.legal_actions(st, T, CFG, 0)
+               if a.kind == A.A_PLAY and int(st.hand[0, a.arg]) == SCORCHCLAW)
+    A.apply(st, T, CFG, play)
+    A.apply(st, T, CFG, A.Action(A.A_PLAY_AT, base_loc(0)))
+    row = next(i for i in range(st.n_perms)
+              if int(st.perms[i, P_CARD]) == SCORCHCLAW)
+    return st, row
+
+st, row = _play_claw(0)
+if st.perms[row, P_READY]:
+    die("scorchclaw", "359.2.c -- below the gate it must enter EXHAUSTED")
+ok("below [Level 3] it enters exhausted, like any other unit")
+
+st, row = _play_claw(3)
+if not st.perms[row, P_READY]:
+    die("scorchclaw", "at 3 XP the printed 'enter ready' should replace 359.2.c")
+ok("...and at 3 XP it enters READY -- a replacement, not a static")
+
+# ---------------------------------------------------------------------------
+print("\n[Find Your Center] a cost gated on the SCOREBOARD")
+# "If an opponent's score is within 3 points of the Victory Score, this costs
+# {2 energy} less." A catch-up discount, and the first static whose gate is
+# neither a board state nor a player resource but the score itself.
+from rl.engine.cost import effective_energy as _eff
+
+_FYC = T.id_of("Find Your Center")
+_printed = int(T.energy[_FYC])
+if _printed != 3:
+    die("fyc", f"fixture assumes a printed cost of 3, card prints {_printed}")
+
+
+def _cost_at(points, victory):
+    st = GameState()
+    st.victory_score = victory
+    st.points[1] = points
+    return _eff(st, T, 0, _FYC)
+
+
+if _cost_at(1, 5) != _printed:
+    die("fyc", "an opponent 4 points away is not 'within 3'")
+if _cost_at(2, 5) != _printed - 2:
+    die("fyc", "'within 3' of a Victory Score of 5 means a score of 2")
+if _cost_at(5, 5) != _printed - 2:
+    die("fyc", "an opponent at the Victory Score is certainly within 3 of it")
+ok("the discount turns on exactly when an opponent comes within 3")
+
+# Read against `state.victory_score`, not a literal 8 -- the curriculum anneals
+# it, and a card keying on the Victory Score has to key on the one in play.
+if _cost_at(4, 8) != _printed:
+    die("fyc", "at a Victory Score of 8 a score of 4 is 4 away, not within 3")
+if _cost_at(5, 8) != _printed - 2:
+    die("fyc", "at a Victory Score of 8 the discount starts at 5")
+ok("...and it tracks the game's Victory Score, not a hardcoded 8")
+
+# It is the OPPONENT's score that matters. Your own lead does not discount it.
+_mine = GameState()
+_mine.victory_score = 5
+_mine.points[0] = 5
+if _eff(_mine, T, 0, _FYC) != _printed:
+    die("fyc", "'an OPPONENT's score' must not read the caster's own")
+ok("...and only an opponent's score, never your own")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Ambessa, The Wolf] an [Empowered] damage wall")
+# "[Empower] {3 energy}{Body rune}  [Empowered][>] I have +3 Might and can't be
+# dealt damage unless I'm in combat."
+#
+# 828.1.b.1 makes the whole clause the Empowered Ability, and its two halves
+# are different kinds of continuous effect -- a Might bonus and a damage
+# prevention -- so it is two statics, both gated on the status (828.1.c).
+from rl.engine.state import F_EMPOWERED as _F_EMP
+
+_AMB = T.id_of("Ambessa, The Wolf")
+
+
+def _ambessa(empowered=False, fighting=False):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_AMB, 0, bf_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st, row
+
+
+_printed = int(T.might[_AMB])
+_s, _r = _ambessa()
+if combat.might(_s, T, _r) != _printed:
+    die("ambessa", "un-Empowered she is a vanilla body")
+if not combat.mark_damage(_s, T, _r, 2) and int(_s.perms[_r, P_DMG]) != 2:
+    die("ambessa", "un-Empowered she takes damage normally")
+ok("un-Empowered, neither half of the dependent ability is on")
+
+_s, _r = _ambessa(empowered=True)
+if combat.might(_s, T, _r) != _printed + 3:
+    die("ambessa", "Empowered she has +3 Might")
+if combat.mark_damage(_s, T, _r, 3) or int(_s.perms[_r, P_DMG]) != 0:
+    die("ambessa", "Empowered and out of combat she cannot be dealt damage; "
+                   f"{int(_s.perms[_r, P_DMG])} was marked")
+ok("Empowered out of combat: +3 Might, and damage is refused outright")
+
+# "Unless I'm in combat" is the exception, and it is why the prevention lives
+# in `mark_damage` -- combat damage only reaches units that are in a Combat.
+_s, _r = _ambessa(empowered=True, fighting=True)
+combat.mark_damage(_s, T, _r, 3)
+if int(_s.perms[_r, P_DMG]) != 3:
+    die("ambessa", "in combat the prevention lifts and damage lands")
+ok("...and in combat the prevention lifts")
+
+# 827.1.c.1 -- "use only if not Empowered", read off OP_EMPOWER rather than
+# written per card.
+_s, _r = _ambessa()
+if not [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "[Empower] must be offered while she is not Empowered")
+_s, _r = _ambessa(empowered=True)
+if [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("ambessa", "827.1.c.1 -- an Empowered object cannot be Empowered again")
+ok("[Empower] is offered once and refused thereafter (827.1.c.1)")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Escaped Grayback] [Empower] paid with a BODY, not with runes")
+# "[Empower] -- Kill a friendly unit.  [Empowered][>] I have +2 Might."
+#
+# 151.2.a makes activating an ability like playing a card, so the 820 machinery
+# a printed "as an additional cost to play me" already used pays this too --
+# the only new thing was the field on `Ability`.
+_EG = T.id_of("Escaped Grayback")
+_MATE = T.id_of("First Mate")
+
+
+def _grayback(with_ally=True):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.phase = 4
+    st.active = 0
+    st.priority = 0
+    st.runes_ready[:, :] = 3
+    row = st.add_permanent(_EG, 0, bf_loc(0))
+    ally = st.add_permanent(_MATE, 0, bf_loc(0)) if with_ally else -1
+    return st, row, ally
+
+
+_s, _g, _ally = _grayback()
+if combat.might(_s, T, _g) != int(T.might[_EG]):
+    die("grayback", "un-Empowered she is a vanilla body")
+_acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]
+if not _acts:
+    die("grayback", "[Empower] must be offered when a friendly unit can die")
+A.apply(_s, T, CFG_V1, _acts[0])
+if int(_s.pend_cost_kill) < 0:
+    die("grayback", "activating must stop to have its kill cost paid, not "
+                    "finalize straight through it")
+_choices = {a.arg for a in A.legal_actions(_s, T, CFG_V1, 0)}
+if _choices != {_g, _ally}:
+    die("grayback", "'a friendly unit' is every friendly unit, herself "
+                    f"included; offered {sorted(_choices)}")
+A.apply(_s, T, CFG_V1, A.Action(A.A_TARGET, _ally))
+if _s.perms[_ally, P_ALIVE]:
+    die("grayback", "the chosen unit is killed to pay the cost")
+for _ in range(8):
+    _seat = A.acting_seat(_s)
+    if _seat < 0 or (not _s.n_chain and not _s.n_trig):
+        break
+    A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _seat)[0])
+if combat.might(_s, T, _g) != int(T.might[_EG]) + 2:
+    die("grayback", "once Empowered she has +2 Might")
+ok("[Empower] costs a friendly body, and the +2 follows the status")
+
+# 820's unpayable-cost gate is asserted at the level it can be asserted at.
+# There is no BOARD that makes this card's cost unpayable -- she is herself a
+# friendly unit, so while she is alive to activate anything she is also a legal
+# choice. So the honest test is of the predicate the gate consults, not of a
+# position that cannot exist: an ENEMY unit must not be able to pay it.
+from rl.engine import resolve as _rsv_g
+from rl.engine.effects import ABILITIES as _ABIL
+
+_s2, _g2, _ally2 = _grayback()
+_foe = _s2.add_permanent(_MATE, 1, bf_loc(0))
+_spec2 = _ABIL["Escaped Grayback"][0]
+_payers = set(_rsv_g.cost_kill_targets(_s2, T, _spec2, 0, -1))
+if _foe in _payers:
+    die("grayback", "'a FRIENDLY unit' must not reach the opponent's board")
+if _payers != {_g2, _ally2}:
+    die("grayback", f"the payers are her own side only; got {sorted(_payers)}")
+ok("...and 'a friendly unit' never reaches the opponent's units")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Applied Researchers] a discount granted by ANOTHER permanent")
+# "[Empowered][>] Your spells cost {1 energy}{any rune} less, to a minimum of
+# {1 energy}."
+#
+# Two things `cost.py` documented as unimplemented: the Power side of a
+# discount, and a discount printed on a permanent that applies to cards still
+# in hand. Both were needed by this one line.
+from rl.engine.cost import (effective_energy as _eff_e,
+                            effective_power as _eff_p)
+
+_AR = T.id_of("Applied Researchers")
+
+
+def _researchers(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_AR, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_SPELL = T.id_of("Back Off")            # 3 energy, 0 power
+_CHEAP = T.id_of("Defy")                # 1 energy, 1 power -- tests the floor
+_UNIT = T.id_of("First Mate")
+
+_off = _researchers(False)
+if _eff_e(_off, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "un-Empowered, nothing is discounted")
+ok("un-Empowered the discount is off")
+
+_on = _researchers(True)
+if _eff_e(_on, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("researchers", "Empowered, your spells cost {1 energy} less")
+if _eff_p(_on, T, 0, _CHEAP) != int(T.power[_CHEAP]) - 1:
+    die("researchers", "...and {any rune} less -- the POWER half, which had no "
+                       "discount machinery at all before this card")
+ok("Empowered: spells cost 1 Energy and 1 Power less")
+
+# 356.4.e -- "to a minimum of {1 energy}" binds to THIS discount, and Defy
+# already costs exactly 1.
+if _eff_e(_on, T, 0, _CHEAP) != 1:
+    die("researchers", "the floor holds a 1-Energy spell at 1, not 0")
+ok("...and the stated minimum floors the Energy half at 1")
+
+# "Your SPELLS" -- her own units and gear pay full price.
+if _eff_e(_on, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("researchers", "'your spells' must not reach units")
+ok("...and only spells: units and gear pay full price")
+
+# The discount belongs to its controller, not to both players.
+if _eff_e(_on, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("researchers", "'YOUR spells' is the controller's, never the "
+                       "opponent's")
+ok("...and only for the seat that controls her")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Vex - Cheerless] cost INCREASES, and 356.3 before 356.4")
+# "While I'm in combat, friendly spells cost {1 energy}{any rune} less to a
+# minimum of {1 energy}, and enemy spells cost {1 energy}{any rune} more."
+_VEX = T.id_of("Vex - Cheerless")
+
+
+def _vex(fighting):
+    st = GameState()
+    st.n_deck[:] = 20
+    st.add_permanent(_VEX, 0, bf_loc(0))
+    if fighting:
+        st.showdown_bf = 0
+        st.attacker = 1
+    return st
+
+
+_calm = _vex(False)
+if _eff_e(_calm, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "out of combat she modifies nothing")
+if _eff_e(_calm, T, 1, _SPELL) != int(T.energy[_SPELL]):
+    die("vex", "...for either player")
+ok("out of combat, neither half applies")
+
+_fight = _vex(True)
+if _eff_e(_fight, T, 0, _SPELL) != int(T.energy[_SPELL]) - 1:
+    die("vex", "in combat, HER side's spells cost 1 less")
+if _eff_e(_fight, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("vex", "...and the opponent's cost 1 MORE -- a 356.3 increase, which "
+               "`apply_discounts` cannot express (it never raises a cost)")
+if _eff_p(_fight, T, 1, _CHEAP) != int(T.power[_CHEAP]) + 1:
+    die("vex", "the Power half raises too")
+ok("in combat: her spells cheaper, the opponent's dearer, on both components")
+
+# The scope is read off HER controller, so the tax follows whose she is.
+if _eff_e(_fight, T, 0, _UNIT) != int(T.energy[_UNIT]):
+    die("vex", "'spells' must not reach units on either side")
+ok("...and 'spells' still means spells, for both players")
+
+# 356.4.e again: the floor binds the discount it is printed on, and Defy is
+# already at the minimum.
+if _eff_e(_fight, T, 0, _CHEAP) != 1:
+    die("vex", "her own 1-Energy spell is floored at 1, not reduced to 0")
+ok("...and the stated minimum floors her own discount at 1")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Helm of Suppression] 'instead' as two statics that add")
+# "Opponents' spells cost {1 energy} more. If this is [Empowered], they cost
+# {1 energy}{any rune} more INSTEAD."
+_HELM = T.id_of("Helm of Suppression")
+
+
+def _helm(empowered):
+    st = GameState()
+    st.n_deck[:] = 20
+    row = st.add_permanent(_HELM, 0, base_loc(0))
+    if empowered:
+        st.set_flag(row, _F_EMP)
+    return st
+
+
+_base = _helm(False)
+if _eff_e(_base, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "opponents' spells cost {1 energy} more")
+if _eff_p(_base, T, 1, _SPELL) != int(T.power[_SPELL]):
+    die("helm", "...and no Power until it is Empowered")
+if _eff_e(_base, T, 0, _SPELL) != int(T.energy[_SPELL]):
+    die("helm", "'OPPONENTS' spells' never taxes its own controller")
+ok("un-Empowered: the opponent pays {1 energy} more, its owner nothing")
+
+_emp = _helm(True)
+if _eff_e(_emp, T, 1, _SPELL) != int(T.energy[_SPELL]) + 1:
+    die("helm", "'instead' must not stack the Energy halves -- {1 energy} "
+                "before and {1 energy} after, never {2 energy}")
+if _eff_p(_emp, T, 1, _SPELL) != int(T.power[_SPELL]) + 1:
+    die("helm", "Empowered adds the Power symbol")
+ok("...and Empowered adds only the rune: {1 energy}{any rune}, not {2 energy}")
+
+
+# ---------------------------------------------------------------------------
+print("\n[Kayle, Justified] Empowered as a COUNT, not a flag")
+# "[Empower] {3 energy}. I can be [Empowered] up to three times. I have +2
+# Might for each time I'm [Empowered]. While I'm [Empowered] three times, I
+# have [Deflect 3] and [Ganking]."
+from rl.engine.effects import empower_limit as _limit
+from rl.engine.state import P_EMPOWER as _P_EMP
+
+_KAYLE = T.id_of("Kayle, Justified")
+
+if _limit(T, _KAYLE) != 3:
+    die("kayle", "her printed cap is three")
+if _limit(T, T.id_of("Ambessa, The Wolf")) != 1:
+    die("kayle", "827.1.c.1 -- every other card caps at one")
+
+_s = GameState()
+_s.n_deck[:] = 20
+_s.phase = 4
+_s.active = 0
+_s.priority = 0
+_s.runes_ready[:, :] = 9
+_k = _s.add_permanent(_KAYLE, 0, bf_loc(0))
+_printed = int(T.might[_KAYLE])
+_seen = []
+for _i in range(5):
+    _acts = [a for a in A.legal_actions(_s, T, CFG_V1, 0)
+             if a.kind == A.A_ACTIVATE]
+    _seen.append((_s.empower_count(_k), combat.might(_s, T, _k), len(_acts)))
+    if not _acts:
+        break
+    A.apply(_s, T, CFG_V1, _acts[0])
+    for _ in range(6):
+        _st = A.acting_seat(_s)
+        if _st < 0 or (not _s.n_chain and not _s.n_trig):
+            break
+        A.apply(_s, T, CFG_V1, A.legal_actions(_s, T, CFG_V1, _st)[0])
+
+_want = [(0, _printed, 1), (1, _printed + 2, 1), (2, _printed + 4, 1),
+         (3, _printed + 6, 0)]
+if _seen != _want:
+    die("kayle", f"expected {_want} (count, might, offers), got {_seen}")
+ok("she Empowers three times, +2 Might each, and is refused a fourth")
+
+if combat.perm_kw(_s, T, _k, "Deflect") != 3:
+    die("kayle", "at three she has [Deflect 3]")
+if not combat.perm_kw(_s, T, _k, "Ganking"):
+    die("kayle", "...and [Ganking]")
+ok("...and at exactly three she gains [Deflect 3] and [Ganking]")
+
+# The flag is a FLOOR on the count, so a status granted without the column
+# still reads as Empowered -- and does not hand out a second Empower.
+_s2 = GameState()
+_s2.n_deck[:] = 20
+_s2.phase = 4
+_s2.active = 0
+_s2.priority = 0
+_s2.runes_ready[:, :] = 9
+_a2 = _s2.add_permanent(T.id_of("Ambessa, The Wolf"), 0, bf_loc(0))
+_s2.set_flag(_a2, _F_EMP)                     # flag only, column untouched
+if _s2.empower_count(_a2) != 1:
+    die("kayle", "the flag must floor the count at 1, or the two disagree")
+if [a for a in A.legal_actions(_s2, T, CFG_V1, 0) if a.kind == A.A_ACTIVATE]:
+    die("kayle", "a permanent Empowered by flag alone must not be offered a "
+                 "second Empower")
+ok("...and the flag floors the count, so the two can never disagree")
+
+# ---------------------------------------------------------------------------
+print("\n[Miss Fortune - Buccaneer] a play permission granted by the BOARD")
+# "You may play me to an open battlefield. Friendly units may be played to
+# open battlefields."
+#
+# 806.3 restricts a unit to its controller's base or a battlefield they
+# already CONTROL, and taking new ground otherwise needs a Move -- which is
+# the only thing that starts a Combat. Her second sentence is the first
+# printed exception that lives on a permanent instead of on the card being
+# played, so it has to be read off the board.
+_MFB = T.id_of("Miss Fortune - Buccaneer")
+
+
+def _mf_state(hand_card):
+    s = GameState()
+    s.n_deck[:] = 20
+    s.phase = MAIN
+    s.active = 0
+    s.priority = 0
+    s.runes_ready[:, :] = 9
+    s.hand[0, 0] = hand_card
+    s.n_hand[0] = 1
+    return s
+
+
+# The baseline the card exists to break: an ordinary unit cannot be played to
+# a battlefield nobody controls.
+_s = _mf_state(PLAIN)
+if bf_loc(0) in A.play_destinations(_s, T, CFG, 0, PLAIN):
+    die("buccaneer", "806.3 -- an open battlefield is NOT a legal destination "
+                     "without a printed permission")
+ok("806.3 holds by default: an open battlefield is no destination")
+
+# She reaches one herself, out of hand, with no board presence at all -- which
+# is what PLAY_PERMISSIONS is for and what her own static could never do.
+_s = _mf_state(_MFB)
+if bf_loc(0) not in A.play_destinations(_s, T, CFG, 0, _MFB):
+    die("buccaneer", "'you may play ME to an open battlefield' has to work "
+                     "while she is still in hand")
+ok("...and her own sentence reaches one while she is still in hand")
+
+# Once she is down, the grant covers everything else you play.
+_s = _mf_state(PLAIN)
+_mf = _s.add_permanent(_MFB, 0, base_loc(0))
+if bf_loc(0) not in A.play_destinations(_s, T, CFG, 0, PLAIN):
+    die("buccaneer", "'friendly units may be played to open battlefields' "
+                     "must reach a plain unit in hand")
+# ...and only while she is alive. A static is not a promise -- compare Astral
+# Heron, whose discount survives her death because it is held on the player.
+_s.perms[_mf, P_ALIVE] = 0
+if bf_loc(0) in A.play_destinations(_s, T, CFG, 0, PLAIN):
+    die("buccaneer", "a static dies with its source; the grant must go too")
+ok("...and her static extends it to your other units, for as long as she lives")
+
+# The grant is FRIENDLY. Seat 1 gets nothing from seat 0's Buccaneer.
+_s = _mf_state(PLAIN)
+_s.add_permanent(_MFB, 0, base_loc(0))
+_s.hand[1, 0] = PLAIN
+_s.n_hand[1] = 1
+if bf_loc(0) in A.play_destinations(_s, T, CFG, 1, PLAIN):
+    die("buccaneer", "'FRIENDLY units' -- the opponent must not inherit it")
+ok("...and 'friendly' keeps it off the opponent's units")
+
+# An OCCUPIED battlefield is not open, whoever is standing on it.
+_s = _mf_state(PLAIN)
+_s.add_permanent(_MFB, 0, base_loc(0))
+_s.add_permanent(PLAIN, 1, bf_loc(0))
+if bf_loc(0) in A.play_destinations(_s, T, CFG, 0, PLAIN):
+    die("buccaneer", "'OPEN' means empty -- an enemy standing there closes it")
+ok("...and an enemy standing there closes the battlefield to it")
+
 
 print("\n\033[32mall static tests passed\033[0m")

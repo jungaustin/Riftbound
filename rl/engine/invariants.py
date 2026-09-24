@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from rl.engine.state import (N_BF, N_SEATS, P_ALIVE, P_CTRL, P_DMG, P_LOC,
-                             P_READY, GameState, bf_index, is_battlefield)
+from rl.engine.effects import play_from_look_cost
+from rl.engine.state import (N_BF, N_SEATS, P_ALIVE, P_ATTACHED_TO,
+                             P_CTRL, P_DMG, P_LOC,
+                             P_READY, GameState, bf_index, fd_slots,
+                             is_battlefield)
 
 
 class InvariantError(AssertionError):
@@ -44,6 +47,38 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
             _fail("permanent ready flag is not boolean")
         if np.any(live[:, P_DMG] < 0):
             _fail("permanent with negative damage")
+
+    # --- attachment (716-719) ---------------------------------------------
+    # `P_ATTACHED_TO` is a row index stored INSIDE `perms`, which is the one
+    # kind of reference `compact_permanents` has no general machinery for -- so
+    # a stale link here is the failure mode to expect, and it is silent: the
+    # index stays in range and simply names the wrong card.
+    # `n_attached` is denormalised -- it exists only so `attachments` can skip
+    # the scan on a board with no Equipment. Recomputed here every call, because
+    # a count maintained by four separate writers is exactly the thing that
+    # drifts silently, and a drift DOWN would make live attachments invisible
+    # rather than crash.
+    live_att = int((state.perms[:state.n_perms, P_ATTACHED_TO] >= 0).sum())
+    if int(state.n_attached) != live_att:
+        _fail(f"n_attached is {int(state.n_attached)} but {live_att} rows are "
+              f"Attached -- the denormalised count has drifted")
+    for i in range(state.n_perms):
+        if state.perms[i, P_ALIVE] != 1:
+            continue
+        up = int(state.perms[i, P_ATTACHED_TO])
+        if up < 0:
+            continue
+        if up == i:
+            _fail(f"permanent {i} is attached to itself")
+        if up >= state.n_perms or state.perms[up, P_ALIVE] != 1:
+            _fail(f"permanent {i} is attached to dead or missing row {up} -- "
+                  f"719.5 should have detached it as that card left the board")
+        # 719.3 -- "A Top-Most Card and all cards Attached to it are at the
+        # same location." Every location write goes through `set_location`
+        # precisely so this holds; a mismatch means one slipped past it.
+        elif int(state.perms[i, P_LOC]) != int(state.perms[up, P_LOC]):
+            _fail(f"719.3 -- attached {i} at {int(state.perms[i, P_LOC])} but "
+                  f"its Top-Most {up} is at {int(state.perms[up, P_LOC])}")
         # Damage used to be combat-only, so "any damage outside a Showdown is a
         # missed heal" held. It stopped holding the moment a spell could deal
         # damage: Falling Star marks 3 on a 5-Might unit in an Open State and it
@@ -71,21 +106,22 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
         _fail("is_open disagrees with chain length")
 
     # --- battlefields ------------------------------------------------------
-    for i in range(N_BF):
+    for i in state.live_bfs():
         ctrl = int(state.bf_ctrl[i])
         if ctrl < -1 or ctrl >= N_SEATS:
             _fail(f"battlefield {i} has invalid controller {ctrl}")
         # 107.3.c -- only the controller of a battlefield may occupy its
         # Facedown Zone.
-        owner = int(state.fd_owner[i])
-        if owner >= 0:
-            if int(state.fd_card[i]) < 0:
-                _fail(f"battlefield {i} facedown owner set with no card")
-            if owner != ctrl:
-                _fail(f"battlefield {i} facedown owned by {owner} but "
-                      f"controlled by {ctrl} (107.3.c)")
-        elif int(state.fd_card[i]) >= 0:
-            _fail(f"battlefield {i} facedown card set with no owner")
+        for k in fd_slots(i):
+            owner = int(state.fd_owner[k])
+            if owner >= 0:
+                if int(state.fd_card[k]) < 0:
+                    _fail(f"facedown slot {k} owner set with no card")
+                if owner != ctrl:
+                    _fail(f"facedown slot {k} owned by {owner} but battlefield "
+                          f"{i} controlled by {ctrl} (107.3.c)")
+            elif int(state.fd_card[k]) >= 0:
+                _fail(f"facedown slot {k} card set with no owner")
 
     # --- showdown ----------------------------------------------------------
     if state.showdown_bf >= N_BF:
@@ -129,7 +165,7 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
     # what guarantees the queue drains and the Cleanup finishes, so this is a
     # window of exactly one decision, never a resting state.
     if state.showdown_bf < 0 and state.is_open and not state.n_trig:
-        for i in range(N_BF):
+        for i in state.live_bfs():
             a, b = state.seats_at(N_SEATS + i)
             if a and b:
                 _fail(f"battlefield {i} has units from both seats in an Open "
@@ -203,7 +239,9 @@ def check_actions(state: GameState, table, cfg, seat: int, actions) -> None:
         # you must hold priority, and there must be a window to respond in --
         # a Chain (310.2/310.4) or a Showdown. `speed_ok` then decides whether
         # the specific card may be played, which is checked below.
-        if A.A_PLAY in kinds:
+        # A_PLAY during a suspended look is Nocturne's permission on a card in
+        # the look buffer, answered by whoever is looking -- not a response.
+        if A.A_PLAY in kinds and state.pend_look < 0:
             if seat != int(state.priority):
                 _fail(f"play offered to seat {seat}, who does not have priority,"
                       f" on seat {state.active}'s turn")
@@ -212,8 +250,14 @@ def check_actions(state: GameState, table, cfg, seat: int, actions) -> None:
                       f"turn with no Chain and no Showdown to respond in")
 
     # A card offered must actually be playable at this speed right now.
+    #
+    # ...unless a look is suspended: there `A_PLAY`'s arg indexes the LOOK
+    # BUFFER, not the hand, so reading `state.hand` names an unrelated card --
+    # and the permission comes from the effect that opened the look (Nocturne
+    # plays a unit off the top mid-showdown), not from the card's own speed.
+    # The priority check above already carves the same case out.
     for a in actions:
-        if a.kind != A.A_PLAY:
+        if a.kind != A.A_PLAY or state.pend_look >= 0:
             continue
         card = int(state.hand[seat, a.arg])
         # 337.2 resolves Units and Gear immediately, without a Chain, so
@@ -249,8 +293,22 @@ def check_actions(state: GameState, table, cfg, seat: int, actions) -> None:
         _fail(f"seat {seat} is to act but has no legal actions")
 
     # Never offer a play the player cannot pay for.
+    #
+    # `A_PLAY`'s arg is a HAND index at its usual offer site and a LOOK-BUFFER
+    # index while a look is suspended (Nocturne's permission), so the cost to
+    # check differs too: the printed one from hand, and the card's [A]
+    # permission out of the buffer. Reading the hand during a look checked an
+    # unrelated card's affordability -- which is how the deck fuzz caught this.
     for a in actions:
-        if a.kind == A.A_PLAY:
+        if a.kind != A.A_PLAY:
+            continue
+        if state.pend_look >= 0:
+            card = int(state.look_cards[a.arg])
+            n = play_from_look_cost(table, card)
+            if n < 0 or A.plan_wild_power(state, seat, n) is None:
+                _fail(f"unpayable look-buffer play offered at slot {a.arg}")
+        else:
             card = int(state.hand[seat, a.arg])
             if A.plan_payment(state, table, seat, card) is None:
-                _fail(f"unaffordable card offered from hand index {a.arg}")
+                _fail(f"unaffordable card offered from hand index {a.arg} "
+                      f"({table.names[card]})")

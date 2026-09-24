@@ -29,7 +29,7 @@ from rl.engine import game
 from rl.engine.cardtable import full_table
 from rl.engine.effects import BF_STATICS
 from rl.engine.mirror import mirror
-from rl.engine.state import N_BF
+from rl.engine.state import N_BF, fd_slots
 from rl.env import RiftboundEnv, play, random_policy, should_auto_pass
 from rl.obs import Encoder
 from rl.vec import VecRiftbound
@@ -195,8 +195,11 @@ assert s is not None, "no suitable position found"
 # Give both seats a facedown card so the 107.3.f path is actually exercised;
 # v0 has no [Hidden] plays yet, so it has to be staged by hand.
 pool = v0_pool(T)
-s.bf_ctrl[0], s.fd_owner[0], s.fd_card[0] = 0, 0, pool[0]
-s.bf_ctrl[1], s.fd_owner[1], s.fd_card[1] = 1, 1, pool[1]
+# `fd_*` is indexed by SLOT now (two per battlefield, since Bandle Tree), so
+# battlefield 1's first slot is `_FD1`, not 1.
+_FD0, _FD1 = list(fd_slots(0))[0], list(fd_slots(1))[0]
+s.bf_ctrl[0], s.fd_owner[_FD0], s.fd_card[_FD0] = 0, 0, pool[0]
+s.bf_ctrl[1], s.fd_owner[_FD1], s.fd_card[_FD1] = 1, 1, pool[1]
 
 base = enc.encode(s, 0, A.legal_actions(s, T, CFG, 0))
 
@@ -205,7 +208,7 @@ foe_n = int(hidden.n_hand[1])
 hidden.hand[1, :foe_n] = [pool[(i + 3) % len(pool)] for i in range(foe_n)]
 lo, hi = int(hidden.deck_ptr[1]), int(hidden.n_deck[1])
 hidden.deck[1, lo:hi] = hidden.deck[1, lo:hi][::-1]
-hidden.fd_card[1] = pool[7]                       # THEIR facedown card
+hidden.fd_card[_FD1] = pool[7]                       # THEIR facedown card
 after = enc.encode(hidden, 0, A.legal_actions(hidden, T, CFG, 0))
 
 if base.public_bytes() != after.public_bytes():
@@ -250,7 +253,7 @@ ok("the same perturbation does move the critic's privileged vector")
 # leak test above, run again with the permission granted, and it has to flip
 # from invisible to visible or the card does nothing at all.
 grant = s.clone()
-grant.saw_hand[0] = int(grant.turn)
+grant.saw_hand[0] = int(grant.ply)      # a player TURN, not a round
 g_base = enc.encode(grant, 0, A.legal_actions(grant, T, CFG, 0)).public_bytes()
 g_hand = grant.clone()
 g_hand.hand[1, :int(g_hand.n_hand[1])] = [
@@ -262,11 +265,11 @@ if g_base == enc.encode(g_hand, 0,
 ok("a standing hand-reveal permission makes the opponent's hand visible")
 
 grant_fd = s.clone()
-grant_fd.saw_fd[0] = int(grant_fd.turn)
+grant_fd.saw_fd[0] = int(grant_fd.ply)
 f_base = enc.encode(grant_fd, 0,
                     A.legal_actions(grant_fd, T, CFG, 0)).public_bytes()
 f_moved = grant_fd.clone()
-f_moved.fd_card[1] = pool[7]
+f_moved.fd_card[_FD1] = pool[7]
 if f_base == enc.encode(f_moved, 0,
                         A.legal_actions(f_moved, T, CFG, 0)).public_bytes():
     die("leak", "'look at their facedown cards this turn' must fill in the "
@@ -275,13 +278,13 @@ ok("...and a facedown permission fills in the identity, not just the slot")
 
 # The stamp is a TURN, so it lapses on its own rather than needing a reset.
 stale = s.clone()
-stale.saw_hand[0] = int(stale.turn) - 1
-stale.saw_fd[0] = int(stale.turn) - 1
+stale.saw_hand[0] = int(stale.ply) - 1
+stale.saw_fd[0] = int(stale.ply) - 1
 st_base = enc.encode(stale, 0, A.legal_actions(stale, T, CFG, 0)).public_bytes()
 st_moved = stale.clone()
 st_moved.hand[1, :int(st_moved.n_hand[1])] = [
     pool[(i + 3) % len(pool)] for i in range(int(st_moved.n_hand[1]))]
-st_moved.fd_card[1] = pool[7]
+st_moved.fd_card[_FD1] = pool[7]
 if st_base != enc.encode(st_moved, 0,
                          A.legal_actions(st_moved, T, CFG, 0)).public_bytes():
     die("leak", "a permission stamped for a PREVIOUS turn must not still see")
@@ -290,13 +293,13 @@ ok("...and both lapse by turn stamp, with nothing having to clear them")
 # The permission belongs to one seat. Seat 0 holding it must not hand seat 1
 # a window into seat 0's own hand -- the reveal is one-directional.
 oneway = s.clone()
-oneway.saw_hand[0] = int(oneway.turn)
-oneway.saw_fd[0] = int(oneway.turn)
+oneway.saw_hand[0] = int(oneway.ply)
+oneway.saw_fd[0] = int(oneway.ply)
 o_base = enc.encode(oneway, 1, A.legal_actions(oneway, T, CFG, 1)).public_bytes()
 o_moved = oneway.clone()
 o_moved.hand[0, :int(o_moved.n_hand[0])] = [
     pool[(i + 5) % len(pool)] for i in range(int(o_moved.n_hand[0]))]
-o_moved.fd_card[0] = pool[9]
+o_moved.fd_card[_FD0] = pool[9]
 if o_base != enc.encode(o_moved, 1,
                         A.legal_actions(o_moved, T, CFG, 1)).public_bytes():
     die("leak", "the permission is one seat's -- it must not reveal the "
@@ -350,7 +353,7 @@ ok("...and the other two sites still index the hand they name, not each other")
 
 # Negative control: MY facedown card is mine to see, so changing it must show.
 seen = s.clone()
-seen.fd_card[0] = pool[9]
+seen.fd_card[_FD0] = pool[9]
 if base.public_bytes() == enc.encode(
         seen, 0, A.legal_actions(seen, T, CFG, 0)).public_bytes():
     die("leak", "changing the seat's OWN facedown card was invisible too, so "
@@ -386,8 +389,14 @@ ok("two battlefields with different statics no longer encode identically")
 # show, so it SHOULD still alias -- the features derive from the encoded
 # ability, and inventing a distinction the engine does not honour would be
 # worse than none. This asserts the limit rather than hiding it.
+# **Unscripted means neither table.** A battlefield with a TRIGGER and no
+# static is scripted: `ability_features` reads it, so it is visible and must
+# not be counted here -- this list was BF_STATICS-only and started failing the
+# moment the ground's triggers were written.
+from rl.engine.effects import BF_ABILITIES
 plain_bf = [c for c in range(T.n)
-            if T.is_type(c, "Battlefield") and T.names[c] not in BF_STATICS]
+            if T.is_type(c, "Battlefield") and T.names[c] not in BF_STATICS
+            and T.names[c] not in BF_ABILITIES]
 feats = T.features()
 if len(plain_bf) >= 2 and not np.array_equal(feats[plain_bf[0]],
                                              feats[plain_bf[1]]):
@@ -403,6 +412,92 @@ if n_distinct <= 642:
     die("behaviour", f"{n_distinct} distinct card rows -- the behaviour block "
                      "added nothing over the body-only 642")
 ok(f"{n_distinct} distinct card feature rows, up from 642 body-only")
+
+
+# ---------------------------------------------------------------------------
+print("\n[4c] state the engine READS must reach the observation")
+# Three holes found by auditing `GameState.__slots__` against the fields
+# `obs.py` actually mentions, then measuring each one over 200 real-deck games.
+# Every one of them was information the engine consulted every turn and the
+# policy could not see at all.
+from dataclasses import replace as _replace
+
+from rl.engine import combat as _combat
+from rl.engine.state import P_ALIVE as _P_ALIVE
+from rl.obs import (CHAIN_SLOTS, CX_CHAIN_DEPTH, CX_MIGHT, CX_ZONE_CHAIN,
+                    ZONES)
+from rl.tests.fuzz import make_deck_game
+
+_cfg = _replace(Config().at_victory_score(5), units_only=False)
+_enc = Encoder(T, _cfg)
+_cd = _enc.card_dim
+_n_rows = _n_might = _n_chain = _n_chain_ok = _n_xp = _n_xp_ok = 0
+_worst = 0.0
+for _seed in range(40):
+    _s2 = make_deck_game(T, _cfg, _seed)
+    _rng = np.random.default_rng(_seed ^ 0x5eed)
+    for _ in range(400):
+        if A.is_terminal(_s2):
+            break
+        _seat = A.acting_seat(_s2)
+        if _seat < 0:
+            break
+        _legal = A.legal_actions(_s2, T, _cfg, _seat)
+        if not _legal:
+            break
+        if len(_legal) > 1:
+            _o = _enc.encode(_s2, _seat, _legal)
+            # (a) A unit's TRUE Might -- printed + this-turn + Buff + statics +
+            # combat role. The card block carries only the printed value, which
+            # was wrong on 8.5% of board rows by up to +7.
+            _rows = [i for i in range(_s2.n_perms)
+                     if _s2.perms[i, _P_ALIVE] == 1]
+            for _k, _i in enumerate(_rows):
+                _n_rows += 1
+                _got = float(_o.zones["board"][_k][_cd + CX_MIGHT]) * 5.0
+                _want = float(_combat.might(_s2, T, _i))
+                _worst = max(_worst, abs(_got - _want))
+                _n_might += abs(_got - _want) < 1e-4
+            # (b) The Chain, top-first. Was a lone `n_chain / 4.0` scalar.
+            _nc = int(_s2.n_chain)
+            if _nc:
+                _n_chain += 1
+                _n_chain_ok += (
+                    int(_o.zone_mask["chain"].sum()) == min(_nc, CHAIN_SLOTS)
+                    and _o.zones["chain"][0][_cd + CX_ZONE_CHAIN] == 1.0)
+            # (c) XP -- 17 `COND_LEVEL` sites gate on it; it was absent.
+            if int(_s2.xp[_seat]) > 0:
+                _n_xp += 1
+                _n_xp_ok += abs(float(_o.globals[40]) * 3.0
+                                - float(_s2.xp[_seat])) < 1e-4
+        A.apply(_s2, T, _cfg, _legal[int(_rng.integers(len(_legal)))])
+
+if _n_might != _n_rows:
+    die("obs-state", f"{_n_rows - _n_might} of {_n_rows} board rows misstate "
+                     f"Might (worst error {_worst * 5:.1f}); the policy cannot "
+                     "tell whether a unit survives combat")
+ok(f"{_n_rows} board rows carry TRUE Might, not printed Might")
+
+if not _n_chain or _n_chain_ok != _n_chain:
+    die("obs-state", f"the Chain is described on only {_n_chain_ok} of "
+                     f"{_n_chain} states that have one -- the counterspell "
+                     "decision is being made blind")
+ok(f"{_n_chain} non-empty Chains encode their contents, nearest-first")
+
+if not _n_xp or _n_xp_ok != _n_xp:
+    die("obs-state", f"XP reached the globals on {_n_xp_ok} of {_n_xp} states")
+ok(f"XP reaches the globals on all {_n_xp} states that have any")
+
+# The structural half: a zone the encoder builds must be a zone the NETWORK
+# pools over. `nets.py` kept its own hardcoded tuple and missed `legends` for
+# every run after a8a7bf4 -- built, batched, and silently discarded.
+if tuple(_enc.shapes()["zones"]) != ZONES:
+    die("obs-state", "shapes() disagrees with obs.ZONES")
+_missing = [z for z in ZONES if z not in _enc.encode(
+    _s2, 0, A.legal_actions(_s2, T, _cfg, 0)).zones] if not A.is_terminal(_s2) else []
+if _missing:
+    die("obs-state", f"zones declared but never built: {_missing}")
+ok(f"all {len(ZONES)} zones are declared in one place and reach the network")
 
 
 # ---------------------------------------------------------------------------

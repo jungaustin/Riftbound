@@ -40,7 +40,22 @@ def _raw_cards() -> list[dict]:
     exported from anywhere.
     """
     import json
-    out = list(json.loads((ROOT / "data" / "cards.json").read_text())["cards"])
+    raw = json.loads((ROOT / "data" / "cards.json").read_text())
+    # **`cards.json` is PRINTED text and is NOT the whole story.** `cli.py sync`
+    # regenerates it wholesale, so every correction lives in `errata.json` and is
+    # re-applied on load -- official errata under "cards", and under "gaps" the
+    # fields upstream never carried at all.
+    #
+    # The gaps section is load-bearing here rather than cosmetic: all 40
+    # Equipment cards are missing their "Attached:" band upstream, which is the
+    # Might Bonus (137.3) and the ability granted while attached (136.2/718.3).
+    # Without this the RL engine reads an Equipment as nothing but its [Equip]
+    # cost, which is exactly the shape of a card that attaches and then does
+    # nothing. `riftbound/db.py` has applied this overlay since it was written;
+    # this module read past it, so the two halves of the repo disagreed about
+    # what 40 cards say.
+    from riftbound.db import _apply_overlay
+    out = list(_apply_overlay(raw, ROOT / "data" / "errata.json")["cards"])
     extra = ROOT / "data" / "tokens.json"
     if extra.exists():
         have = {c["name"] for c in out}
@@ -63,12 +78,35 @@ def _token_names() -> set[str]:
 
 _TOKEN_NAMES = None
 
+
+def _champion_names() -> set[str]:
+    """Names of Champion cards (103.2.b).
+
+    A Champion is a supertype, like Token, and `sim/engine/cards.Card` carries
+    neither -- so both are recovered from the raw JSON the same way. Hallowed
+    Tomb is what needs it: "return your Chosen Champion from your trash".
+    """
+    return {c["name"] for c in _raw_cards()
+            if (c.get("supertype") or "").lower() == "champion"}
+
+
+_CHAMPION_NAMES = None
+
 # Keyword brackets, INCLUDING a value: "[Assault 2]" as well as "[Ambush]".
 # The value was not matched, so a card whose whole text is a valued
 # keyword kept a non-empty residual and was reported as having printed
 # behaviour the DSL had to express -- under-counting coverage on 8 cards
 # whose keywords are all implemented.
-_BRACKET = re.compile(r"\[([A-Za-z][A-Za-z ]*?)\s*\d*\]")
+# The hyphen is for [Quick-Draw], as in `_KW_TOKEN` above.
+_BRACKET = re.compile(r"\[([A-Za-z][A-Za-z -]*?)\s*\d*\]")
+# The cost that belongs to an [Equip] keyword (818.1.c) and the Might Bonus
+# band (137.3) -- both implemented, so `residual_text` strips them. The band
+# pattern deliberately stops at the number: what follows it is Effect Text.
+_EQUIP_RUN = re.compile(r"\[?Equip\]?\s*(?:\u2014\s*)?(?:\{[^}]*\})+")
+_MIGHT_BONUS_RUN = re.compile(r"Attached:\s*[+-]?\d+\s*Might\.?")
+# The whole "[Equip] -- <cost parts>" clause, reminder text already stripped by
+# `body_text`, up to the next sentence ("Attached:" or a new clause).
+_EQUIP_FULL_RUN = re.compile(r"\[?Equip\]?\s*\u2014\s*[^.]*?(?=Attached:|$|\s{2})")
 _REMINDER = re.compile(r"\([^)]*\)")
 
 _KW_BIT = {kw: i for i, kw in enumerate(ALL_KEYWORDS)}
@@ -85,7 +123,10 @@ COMPLEX_TEXT_CHARS = 90
 
 
 # A bracketed token, optionally with a numeric value: [Assault 2], [Shield 3].
-_KW_TOKEN = re.compile(r"\[([A-Za-z][A-Za-z ]*?)\s*\d*\]")
+# The hyphen is for [Quick-Draw] (819), the only keyword whose name carries
+# one. Unknown tokens fall through `_KW_BIT.get`, so widening the class
+# cannot invent a keyword -- it can only stop missing a real one.
+_KW_TOKEN = re.compile(r"\[([A-Za-z][A-Za-z -]*?)\s*\d*\]")
 # Things that may sit between owned keywords in the leading run without ending
 # it: whitespace, an em dash, a cost like {1 energy}, an ability marker [>].
 _KW_FILLER = re.compile(r"\s+|[—-]|\{[^}]*\}|\[>+\]")
@@ -140,7 +181,18 @@ def keyword_mask(text: str) -> int:
     implemented, which understates coverage; a keyword it wrongly grants
     changes how the engine plays the card.
     """
-    raw = text or ""
+    # **The "Attached:" band is NOT this card's keywords.** 136.2 makes Effect
+    # Text a separate band from Rules Text, and 718.3 appends its abilities to
+    # the TOP-MOST card -- 136.2.c is explicit that "I" there means the object
+    # the card is attached to. So Doran's Shield's "[Tank] (I must be assigned
+    # combat damage first.)" is the UNIT's Tank, not the gear's.
+    #
+    # Signal (2) below reads a keyword followed by its own reminder text, which
+    # every one of these bands is, so without this cut the six Equipment that
+    # grant a keyword all claimed it themselves: Boots of Swiftness had
+    # [Ganking] and moved battlefield to battlefield as a gear. Read the band
+    # through `attached_keywords` instead, which hands it to the right card.
+    raw = _MIGHT_BONUS.split(text or "", 1)[0]
     mask = 0
 
     # (1) the leading run, scanned on text with reminders stripped.
@@ -204,6 +256,14 @@ _FLOW = re.compile(r"\[Flow\]\s*((?:\{[^}]*\})+)")
 # execution rather than a cheaper one.
 _REPEAT = re.compile(r"\[Repeat\]\s*((?:\{[^}]*\})+)")
 
+# 818.1.c -- "Equip is formatted as 'Equip [Cost]'". The brackets are optional
+# because Jagged Cutlass prints "Equip {Body rune}" unbracketed while the other
+# 39 print "[Equip]"; anchoring on the word alone is safe only because this is
+# read exclusively off cards TAGGED Equipment (818.1.a), where "Equip" in any
+# other position does not occur. The em dash is the separator used when the
+# cost has a non-resource part ("[Equip] -- {Chaos rune}, Recycle 2 cards").
+_EQUIP = re.compile(r"\[?Equip\]?\s*(?:\u2014\s*)?((?:\{[^}]*\})+)")
+
 
 def _symbol_cost(group: str) -> tuple[int, int]:
     """(energy, power) from a run of "{...}" cost symbols."""
@@ -230,6 +290,145 @@ def repeat_cost(text: str) -> tuple[int, int]:
     if not m:
         return -1, -1
     return _symbol_cost(m.group(1))
+
+
+# 137.3 -- the Might Bonus, printed in the card's lower-right shield badge and
+# rendered by the errata overlay as the "Attached:" band (see `_raw_cards`).
+_MIGHT_BONUS = re.compile(r"Attached:\s*([+-]?\d+)\s*Might")
+# A band that is nothing but bracketed keywords and their reminder text. The
+# anchors matter: a band with any prose after the keywords must NOT match, or
+# 718.3's real abilities would be silently reduced to the keyword in front of
+# them.
+_KW_ONLY_BAND = re.compile(
+    r"^(?:\[[A-Za-z][A-Za-z -]*?\s*\d*\]\s*(?:\([^)]*\)\s*)?)+$")
+
+
+def might_bonus(text: str, tags) -> int:
+    """The Might Bonus this card gives its Top-Most Card while Attached (137.3).
+
+    Read off the "Attached:" band rather than a structured field, because
+    upstream has no such field -- `data/errata.json`'s `gaps` section carries
+    the band, transcribed from the card images, and appends it to the printed
+    text. All 40 Equipment cards parse; a card that does not is treated as +0,
+    which understates it rather than inventing a number.
+
+    137.3.a scopes it to while Attached, which is why `combat.attached_might`
+    recomputes it per call instead of writing it into `P_MIGHT_MOD` on attach.
+    """
+    if not text or "Equipment" not in (tags or ()):
+        return 0
+    m = _MIGHT_BONUS.search(text)
+    return int(m.group(1)) if m else 0
+
+
+def attached_keywords(text: str, tags) -> tuple[tuple[str, int], ...]:
+    """Keywords this card GRANTS its Top-Most Card while Attached (718.3).
+
+    718.3: "Abilities in the card's Effect Text are appended to the Rules Text
+    of the Top-Most Card", and 136.2.c is what makes the reading unambiguous --
+    Effect Text's "I" refers to the object it is attached to, not to the
+    Equipment. So Doran's Shield's "[Tank] (I must be assigned combat damage
+    first.)" gives TANK TO THE UNIT.
+
+    Only the keyword RUN at the head of the band is read, and only when the
+    band is nothing else. Six Equipment print exactly that and nothing more;
+    the other 25 print prose ("When I conquer, ...") that 718.3 also appends
+    but which needs a real ability, not a keyword flag. Returning nothing for
+    those is what keeps `decks.plays_as_printed` withholding them instead of
+    crediting a card whose clause is silently dropped.
+    """
+    if not text or "Equipment" not in (tags or ()):
+        return ()
+    m = _MIGHT_BONUS.search(text)
+    if not m:
+        return ()
+    # `_MIGHT_BONUS` stops at the number, so the band's own full stop is still
+    # in front of whatever follows it.
+    rest = text[m.end():].lstrip(" .")
+    if not rest or not _KW_ONLY_BAND.match(rest):
+        return ()
+    out = []
+    for tok in _KW_TOKEN.finditer(_REMINDER.sub("", rest)):
+        kw = tok.group(1)
+        if kw not in _KW_BIT:
+            return ()            # an unknown token means we misread the band
+        out.append((kw, keyword_value(rest, kw) or 1))
+    return tuple(out)
+
+
+# The non-resource half of an Equip cost (818.1.c.3), read out of the text
+# between "[Equip] --" and the reminder parenthesis.
+_EQUIP_EXTRA = re.compile(r"\[?Equip\]?\s*\u2014\s*([^(]*)\(")
+
+
+def equip_extra_costs(text: str, tags) -> tuple[tuple[str, int], ...]:
+    """Non-resource parts of an [Equip] cost, as (kind, amount) pairs.
+
+    818.1.c.3 allows them, and three Equipment use them -- each one a cost the
+    engine already pays somewhere else, which is why this returns the NAME of
+    that cost rather than inventing a new one:
+
+        "Kill a friendly unit"          Blade of the Ruined King  -> kill
+        "Recycle 2 cards from your trash"  Last Rites             -> recycle
+        "Spend 1 XP"                    Shepherd's Heirloom       -> xp
+
+    **This is not optional polish.** `_equip_abilities` used to read only the
+    rune run, so Blade equipped for a lone {Order rune} without killing
+    anything and Last Rites for a lone {Chaos rune} without recycling -- both
+    strictly cheaper than printed, in every game that dealt them. A part this
+    does not recognise is returned as ("unknown", 0) so the ability can refuse
+    to exist rather than be offered at a discount.
+    """
+    if not text or "Equipment" not in (tags or ()):
+        return ()
+    m = _EQUIP_EXTRA.search(text)
+    if not m:
+        return ()
+    out = []
+    for part in (x.strip() for x in m.group(1).split(",")):
+        if not part or part.startswith("{"):
+            continue                      # the resource run, read elsewhere
+        if re.fullmatch(r"Kill a friendly unit", part):
+            out.append(("kill", 1))
+        elif (r := re.fullmatch(r"Recycle (\d+) cards? from your trash", part)):
+            out.append(("recycle", int(r.group(1))))
+        elif (x := re.fullmatch(r"Spend (\d+) XP", part)):
+            out.append(("xp", int(x.group(1))))
+        else:
+            out.append(("unknown", 0))
+    return tuple(out)
+
+
+def equip_cost(text: str, tags) -> tuple[int, int]:
+    """The (energy, power) of a gear's [Equip] cost, or (-1, -1) if it has none.
+
+    818.1.c.2 -- "Equip is functionally short for '[Cost]: Attach this gear to a
+    unit you control'", so this is an ordinary activated-ability cost and is
+    parsed the same way [Flow]'s and [Repeat]'s are.
+
+    Gated on the Equipment tag rather than on the word, because 10 cards print
+    "[Equip]" only inside [Weaponmaster]'s reminder text, describing what they
+    let you do with SOMEONE ELSE's Equipment (821.1.b). Those are units, not
+    Equipment, and must not come back with a cost of their own.
+
+    818.1.c.3 allows non-resource costs, and two cards in the pool use them --
+    Last Rites recycles from a trash and Shepherd's Heirloom spends XP. Only
+    the resource run is read here, so those two report their rune cost and
+    their extra cost is not yet expressible; `decks.EQUIP_NEEDS_DATA` keeps
+    them out of the coverage number rather than letting them look complete.
+    """
+    if not text or "Equipment" not in (tags or ()):
+        return -1, -1
+    m = _EQUIP.search(text)
+    if m:
+        return _symbol_cost(m.group(1))
+    # 818.1.c.3 -- "Equip costs may include both resource costs and
+    # non-resource costs", and nothing says they must include a resource one.
+    # Shepherd's Heirloom's whole cost is "Spend 1 XP", so it has an Equip
+    # ability costing no runes at all; (-1, -1) here made it inert.
+    if equip_extra_costs(text, tags):
+        return 0, 0
+    return -1, -1
 
 
 def flow_cost(text: str) -> tuple[int, int]:
@@ -273,6 +472,12 @@ class CardTable:
     power: np.ndarray         # int16
     might: np.ndarray         # int16, -1 for non-units
     type_id: np.ndarray       # int8, index into CARD_TYPES
+    # 178.1 -- "an object with multiple types has all the properties of each".
+    # `type_id` is the FIRST printed type and is what the encoder one-hots;
+    # membership questions go through `is_type`, which reads this bitmask, or
+    # Patched Porobot (the pool's one Unit Gear) is a unit that no "gear" ever
+    # sees -- not killable by Jayce, not counted by a gear static.
+    type_mask: np.ndarray     # uint8, bit per CARD_TYPES
     domain_mask: np.ndarray   # uint8, bit per DOMAINS
     kw_mask: np.ndarray       # uint32, bit per ALL_KEYWORDS
     # Keyword VALUES. [Shield 3] and [Assault 2] carry a number the bitmask
@@ -290,8 +495,26 @@ class CardTable:
     repeat_power: np.ndarray   # int16
     flow_energy: np.ndarray   # int16
     flow_power: np.ndarray    # int16
+    # [Equip] (818), an ACTIVATED ability's cost rather than an alternate or
+    # additional one. -1 in `equip_energy` means the card has no Equip ability,
+    # which for a gear is what "not Equipment" means (818.1.a).
+    equip_energy: np.ndarray  # int16
+    equip_power: np.ndarray   # int16
+    # 137.3 -- what an Attached card adds to its Top-Most Card's Might. 0 for
+    # everything that is not Equipment, and for the six Equipment that print
+    # "+0 Might" and buy their value with a granted ability instead.
+    might_bonus: np.ndarray   # int16
+    # 818.1.c.3 -- the non-resource half of an Equip cost, as (kind, amount)
+    # pairs. See `equip_extra_costs`.
+    equip_extra: tuple[tuple[tuple[str, int], ...], ...]
+    # 718.3 -- keywords an Attached card appends to its Top-Most Card, as
+    # (keyword, value) pairs. A tuple of tuples rather than a mask, for the
+    # reason `tags` is: nothing reads it in a hot loop and the values matter
+    # ([Shield 2] is not [Shield 1]).
+    attached_kw: tuple[tuple[tuple[str, int], ...], ...]
     text_len: np.ndarray      # int16, reminder text stripped
     token: np.ndarray         # bool, supertype == Token (185.3)
+    champion: np.ndarray      # bool, supertype == Champion (103.2.b)
     # Printed tags -- Bird, Fae, Mech, Shurima. Cards name them constantly
     # ("return a Bird, Cat, Dog, or Poro from your trash"), and unlike a
     # keyword a tag carries no rules of its own: it exists only to be
@@ -311,7 +534,8 @@ class CardTable:
         return bool(self.kw_mask[cid] >> _KW_BIT[keyword] & 1)
 
     def is_type(self, cid: int, type_name: str) -> np.ndarray | bool:
-        return self.type_id[cid] == _TYPE_ID[type_name]
+        """178.1 -- true for EVERY type on the card's type line."""
+        return ((self.type_mask[cid] >> _TYPE_ID[type_name]) & 1).astype(bool)
 
     def is_token(self, cid: int) -> bool:
         """185.3 -- a token that leaves the board ceases to exist rather than
@@ -338,8 +562,39 @@ class CardTable:
         Non-empty means there is printed behaviour beyond the keyword flags,
         and therefore something the DSL has to express. Exact, where a text
         length threshold is a guess.
+
+        Two Equipment-shaped runs are stripped alongside the keywords, because
+        the engine executes both and leaving them in would report behaviour it
+        already implements as outstanding:
+
+          the [Equip] cost   818.1.c's "Equip [Cost]" -- `equip_cost` reads it
+                             and `_equip_abilities` builds the ability, so the
+                             cost run is part of the keyword, not text beyond it.
+                             The same is true of [Flow]'s and [Repeat]'s costs,
+                             which `_BRACKET` never sees because they follow an
+                             already-stripped token.
+          the Might Bonus    137.3's "Attached: +N Might." -- a printed FIELD
+                             rendered as text by the errata overlay, read by
+                             `might_bonus`. **Only the number**: anything after
+                             it is Effect Text (136.2), which 718.3 appends to
+                             the Top-Most card and which is NOT implemented, so
+                             it must survive into the residual.
         """
-        return _BRACKET.sub("", body_text(self.raw_text[cid])).strip(" .—-\n\t")
+        t = body_text(self.raw_text[cid])
+        # A non-resource Equip cost ("[Equip] -- {Chaos rune}, Recycle 2 cards
+        # from your trash") is part of the keyword too, now that each kind is
+        # paid -- but ONLY when every part was recognised. An unknown part
+        # means `_equip_abilities` refuses the ability, and leaving its text in
+        # the residual is what keeps the card honestly uncredited.
+        extra = self.equip_extra[cid]
+        if extra and not any(k == "unknown" for k, _ in extra):
+            t = _EQUIP_FULL_RUN.sub("", t)
+        t = _EQUIP_RUN.sub("", t)
+        t = _MIGHT_BONUS_RUN.sub("", t)
+        # "," joins keywords printed as a list ("[Assault 2], [Shield 2]" on
+        # Garen - Rugged); with the brackets gone the comma is all that is
+        # left, and it is punctuation, not behaviour.
+        return _BRACKET.sub("", t).strip(" .,—-\n\t")
 
     def unread_keywords(self, cid: int) -> list[str]:
         """Keywords on this card that the engine never consults."""
@@ -391,10 +646,12 @@ class CardTable:
 
 
 def _rows(cards: list[Card]) -> CardTable:
-    global _TOKEN_NAMES
+    global _TOKEN_NAMES, _CHAMPION_NAMES
     if _TOKEN_NAMES is None:
         _TOKEN_NAMES = _token_names()
-    _tokens = _TOKEN_NAMES
+    if _CHAMPION_NAMES is None:
+        _CHAMPION_NAMES = _champion_names()
+    _tokens, _champs = _TOKEN_NAMES, _CHAMPION_NAMES
     n = len(cards)
     tbl = CardTable(
         names=tuple(c.name for c in cards),
@@ -403,6 +660,9 @@ def _rows(cards: list[Card]) -> CardTable:
         power=np.array([c.power for c in cards], np.int16),
         might=np.array([c.might if c.might is not None else -1 for c in cards], np.int16),
         type_id=np.array([_TYPE_ID.get(c.type, 0) for c in cards], np.int8),
+        type_mask=np.array(
+            [sum(1 << _TYPE_ID[t] for t in c.all_types if t in _TYPE_ID)
+             or 1 << _TYPE_ID.get(c.type, 0) for c in cards], np.uint8),
         domain_mask=np.array(
             [sum(1 << _DOMAIN_BIT[d] for d in c.domains if d in _DOMAIN_BIT)
              for c in cards], np.uint8),
@@ -415,8 +675,22 @@ def _rows(cards: list[Card]) -> CardTable:
         repeat_power=np.array([repeat_cost(c.text)[1] for c in cards], np.int16),
         flow_energy=np.array([flow_cost(c.text)[0] for c in cards], np.int16),
         flow_power=np.array([flow_cost(c.text)[1] for c in cards], np.int16),
+        equip_energy=np.array(
+            [equip_cost(c.text, getattr(c, "tags", None))[0] for c in cards],
+            np.int16),
+        equip_power=np.array(
+            [equip_cost(c.text, getattr(c, "tags", None))[1] for c in cards],
+            np.int16),
+        might_bonus=np.array(
+            [might_bonus(c.text, getattr(c, "tags", None)) for c in cards],
+            np.int16),
+        equip_extra=tuple(
+            equip_extra_costs(c.text, getattr(c, "tags", None)) for c in cards),
+        attached_kw=tuple(
+            attached_keywords(c.text, getattr(c, "tags", None)) for c in cards),
         text_len=np.array([len(body_text(c.text)) for c in cards], np.int16),
         token=np.array([c.name in _tokens for c in cards], bool),
+        champion=np.array([c.name in _champs for c in cards], bool),
         tags=tuple(frozenset(getattr(c, "tags", None) or ()) for c in cards),
     )
     assert tbl.n == n
@@ -424,12 +698,24 @@ def _rows(cards: list[Card]) -> CardTable:
 
 
 def full_table() -> CardTable:
-    """Every card in `data/cards.json` plus the rulebook tokens, compiled."""
+    """Every card in `data/cards.json` plus the rulebook tokens, compiled.
+
+    Built entirely from `_raw_cards`, which applies the errata overlay. It used
+    to start from `engine.cards.card_index()` and only fall back to `_raw_cards`
+    for names that index did not already have -- and `card_index` reads
+    `cards.json` raw, so the overlay reached nothing but the tokens. That is how
+    the RL engine came to disagree with `riftbound/db.py` about what 40
+    Equipment cards say: `db.py` applied the overlay, this did not, and the
+    difference was exactly the "Attached:" band that carries the Might Bonus.
+
+    Deduplicated by `loose_key` and first-wins, matching what `card_index` did,
+    so a card with several printings still compiles to one row.
+    """
     from engine.cards import _to_card
-    cards = dict(card_index())
+    from riftbound.db import loose_key
+    cards: dict[str, Card] = {}
     for raw in _raw_cards():
-        if raw["name"] not in {c.name for c in cards.values()}:
-            cards[raw["name"]] = _to_card(raw)
+        cards.setdefault(loose_key(raw["name"]), _to_card(raw))
     return _rows(sorted(cards.values(), key=lambda c: c.name))
 
 

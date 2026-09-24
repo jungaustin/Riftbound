@@ -26,8 +26,9 @@ from rl.engine import actions as A
 from rl.engine import game
 from rl.engine.cardtable import full_table
 from rl.engine import invariants
-from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, N_BF,
-                             N_SEATS, P_ALIVE, P_CTRL, P_CARD)
+from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_OWNER, N_BF,
+                             N_SEATS, P_ALIVE, P_CTRL, P_CARD,
+                             P_OWNER, N_FD)
 
 
 # Recorded v0 replay fingerprints: (deal seed, victory) -> (winner, turns,
@@ -45,6 +46,11 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, N_BF,
 # longer -- mean steps 20.4 -> 56.9 at victory 3 -- because dropping a unit onto
 # an empty Battlefield was a Conquer that never had to survive a Combat, and it
 # was the fastest line in the game. Measured, not predicted.
+# The same reasoning applies to the printed determinism hash: it moved when
+# `n_attached` was added to `GameState` while every observable stayed put --
+# same winner, same mean and max step counts, same seat-0 rate. A state field
+# moving the digest is the digest working as documented, not a regression; the
+# outcome golden is what would have caught a real one, and it did not fire.
 # Re-pinned twice more, both times because the DEAL changed rather than the
 # play:
 #   - `keyword_mask` stopped crediting keywords a card merely MENTIONED, which
@@ -160,16 +166,23 @@ def cards_owned(state, table, seat: int) -> int:
     if int(state.pend_look) == seat:
         n += live(state.look_cards[:int(state.n_look)])
     n += live(state.banished[seat, :int(state.n_banished[seat])])
+    # **P_OWNER, not P_CTRL.** A card is conserved against the player who OWNS
+    # it, and the two come apart the moment one is played out of someone else's
+    # zone -- Kharox digs a unit from the opponent's trash and plays it under
+    # his own control. Counting by controller read that as a card changing
+    # hands, which is exactly the thing this gate exists to refuse, so it fired
+    # on a legal play.
     n += sum(1 for i in range(state.n_perms)
              if state.perms[i, P_ALIVE] == 1
-             and int(state.perms[i, P_CTRL]) == seat
+             and int(state.perms[i, P_OWNER]) == seat
              and not table.is_token(int(state.perms[i, P_CARD])))
-    n += sum(1 for b in range(N_BF)
+    n += sum(1 for b in range(N_FD)
              if int(state.fd_owner[b]) == seat
              and not table.is_token(int(state.fd_card[b])))
     n += sum(1 for i in range(int(state.n_chain))
              if int(state.chain[i, C_ABIL]) < 0
-             and int(state.chain[i, C_CTRL]) == seat
+             and (int(state.chain[i, C_OWNER]) if int(state.chain[i, C_OWNER]) >= 0
+                  else int(state.chain[i, C_CTRL])) == seat
              and int(state.chain[i, C_CARD]) >= 0
              and not table.is_token(int(state.chain[i, C_CARD])))
     return n

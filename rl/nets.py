@@ -87,7 +87,9 @@ class RiftboundNet(nn.Module):
     def __init__(self, shapes: dict, hidden: int = 256, card_hidden: int = 128,
                  head_hidden: int = 128) -> None:
         super().__init__()
-        self.zone_names = ("hand", "board", "battlefields", "facedown")
+        # From the encoder, never a copy -- see `obs.ZONES`. The copy that
+        # used to live here missed `legends` for every run after a8a7bf4.
+        self.zone_names = tuple(shapes["zones"])
         row_dim = shapes["row_dim"]
         card_dim = shapes["card_dim"]
         g_dim = shapes["globals"][0]

@@ -484,7 +484,12 @@ def deck_pool_deal(table, min_coverage: float = 0.0, seed_decks=None):
     owner asked about: swap the deck and it should not suddenly play worse.
     """
     from rl.decks import load_all, matchup
-    pool = [d for d in (seed_decks or load_all(table))
+    # `latest_only`: eight iterations of one Lillia list were eight independent
+    # draws, so 46% of the training pool was a single archetype and 71% of
+    # matchups contained it. That is exactly the overfitting this function's
+    # docstring says it exists to prevent -- swap the deck and the policy should
+    # not suddenly play worse -- and it was being manufactured by the loader.
+    pool = [d for d in (seed_decks or load_all(table, latest_only=True))
             if d.coverage >= min_coverage]
     assert pool, f"no decks at coverage >= {min_coverage:.0%}"
 

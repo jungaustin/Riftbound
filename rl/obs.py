@@ -33,27 +33,43 @@ from rl.config import DOMAINS, Config
 from rl.engine import actions as A
 from rl.engine import chain, combat
 from rl.engine.cardtable import CardTable
+MAX_MODES = 4    # widest "Choose one --" in the pool; asserted in effects
 from rl.engine.effects import (TK_LOCATION, TK_SPELL, TK_TRASH_CARD, TK_UNIT,
+                               TK_MODE,
                                unpack_trash)
-from rl.engine.state import (C_CARD, C_SRC, F_NO_COMBAT_DAMAGE,
-                             F_STUNNED, MAX_HAND, MAX_PERMS, N_BF,
-                             N_DOMAINS, N_SEATS, P_ALIVE, P_ARRIVED, P_CARD,
-                             P_CTRL, P_DMG, P_FLAGS, P_LOC, P_READY,
+from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_SRC, F_BUFFED,
+                             F_NO_COMBAT_DAMAGE,
+                             F_STUNNED, GRANTABLE, MAX_HAND, MAX_PERMS, N_BF, N_LOCATIONS,
+                             N_DOMAINS, N_GRANTABLE, N_SEATS, P_ALIVE,
+                             P_ARRIVED, P_CARD,
+                             P_CTRL, P_DMG, P_FLAGS, P_LOC, P_MIGHT_MOD,
+                             P_READY,
                              PHASE_NAMES, GameState, base_loc, bf_index,
-                             bf_loc, is_battlefield)
+                             bf_loc, fd_bf, fd_slots, is_battlefield, N_FD,
+                             is_legend_src, legend_src_seat)
 
 # --- per-row context block, appended to every card feature row --------------
 # Uniform across zones so a single shared card encoder can process all of them
 # (§6.1). Fields meaningless in a zone are zero there.
 (CX_ZONE_HAND, CX_ZONE_BOARD, CX_ZONE_BF, CX_ZONE_FD,
  CX_MINE, CX_READY, CX_DMG, CX_STUNNED, CX_NODMG,
- CX_LOC,                       # 4 slots: own base, enemy base, B0, B1
+ CX_LOC,                       # N_LOCATIONS slots: own base, enemy base, B0..B2
  CX_AFFORD, CX_ARRIVED,
  CX_CTRL_MINE, CX_CTRL_OPP, CX_CTRL_NONE, CX_CONTESTED,
  CX_SCORED_MINE, CX_SCORED_OPP, CX_FD_PRESENT, CX_FD_LIVE,
- CX_ZONE_LEGEND) = (
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23)
-CTX_DIM = 24
+ CX_ZONE_LEGEND,
+ # --- Might, decomposed by how long each part lasts (see `_board`) ---
+ CX_MIGHT, CX_MIGHT_MOD, CX_MIGHT_COMBAT, CX_BUFFED,
+ # --- the Chain ---
+ CX_ZONE_CHAIN, CX_CHAIN_DEPTH, CX_CHAIN_ABILITY,
+ # --- attachment (716-719) ---
+ CX_ATTACHED, CX_EQUIPPED,
+ CX_GRANT) = (                 # N_GRANTABLE slots: granted keywords
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+    25, 26, 27, 28, 29, 30, 31, 32, 33, 34)
+# CX_LOC spans N_LOCATIONS (5: two bases, two chosen battlefields, and the
+# Baron Pit's token slot), which is why CX_AFFORD starts at 14.
+CTX_DIM = 34 + N_GRANTABLE
 
 # Slot counts. Overflow is a bug, not a resize -- silently dropping a card from
 # the observation would be invisible in training.
@@ -70,14 +86,36 @@ HAND_SLOTS = MAX_HAND
 # tracking it is the one value that cannot be outgrown.
 BOARD_SLOTS = MAX_PERMS
 
+# The Chain, top-first. **Not** `MAX_CHAIN`, which is 152 -- that is the
+# engine's structural ceiling (2*MAX_HAND + MAX_TRIGGERS), not a depth any game
+# reaches, and a 152-row dense zone in every observation would cost more than
+# everything else here combined. Measured over 56k decisions in 400 real-deck
+# games the deepest Chain was 9.
+#
+# So unlike `hand` and `board`, overflow here is NOT a bug and must not assert:
+# rows are encoded nearest-to-resolution first (340.4 -- only the top resolves
+# next), so anything dropped is the part that matters least, and `n_chain` stays
+# in the globals to tell the net that more is stacked than it can see.
+CHAIN_SLOTS = 12
+
+# **The** zone list. `nets.py` reads this through `Encoder.shapes()["zones"]`
+# rather than keeping its own copy, because it kept one and it went stale: the
+# `legends` zone was added in a8a7bf4 and the net's hardcoded four-tuple was
+# never updated, so for every run since, the encoder built the Legend Zone and
+# the trunk silently discarded it -- including `CX_READY`, which is whether the
+# seat's "Exhaust:" ability is still available this turn. Nothing failed; the
+# information simply was not there. One definition, so a new zone cannot be
+# added to the observation and dropped from the network again.
+ZONES = ("hand", "board", "battlefields", "facedown", "legends", "chain")
+
 # 5*N_DOMAINS: runes_ready + runes_spent for both seats (4), plus this seat's
 # pool_power (1). The +1 is pool_power's [A] column -- see state.D_ANY.
 # The +2 is `pending_ready_runes` for both seats -- see `_globals`.
-GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2
+GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2 + 7
 
 # Action-row layout after the kind one-hot and card block.
-ACT_EXTRA = 4 + 1 + 3 + 1 + 1 + 1 + 1 + 2 + 1
-# loc, is_bf, ctrl(3), counts, might, cost, whose
+ACT_EXTRA = N_LOCATIONS + 1 + 3 + 1 + 1 + 1 + 1 + 2 + 1 + MAX_MODES
+# loc, is_bf, ctrl(3), counts, might, cost, whose, mode one-hot
 #
 # The last slot is "whose thing is this", and it exists because a target's
 # owner is not always recoverable from the rest of the row. A permanent target
@@ -129,7 +167,9 @@ class Encoder:
         self.row_dim = self.card_dim + CTX_DIM
         self.act_dim = len(A.KIND_NAMES) + 1 + self.card_dim + ACT_EXTRA
         self.a_max = cfg.max_actions
-        self.priv_dim = (HAND_SLOTS + N_BF) * self.card_dim
+        # One row per hand slot and one per FACEDOWN SLOT -- a battlefield may
+        # hold two (Bandle Tree), and the belief head is asked about each card.
+        self.priv_dim = (HAND_SLOTS + N_FD) * self.card_dim
 
     # -- rows ------------------------------------------------------------
 
@@ -152,7 +192,7 @@ class Encoder:
         z = np.zeros((HAND_SLOTS, self.row_dim), np.float32)
         m = np.zeros(HAND_SLOTS, bool)
         seats = [seat]
-        if int(state.saw_hand[seat]) == int(state.turn):
+        if int(state.saw_hand[seat]) == int(state.ply):
             seats.append(1 - seat)
         k = 0
         for owner in seats:
@@ -191,6 +231,43 @@ class Encoder:
         return z, m
 
     def _board(self, state: GameState, seat: int):
+        """Live permanents, with Might decomposed by PERSISTENCE.
+
+        The card block carries PRINTED Might, and for a long time that was the
+        only Might in the observation -- so a unit's true Might was wrong on
+        8.5% of board rows in real games, by anything from -5 to +7. The policy
+        could see `CX_DMG`, the damage marked on a unit, but not the number
+        that damage has to reach to kill it. That is the single most important
+        quantity in a combat.
+
+        Encoding only "current Might" alongside it would fix the arithmetic and
+        still lose the planning, because `combat.might` sums four things that
+        disappear on four different schedules:
+
+          P_MIGHT_MOD        "this turn" -- gone in the end-of-turn cleanup
+          Buff counter       a counter (703); survives cleanup, gone when the
+                             unit leaves play (705)
+          static_might       continuous; gone when its SOURCE leaves, and where
+                             an Equipment's Might Bonus will land
+          combat_role_bonus  [Assault]/[Shield]; exists only inside a Combat
+                             (807.1.c, 814.1.c)
+
+        So three columns rather than one, and printed Might already in the row:
+
+          CX_MIGHT          what it is now -- decides this combat
+          CX_MIGHT_MOD      the part that evaporates at end of turn
+          CX_MIGHT_COMBAT   the part that evaporates when the Combat ends
+
+        which lets the net recover "what this unit resets to" by subtraction,
+        and tells apart a real 5-Might body from a 2-Might body wearing a pump
+        -- indistinguishable to any pair of (printed, current) numbers, because
+        neither says which part decays.
+
+        One inexactness, deliberately left: 143.2.b floors Might at 0, so on a
+        unit modified below zero the parts no longer sum to `CX_MIGHT`. Encoding
+        the unfloored total instead would misstate the number that actually
+        decides lethality, which is the more expensive of the two errors.
+        """
         z = np.zeros((BOARD_SLOTS, self.row_dim), np.float32)
         m = np.zeros(BOARD_SLOTS, bool)
         k = 0
@@ -207,7 +284,31 @@ class Encoder:
             r[c + CX_STUNNED] = float(bool(row[P_FLAGS] & F_STUNNED))
             r[c + CX_NODMG] = float(bool(row[P_FLAGS] & F_NO_COMBAT_DAMAGE))
             r[c + CX_LOC + _loc_slot(int(row[P_LOC]), seat)] = 1.0
-            r[c + CX_ARRIVED] = float(int(row[P_ARRIVED]) == state.turn)
+            r[c + CX_ARRIVED] = float(int(row[P_ARRIVED]) == state.ply)
+            # Never `table.might` here -- PLAN.md §1.3.d, and the whole point.
+            r[c + CX_MIGHT] = combat.might(state, self.table, i) / 5.0
+            r[c + CX_MIGHT_MOD] = float(row[P_MIGHT_MOD]) / 5.0
+            r[c + CX_MIGHT_COMBAT] = combat.combat_role_bonus(
+                state, self.table, i) / 5.0
+            r[c + CX_BUFFED] = float(bool(row[P_FLAGS] & F_BUFFED))
+            # 718 -- Attached and Top-Most are two different things and a row
+            # can be either, so they are two features rather than one.
+            #
+            # Without these an Attached gear encodes exactly like a free one,
+            # and the difference is not cosmetic: 718.2 makes its whole printed
+            # text Inactive, so the policy would see an activatable ability the
+            # action layer will never offer. That is the same failure the
+            # battlefield rows had, where 66 distinct cards collapsed to three
+            # identical rows.
+            r[c + CX_ATTACHED] = float(state.is_attached(i))
+            r[c + CX_EQUIPPED] = float(bool(state.attachments(i)))
+            # Granted keywords (kw_grant) -- a unit handed [Tank] is assigned
+            # combat damage first and is otherwise identical to one that was
+            # not, so without this the two encode the same.
+            g = state.kw_grant[i]
+            for j in range(N_GRANTABLE):
+                if g[j]:
+                    r[c + CX_GRANT + j] = float(g[j])
             z[k] = r
             m[k] = True
             k += 1
@@ -215,8 +316,9 @@ class Encoder:
 
     def _battlefields(self, state: GameState, seat: int):
         z = np.zeros((N_BF, self.row_dim), np.float32)
-        m = np.ones(N_BF, bool)
-        for i in range(N_BF):
+        m = np.zeros(N_BF, bool)
+        for i in state.live_bfs():
+            m[i] = True
             r = self._row(int(state.bf_card[i]), CX_ZONE_BF)
             c = self.card_dim
             ctrl = int(state.bf_ctrl[i])
@@ -226,9 +328,14 @@ class Encoder:
             r[c + CX_CONTESTED] = float(state.bf_contested[i])
             r[c + CX_SCORED_MINE] = float(state.bf_scored[seat, i])
             r[c + CX_SCORED_OPP] = float(state.bf_scored[1 - seat, i])
-            r[c + CX_FD_PRESENT] = float(state.fd_owner[i] >= 0)
-            r[c + CX_FD_LIVE] = float(state.fd_owner[i] >= 0
-                                      and int(state.fd_ply[i]) < int(state.ply))
+            # Any facedown card here, and any LIVE one: a battlefield may hold
+            # two (Bandle Tree), and what the battlefield row says is whether
+            # the ground is threatening at all.
+            r[c + CX_FD_PRESENT] = float(any(int(state.fd_owner[k]) >= 0
+                                             for k in fd_slots(i)))
+            r[c + CX_FD_LIVE] = float(any(
+                int(state.fd_owner[k]) >= 0
+                and int(state.fd_ply[k]) < int(state.ply) for k in fd_slots(i)))
             r[c + CX_LOC + _loc_slot(bf_loc(i), seat)] = 1.0
             z[i] = r
         return z, m
@@ -241,28 +348,70 @@ class Encoder:
         the belief head's target in Phase 6, so it must be a real hole in the
         observation rather than a quietly filled-in one.
         """
-        z = np.zeros((N_BF, self.row_dim), np.float32)
-        m = np.zeros(N_BF, bool)
-        for i in range(N_BF):
-            owner = int(state.fd_owner[i])
+        z = np.zeros((N_FD, self.row_dim), np.float32)
+        m = np.zeros(N_FD, bool)
+        for k in range(N_FD):
+            i = fd_bf(k)
+            owner = int(state.fd_owner[k])
             if owner < 0:
                 continue
             mine = owner == seat
             # "You can look at their facedown cards this turn" fills exactly
             # this hole -- the slot was already public (107.3.f), only the
             # identity was not.
-            seen = mine or int(state.saw_fd[seat]) == int(state.turn)
-            r = self._row(int(state.fd_card[i]) if seen else -1, CX_ZONE_FD)
+            seen = mine or int(state.saw_fd[seat]) == int(state.ply)
+            r = self._row(int(state.fd_card[k]) if seen else -1, CX_ZONE_FD)
             c = self.card_dim
             r[c + CX_MINE] = float(mine)
             r[c + CX_FD_PRESENT] = 1.0
             # 811.1.b -- a card hidden this turn is not playable until the next
             # one. Public information (everyone saw when it was hidden), and
             # decisive for whether the threat is real right now.
-            r[c + CX_FD_LIVE] = float(int(state.fd_ply[i]) < int(state.ply))
+            r[c + CX_FD_LIVE] = float(int(state.fd_ply[k]) < int(state.ply))
             r[c + CX_LOC + _loc_slot(bf_loc(i), seat)] = 1.0
-            z[i] = r
-            m[i] = True
+            z[k] = r
+            m[k] = True
+        return z, m
+
+    def _chain(self, state: GameState, seat: int):
+        """What is waiting to resolve -- 340.4, top of the Chain first.
+
+        The observation used to carry `n_chain / 4.0` and nothing else, so on
+        26.9% of real decisions something was on the Chain and the policy could
+        not see WHAT. On 12.7% the actor was holding a card it could have
+        responded with. That is the counterspell decision -- and the bluffing
+        behaviour Phase 6/7 exists to measure -- made blind: `env.should_auto_pass`
+        deliberately refuses to collapse those windows precisely because they
+        are the interesting ones, and then the encoder described them as a
+        single scalar.
+
+        Naming the cards leaks nothing. A Chain Item is public the moment it is
+        played (337.1); what stays hidden is the Facedown Zone, which has its
+        own zone and its own deliberate hole.
+
+        `CX_CHAIN_DEPTH` is distance from the TOP, not array position, because
+        "resolves next" is what decides whether a response can still catch it.
+        """
+        z = np.zeros((CHAIN_SLOTS, self.row_dim), np.float32)
+        m = np.zeros(CHAIN_SLOTS, bool)
+        n = int(state.n_chain)
+        for k in range(min(n, CHAIN_SLOTS)):
+            i = n - 1 - k                     # top of the Chain first
+            item = state.chain[i]
+            r = self._row(int(item[C_CARD]), CX_ZONE_CHAIN)
+            c = self.card_dim
+            r[c + CX_MINE] = float(int(item[C_CTRL]) == seat)
+            r[c + CX_CHAIN_DEPTH] = float(k) / 4.0
+            # 337.2 -- an ABILITY on the Chain is not a spell, so "counter a
+            # spell" cannot touch it. Same card id, completely different
+            # question, and nothing else in the row tells them apart.
+            r[c + CX_CHAIN_ABILITY] = float(int(item[C_ABIL]) >= 0)
+            src = int(item[C_SRC])
+            if 0 <= src < state.n_perms:
+                r[c + CX_LOC + _loc_slot(int(state.perms[src, P_LOC]),
+                                         seat)] = 1.0
+            z[k] = r
+            m[k] = True
         return z, m
 
     def _legends(self, state: GameState, seat: int):
@@ -340,15 +489,42 @@ class Encoder:
             # The Chain. Depth matters: an item five deep is respondable only
             # after the ones above it clear (340.4).
             float(state.n_chain) / 4.0,
-            float(state.pend_slot >= 0),
+            float(state.pend_slot >= 0 or state.pend_cost_kill >= 0
+                  or state.pend_kill_play >= 0 or state.pend_tax >= 0
+                  or state.pend_ask >= 0 or state.pend_group_loc >= 0),
             # Facedown zones. Presence is public (107.3.f), identity is not --
             # the *contents* stay out of the observation, which is what the
             # belief head will be asked to predict.
-            float(any(state.fd_owner[i] == seat for i in range(N_BF))),
-            float(any(state.fd_owner[i] == foe for i in range(N_BF))),
-            float(any(state.fd_owner[i] == foe
-                      and int(state.fd_ply[i]) < int(state.ply)
-                      for i in range(N_BF))),
+            float(any(state.fd_owner[k] == seat for k in range(N_FD))),
+            float(any(state.fd_owner[k] == foe for k in range(N_FD))),
+            float(any(state.fd_owner[k] == foe
+                      and int(state.fd_ply[k]) < int(state.ply)
+                      for k in range(N_FD))),
+            # --- standing per-seat resources the engine reads and the
+            # --- observation did not carry at all ---
+            #
+            # XP. `[Level N]` is "while you have N+ XP", 17 `COND_LEVEL` sites
+            # in `effects.py` gate on it, and Scorchclaw's whole card is two
+            # clauses keyed to it. The policy could not see the resource that
+            # decides whether half its deck is on or off. Max observed 6.
+            float(state.xp[seat]) / 3.0,
+            float(state.xp[foe]) / 3.0,
+            # [Legion] -- "if you have played another card this turn" (812).
+            # Live on 53.1% of real decisions, and it is the single fact that
+            # decides whether a Legion card in hand is worth its cost right
+            # now. Both seats: whether the OPPONENT's Legion is on changes what
+            # their open mana threatens.
+            float(state.cards_played[seat]) / 4.0,
+            float(state.cards_played[foe]) / 4.0,
+            # A spell lockout is total while it lasts -- every spell in hand is
+            # dead -- so it cannot be inferred from a shrunken action list
+            # without first trying to act.
+            float(state.no_spells[seat]),
+            float(state.no_spells[foe]),
+            # Elder Dragon: "any amount of your damage is enough to kill enemy
+            # units" rewrites lethality board-wide, so every Might number above
+            # means something different while it is set.
+            float(bool(state.any_damage_kills)),
         ]
         # Runes are on the board face up, so both boards are public.
         for s in (seat, foe):
@@ -381,12 +557,26 @@ class Encoder:
 
         card, loc, might = -1, -1, -1
         whose = -1.0
+        mode = -1
         k = act.kind
         if k == A.A_PLAY:
-            card = int(state.hand[seat, act.arg])
+            # Nocturne's permission borrows this action while a look is
+            # suspended, and its arg is a LOOK-BUFFER index there, not a hand
+            # index -- the same overload `A_PICK` carries. Reading the hand
+            # would have named some unrelated card, so the policy would have
+            # been choosing "play Nocturne" off a feature describing whatever
+            # happened to sit at that hand slot.
+            card = (int(state.look_cards[act.arg]) if state.pend_look >= 0
+                    else int(state.hand[seat, act.arg]))
         elif k in (A.A_PLAY_AT, A.A_PLAY_AT_FAST):
             loc = act.arg
-            if state.pend_play >= 0:
+            if state.rp_seat >= 0:
+                card = int(state.rp_card)
+            elif state.pend_hand_play >= 0 and int(state.hp_pick) >= 0:
+                card = int(state.hand[int(state.pend_hand_play), int(state.hp_pick)])
+            elif state.pend_play_look >= 0:
+                card = int(state.look_cards[state.pend_play_look])
+            elif state.pend_play >= 0:
                 card = int(state.hand[seat, state.pend_play])
         elif k == A.A_DECLARE:
             loc = act.arg
@@ -417,7 +607,7 @@ class Encoder:
         elif k == A.A_HIDE:
             card = int(state.hand[seat, act.arg])
         elif k == A.A_HIDE_AT:
-            loc = bf_loc(act.arg)
+            loc = bf_loc(fd_bf(act.arg))          # the arg is a SLOT
         elif k == A.A_PLAY_FLOW:
             # The trash is public information (108.5), so naming the card here
             # leaks nothing.
@@ -426,7 +616,7 @@ class Encoder:
             # The card's identity is legitimate here: only its owner is ever
             # offered this action, and they know what they hid.
             card = int(state.fd_card[act.arg])
-            loc = bf_loc(act.arg)
+            loc = bf_loc(fd_bf(act.arg))          # the arg is a SLOT
         elif k == A.A_PICK:
             # The whole decision is WHICH card, so naming it is the only
             # feature that could discriminate between the candidates -- and it
@@ -440,6 +630,9 @@ class Encoder:
             # this encoder's -- see the note there for why that must be one
             # shared answer.
             card = A.pick_card(state, act.arg)
+            if state.pend_amount >= 0 or (state.pend_name >= 0
+                                          and int(state.name_kind) == 0):
+                mode = int(act.arg)             # the amount / tag IS the choice
         elif k == A.A_TARGET:
             # **`arg` means whatever the open slot's KIND says it means**: a
             # permanent row, a location, or a Chain Item uid. This read
@@ -455,12 +648,23 @@ class Encoder:
                 i = chain.index_of_uid(state, int(act.arg))
                 if i >= 0:
                     card = int(state.chain[i, C_CARD])
+            elif kind == TK_MODE:
+                # "Choose one --": the card is the one on the Chain being
+                # announced, and the mode index is what tells candidates apart.
+                item = chain.oldest_pending(state)
+                if item >= 0:
+                    card = int(state.chain[item, C_CARD])
+                mode = int(act.arg)
             elif kind == TK_TRASH_CARD:
                 # A packed (owner, card); the trash is public (108.2), so
                 # naming it leaks nothing. There is no row and no location to
                 # describe -- the choice is "which card, out of whose pile".
                 owner, card = unpack_trash(int(act.arg))
                 whose = 1.0 if owner == seat else 0.0
+            elif is_legend_src(int(act.arg)):
+                # Profiteer's "a legend": no row, so the card is all there is.
+                card = int(state.legend[legend_src_seat(int(act.arg))])
+                whose = 1.0 if legend_src_seat(int(act.arg)) == seat else 0.0
             else:
                 card = int(state.perms[act.arg, P_CARD])
                 loc = int(state.perms[act.arg, P_LOC])
@@ -469,6 +673,33 @@ class Encoder:
             # 383.3.a -- the choice is about one triggered ability, so the
             # candidates differ only by yes/no. What distinguishes the decision
             # is whose ability it is.
+            #
+            # ACCEPT/DECLINE also answers Hard Bargain's "unless its controller
+            # pays" tax, and that decision is about a SPELL on the Chain, not
+            # about a pending ability. Read `pend_may` there and the row would
+            # describe -1, so the two candidates would be identical and the
+            # policy would be choosing whether to save its own spell with no
+            # feature saying which spell, or what refusing costs.
+            #
+            # The threatened spell is named; what refusing COSTS is not. The
+            # amount is `pend_tax_cost`, and it is 2 on the only card in the
+            # pool that taxes, so a column for it would be a constant -- and
+            # the row already carries that spell's own Energy and Power, which
+            # is the half of "is this worth 2 energy" that actually varies. A
+            # second taxing card at a different price is what should add the
+            # column, and it should be a real one rather than an overload of
+            # the card-cost slot below.
+            if state.rp_seat >= 0:
+                card = int(state.rp_card)
+            if state.pend_ask >= 0:
+                card = int(state.pend_ask_card)
+                subj_a = int(state.pend_ask_subj)
+                if subj_a >= 0:
+                    loc = int(state.perms[subj_a, P_LOC])
+            if state.pend_tax >= 0:
+                j = chain.index_of_uid(state, int(state.pend_tax_uid))
+                if j >= 0:
+                    card = int(state.chain[j, C_CARD])
             item = int(state.pend_may)
             if item >= 0:
                 card = int(state.chain[item, C_CARD])
@@ -481,23 +712,26 @@ class Encoder:
             r[nk + 1:nk + 1 + self.card_dim] = self.cards[card]
         o = nk + 1 + self.card_dim
 
+        L = N_LOCATIONS
         if loc >= 0:
             r[o + _loc_slot(loc, seat)] = 1.0
-            r[o + 4] = float(is_battlefield(loc))
+            r[o + L] = float(is_battlefield(loc))
             if is_battlefield(loc):
                 i = bf_index(loc)
                 ctrl = int(state.bf_ctrl[i])
-                r[o + 5 + (2 if ctrl < 0 else 0 if ctrl == seat else 1)] = 1.0
-                r[o + 8] = state.units_at(loc, 1 - seat).size / 4.0
-                r[o + 9] = state.units_at(loc, seat).size / 4.0
-                r[o + 10] = float(state.bf_contested[i])
+                r[o + L + 1 + (2 if ctrl < 0 else 0 if ctrl == seat else 1)] = 1.0
+                r[o + L + 4] = state.units_at(loc, 1 - seat).size / 4.0
+                r[o + L + 5] = state.units_at(loc, seat).size / 4.0
+                r[o + L + 6] = float(state.bf_contested[i])
         if might >= 0:
-            r[o + 11] = might / 5.0
+            r[o + L + 7] = might / 5.0
         if card >= 0:
-            r[o + 12] = float(self.table.energy[card]) / 5.0
-            r[o + 13] = float(self.table.power[card]) / 3.0
+            r[o + L + 8] = float(self.table.energy[card]) / 5.0
+            r[o + L + 9] = float(self.table.power[card]) / 3.0
         if whose >= 0.0:
-            r[o + 14] = whose
+            r[o + L + 10] = whose
+        if 0 <= mode < MAX_MODES:
+            r[o + L + 11 + mode] = 1.0
         return r
 
     def _actions(self, legal: list[A.Action], state: GameState, seat: int):
@@ -519,25 +753,27 @@ class Encoder:
         every facedown card. Kept in its own field so a leak is a type error
         rather than an archaeology problem."""
         foe = 1 - seat
-        out = np.zeros((HAND_SLOTS + N_BF, self.card_dim), np.float32)
+        out = np.zeros((HAND_SLOTS + N_FD, self.card_dim), np.float32)
         n = min(int(state.n_hand[foe]), HAND_SLOTS)
         for j in range(n):
             out[j] = self.cards[int(state.hand[foe, j])]
-        for i in range(N_BF):
-            if state.fd_owner[i] >= 0:
-                out[HAND_SLOTS + i] = self.cards[int(state.fd_card[i])]
+        for k in range(N_FD):
+            if state.fd_owner[k] >= 0:
+                out[HAND_SLOTS + k] = self.cards[int(state.fd_card[k])]
         return out.reshape(-1)
 
     # -- entry point -----------------------------------------------------
 
     def encode(self, state: GameState, seat: int,
                legal: list[A.Action]) -> Obs:
+        builders = {"hand": self._hand, "board": self._board,
+                    "battlefields": self._battlefields,
+                    "facedown": self._facedown, "legends": self._legends,
+                    "chain": self._chain}
+        assert set(builders) == set(ZONES), "a zone has no builder"
         zones, masks = {}, {}
-        for name, fn in (("hand", self._hand), ("board", self._board),
-                         ("battlefields", self._battlefields),
-                         ("facedown", self._facedown),
-                         ("legends", self._legends)):
-            zones[name], masks[name] = fn(state, seat)
+        for name in ZONES:
+            zones[name], masks[name] = builders[name](state, seat)
         acts, amask = self._actions(legal, state, seat)
         return Obs(
             zones=zones,
@@ -554,13 +790,16 @@ class Encoder:
     def shapes(self) -> dict[str, tuple]:
         """Everything a network builder needs to size its layers."""
         return {
+            # The names the network must pool over, in order. See `ZONES`.
+            "zones": ZONES,
             "row_dim": self.row_dim,
             "card_dim": self.card_dim,
             "hand": (HAND_SLOTS, self.row_dim),
             "board": (BOARD_SLOTS, self.row_dim),
             "battlefields": (N_BF, self.row_dim),
-            "facedown": (N_BF, self.row_dim),
+            "facedown": (N_FD, self.row_dim),
             "legends": (N_SEATS, self.row_dim),
+            "chain": (CHAIN_SLOTS, self.row_dim),
             "globals": (GLOBAL_DIM,),
             "actions": (self.a_max, self.act_dim),
             "privileged": (self.priv_dim,),

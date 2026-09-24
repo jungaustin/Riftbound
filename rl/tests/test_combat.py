@@ -658,7 +658,7 @@ ok("461 -- a Cleanup during a live Showdown does not re-initiate the Combat")
 
 from rl.engine import resolve as _rsv
 from rl.engine.effects import ABILITIES as _AB
-from rl.engine.state import P_READY as _P_READY
+from rl.engine.state import P_READY as _P_READY, P_DMG as _P_DMG
 
 ZHONYA = T.id_of("Zhonya's Hourglass")
 VICTIM = next(c for c in range(T.n) if T.is_type(c, "Unit")
@@ -690,16 +690,25 @@ if s.perms[u, P_ALIVE] != 0:
     die("zhonya", "'the NEXT time' is one-shot -- a second death goes through")
 ok("...and it is consumed, so the next death is not replaced")
 
-# Damage is a different story: the death is replaced but the marked damage is
-# not removed, so 143.2.a catches the unit again immediately.
+# **Damage is the case the errata changed.** The PRINTED text is "Recall that
+# unit exhausted" with no heal, and read that way the replacement replaces the
+# death and not its cause: the marked damage survives, 143.2.a is a continuous
+# check, and the unit dies again on the spot. `data/errata.json` supersedes it
+# with "Heal that unit, exhaust it, and recall it", so the damage goes and the
+# unit genuinely survives a lethal hit -- which turns Zhonya's from an answer
+# to targeted removal into an answer to damage as well.
+if "Heal that unit" not in T.raw_text[ZHONYA]:
+    die("zhonya", "this test reads the ERRATA text; if the overlay stopped "
+                  "being applied, `cardtable._raw_cards` is the place to look")
 s, g, u = guarded()
 combat.mark_damage(s, T, u, int(T.might[VICTIM]))
 if s.perms[u, P_ALIVE] != 1:
     die("zhonya", "the replacement should fire on lethal damage too")
+if int(s.perms[u, _P_DMG]) != 0:
+    die("zhonya", "the errata heals the unit, so no damage stays marked")
 combat.enforce_lethal(s, T)
-if s.perms[u, P_ALIVE] != 0:
-    die("zhonya", "without a heal the damage is still lethal (143.2.a), so "
-                  "the unit dies on the next continuous check")
-ok("143.2.a -- no heal, so it answers removal and not damage")
+if s.perms[u, P_ALIVE] != 1:
+    die("zhonya", "healed, the unit must survive 143.2.a's next check")
+ok("...and the errata's heal makes it answer damage, not just removal")
 
 print("\n\033[32mall combat tests passed\033[0m")

@@ -24,6 +24,9 @@ ALL_KEYWORDS = (
     "Ganking", "Add", "Accelerate", "Temporary", "Tank", "Deathknell", "Repeat",
     "Flow", "Assault", "Shield", "Stun", "Ambush", "Weaponmaster", "Legion",
     "Vision", "Mighty", "Buff", "Hunt", "Predict", "Backline", "Unique",
+    # 819 -- appended rather than slotted in alphabetically, because the index
+    # into this tuple IS the `kw_mask` bit and the feature-matrix column.
+    "Quick-Draw",
 )
 
 # The v1 SCOPE TARGET -- keywords v1 intends to reach. This is an aspiration
@@ -73,7 +76,24 @@ ENGINE_KEYWORDS = {
     "Assault":   "combat.combat_role_bonus -- +X Might while an attacker (807)",
     "Action":    "effects.SPEED_ACTION, via a card's DSL spec",
     "Reaction":  "effects.SPEED_REACTION, via a card's DSL spec",
+    "Equip":     "effects._equip_abilities -- 818.1.c.2 is '[Cost]: Attach "
+                 "this gear to a unit you control', synthesised from the "
+                 "keyword like [Hunt]; cardtable.equip_cost reads the cost",
+    "Quick-Draw": "effects._quick_draw_abilities for 819.1.d's 'when you play "
+                  "this, attach it to a unit you control'; the [Reaction] half "
+                  "(819.1.b) is a speed and is read where speeds are",
+    "Unique":    "a DECK-CONSTRUCTION limit (one copy per deck); nothing about "
+                 "it happens in a game, so there is nothing to execute",
+    "Weaponmaster": "effects._weaponmaster_abilities for 821.1.c's optional "
+                    "play trigger; OP_WEAPONMASTER pays the Equip cost less "
+                    "[A] (only when it has one, 821.1.c.3) and attaches",
 }
+
+# **Reading a keyword is not the same as playing the card as printed.** These
+# two are honest entries above -- the engine really does attach for [Equip] and
+# [Quick-Draw] -- and Equipment is still withheld from the coverage metric,
+# because a card's Might Bonus is a printed field of its own (137.3) that
+# `data/cards.json` does not carry. See `decks.EQUIP_NEEDS_DATA`.
 # Keywords that ARE a triggered ability rather than a passive property --
 # 808.1 makes [Deathknell] short for "When I die, [Effect]", and the effect is
 # the card's own text. There is no separate keyword implementation to check: a

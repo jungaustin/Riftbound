@@ -52,6 +52,12 @@ def unit(might, kw=None, exclude=("Tank", "Backline")):
             continue
         if any(T.has(c, k) for k in exclude):
             continue
+        # No rules text: a fixture must not start firing triggers the day its
+        # card is scripted (Apprentice Smith's move trigger once held up the
+        # Cleanup a Charm test depends on).
+        if not kw and (T.residual_text(c) or T.tags[c] & {"Bird", "Cat",
+                                                          "Dog", "Poro"}):
+            continue
         return c
     raise LookupError(f"no unit might={might} kw={kw}")
 
@@ -181,9 +187,9 @@ s = fresh()
 victim = s.add_permanent(PLAIN[3], 1, bf_loc(0))
 s.perms[victim, P_ALIVE] = 0
 log = resolve.resolve(s, T, CFG, BACK_OFF, 0, [victim], -1, from_hand=True)
-if not log.get("countered"):
-    die("resolution", f"every target illegal must counter the card: {log}")
-ok("losing every target counters the whole card (359.3.e.5/e.6)")
+if log.get("stunned") or OP_DRAW not in log["resolved"]:
+    die("resolution", f"359.3.e.1 -- the stun is skipped, the draw is not: {log}")
+ok("losing every target skips only the instructions on it (359.3.e.1/e.7)")
 
 # Played from hiding: the rider is conditional on having played it from hand.
 s = fresh()
@@ -1539,7 +1545,7 @@ e2 = s.add_permanent(BIG, 1, bf_loc(0))
 friend = s.add_permanent(BIG, 0, bf_loc(0))
 far = s.add_permanent(BIG, 1, bf_loc(1))
 got = rsv.legal_targets(s, T, SPECS["Crescent Strike"], 0, 0, [], -1)
-if got != [bf_loc(i) for i in range(N_BF)]:
+if got != [bf_loc(i) for i in s.live_bfs()]:
     die("bf", f"an unqualified battlefield slot should offer every one: {got}")
 if base_loc(0) in got or base_loc(1) in got:
     die("bf", "a battlefield slot must never offer a base")
@@ -1839,6 +1845,12 @@ if s.perms[u, P_ALIVE] != 1:
                  "this was the opponent's")
 phases.end_turn(s, V1)
 phases.start_turn(s, T, V1)
+# 816 makes the expiry a TRIGGERED ability, so it goes on the Chain and both
+# players get a window before it resolves -- the unit is still standing here.
+if s.perms[u, P_ALIVE] != 1:
+    die("grant", "[Temporary] must not kill before its trigger resolves")
+A._settle(s, T, V1)             # place it on the Chain...
+settle(s)                       # ...and pass it out
 if s.perms[u, P_ALIVE] == 1:
     die("grant", "...but it must die at the start of its own controller's turn")
 ok("a granted [Temporary] survives the opponent's turn and dies on its own")
