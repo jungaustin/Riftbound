@@ -12,7 +12,9 @@
     {"name": "Scrapheap", "type": "Gear"},
     {"name": "Called Shot", "type": "Spell"},
     {"name": "Fight or Flight", "type": "Spell"},
+    {"name": "Stacked Deck", "type": "Spell", "effective": "unknown (reported 2026-09-14)"},
     {"name": "Draven - Vanquisher", "type": "Unit"},
+    {"name": "Ekko - Recurrent", "type": "Unit", "effective": "unknown (reported 2026-09-14)"},
     {"name": "Stealthy Pursuer", "type": "Unit"}
   ],
   "constructed_2v2_only": [

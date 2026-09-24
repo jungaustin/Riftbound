@@ -12,13 +12,17 @@ from functools import lru_cache
 from pathlib import Path
 
 from .decklist import Deck
+from .model import champion_tags
 
 BANLIST_PATH = Path(__file__).resolve().parent.parent / "data" / "banlist.json"
 
 
 @lru_cache(maxsize=1)
-def _banlist() -> tuple[frozenset[str], str]:
-    """Banned card names for Constructed, plus the effective date.
+def _banlist() -> dict[str, str]:
+    """Banned card name -> effective date, for Constructed.
+
+    Bans arrive in waves, so an entry may carry its own "effective"; the
+    file-level date is the fallback for the wave that has none.
 
     2v2-only bans are deliberately excluded: they are printing-specific and
     apply to a Mode of Play this tool does not model.
@@ -26,9 +30,10 @@ def _banlist() -> tuple[frozenset[str], str]:
     try:
         data = json.loads(BANLIST_PATH.read_text())
     except (OSError, ValueError):
-        return frozenset(), "unknown"
-    names = frozenset(e["name"] for e in data.get("constructed", []))
-    return names, data.get("effective", "unknown")
+        return {}
+    default = data.get("effective", "unknown")
+    return {e["name"]: e.get("effective", default)
+            for e in data.get("constructed", [])}
 
 MIN_MAIN_DECK = 40
 RUNE_DECK_SIZE = 12
@@ -88,7 +93,9 @@ def validate(deck: Deck, battlefields: int = DEFAULT_BATTLEFIELDS) -> Report:
         return Report(issues)
 
     identity = deck.identity
-    legend_tags = set(deck.legend.tags)
+    # 133.8.b: a faction tag (Yordle) is not a Champion Tag and cannot
+    # satisfy 103.2.a.2 or 103.2.d.2, even when a Legend prints it.
+    legend_tags = champion_tags(deck.legend.tags)
 
     # 103.2 - main deck size. 40 is both the legal minimum and the default
     # target: a smaller deck draws its best cards more often, so going over
@@ -119,12 +126,12 @@ def validate(deck: Deck, battlefields: int = DEFAULT_BATTLEFIELDS) -> Report:
                 f"Chosen Champion {ch.name} is a {ch.type}"
                 f"{'/' + ch.supertype if ch.supertype else ''}, not a champion unit.",
             )
-        elif not (legend_tags & set(ch.tags)):
+        elif not (legend_tags & champion_tags(ch.tags)):
             err(
                 "103.2.a.2",
                 f"Chosen Champion {ch.name} (tags: {', '.join(ch.tags) or 'none'}) "
-                f"shares no tag with Legend {deck.legend.name} "
-                f"(tags: {', '.join(deck.legend.tags) or 'none'}).",
+                f"shares no champion tag with Legend {deck.legend.name} "
+                f"(champion tags: {', '.join(sorted(legend_tags)) or 'none'}).",
             )
         if ch.name not in deck.main:
             err("103.2", f"Chosen Champion {ch.name} is not counted in the main deck.")
@@ -162,7 +169,7 @@ def validate(deck: Deck, battlefields: int = DEFAULT_BATTLEFIELDS) -> Report:
         )
     for name in sigs:
         c = deck.card(name)
-        if not (legend_tags & set(c.tags)):
+        if not (legend_tags & champion_tags(c.tags)):
             err(
                 "103.2.d.2",
                 f"Signature card {c.name} does not carry the Legend's champion tag.",
@@ -225,7 +232,7 @@ def validate(deck: Deck, battlefields: int = DEFAULT_BATTLEFIELDS) -> Report:
     # Banned cards. Not a core rule - it is organized-play policy, and it moves,
     # so it lives in data/banlist.json rather than in code. Every zone counts:
     # battlefields and sideboard cards are the ones that survive a copied list.
-    banned, effective = _banlist()
+    banned = _banlist()
     if banned:
         zones = (
             ("main deck", deck.main),
@@ -240,14 +247,14 @@ def validate(deck: Deck, battlefields: int = DEFAULT_BATTLEFIELDS) -> Report:
                     seen.add(name)
                     err(
                         "banlist",
-                        f"{name} is BANNED in Constructed (effective {effective}) "
+                        f"{name} is BANNED in Constructed (effective {banned[name]}) "
                         f"and is in the {zone}.",
                     )
         if deck.legend is not None and deck.legend.name in banned:
             err(
                 "banlist",
                 f"Legend {deck.legend.name} is BANNED in Constructed "
-                f"(effective {effective}).",
+                f"(effective {banned[deck.legend.name]}).",
             )
 
     return Report(issues)

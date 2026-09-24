@@ -77,6 +77,13 @@ class Card:
     text: str
     timing: str
     tags: tuple[str, ...] = ()
+    # 178.1 -- the FULL printed type line. `type` is only the first word of it,
+    # and Patched Porobot ("Unit Gear") is both types for every rule that asks.
+    types: tuple[str, ...] = ()
+
+    @property
+    def all_types(self) -> tuple[str, ...]:
+        return self.types or (self.type,)
 
     @property
     def is_unit(self) -> bool:
@@ -123,6 +130,7 @@ def _to_card(raw: dict) -> Card:
         text=normalize_text(text),
         timing=_timing_of(text),
         tags=tuple(raw.get("tags") or ()),
+        types=tuple(raw.get("types") or ()),
     )
 
 

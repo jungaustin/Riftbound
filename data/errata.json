@@ -1,0 +1,447 @@
+{
+  "_comment": "Official Riot card errata, transcribed from the Riftbound.gg errata page (the tournament-legal wording). data/cards.json is regenerated wholesale by `cli.py sync` from the upstream API, so corrections MUST live here or they are silently overwritten on the next refresh. Applied by CardDB.load() on every load.",
+  "_source": "https://riftbound.gg errata page, captured 2026-09-10. Re-capture whenever a set patch lands; entries that upstream has since fixed are harmless (they re-assert identical text).",
+  "_convention": "Text is written in cards.json house style, NOT the website's rb_* tokens: {N energy}, {Domain rune}, {any rune}, Might, Exhaust, [Keyword], [Empowered][>]. Separate ability lines are concatenated with no separator (cf. Falling Star); sentences within one line keep a single space.",
+  "_keys": "Keyed by the name on the errata page. Matching is by riftbound.model.loose_key, so the comma/hyphen split (Gangplank, Naval vs Gangplank - Naval) resolves. _printed_name records our DB's spelling where it differs. Keys starting with _ are commentary and are never written onto the card.",
+  "cards": {
+    "Annie - Dark Child": {
+      "text": "At the end of your turn, ready up to 2 runes.",
+      "_why": "'up to' — the ready is now optional, so it can't be forced to ready runes you want left exhausted."
+    },
+    "Arise!": {
+      "text": "Play a 2 Might Sand Soldier unit token for each Equipment you control. Then do this: Ready up to two of them.",
+      "_why": "'Then do this:' plus 'up to two' — the ready is a dependent follow-up and is now optional."
+    },
+    "Astral Heron": {
+      "text": "When you play your first card each turn, if I'm at a battlefield, the next card you play this turn costs {2 energy}{any rune}{any rune} less.",
+      "_why": "The discount is now explicitly bounded to THIS turn."
+    },
+    "Ava Achiever": {
+      "text": "When I attack, you may pay {Mind rune} to play a card with [Hidden] from your hand, ignoring its cost. If it's a unit, play it here.",
+      "_why": "The 'here' now applies only when the played card is a unit, so non-unit Hidden cards are no longer location-locked."
+    },
+    "Baited Hook": {
+      "text": "{1 energy}{Order rune}, Exhaust: Kill a friendly unit. Look at the top 5 cards of your Main Deck. You may banish a unit from among them that has Might up to 1 more than the killed unit and play it, ignoring its cost. Then recycle the rest."
+    },
+    "Blind Fury": {
+      "text": "[Action] (Play on your turn or in showdowns.)Each opponent reveals the top card of their Main Deck. Choose one and banish it, then play it, ignoring its cost. Then recycle the rest."
+    },
+    "Blood Rush": {
+      "text": "[Action] (Play on your turn or in showdowns.)[Repeat] {1 energy} (You may pay the additional cost to repeat this spell's effect.)Give a unit [Assault 2] this turn. (+2 Might while it's an attacker.)",
+      "_why": "Adds the explicit 'this turn' duration."
+    },
+    "Bone Skewer": {
+      "text": "[Hidden] (Hide now for {any rune} to react with later for {0 energy}.)Choose a battlefield. An opponent reveals their hand. You may choose a unit from it. They play that unit to that battlefield, ignoring any and all costs. If they do, then do this: Stun it. (It doesn't deal combat damage this turn.)",
+      "_why": "'If they do, then do this:' — the stun is conditional on the unit actually being played."
+    },
+    "Clockwork Keeper": {
+      "text": "You may pay {Calm rune} as an additional cost to play me.When you play me, if you paid the additional cost, draw 1.",
+      "_why": "Restructured into a printed additional cost plus a separate WHEN-YOU-PLAY trigger, rather than one 'as you play me' clause."
+    },
+    "Convergent Mutation": {
+      "text": "[Reaction] (Play any time, even before spells and abilities resolve.)Choose a friendly unit. This turn, increase its Might to the Might of another friendly unit."
+    },
+    "Dazzling Aurora": {
+      "text": "At the end of your turn, reveal cards from the top of your Main Deck until you reveal a unit and banish it. Play it, ignoring its cost, and recycle the rest.",
+      "_why": "The unit is BANISHED first and played from banishment — it is never in the deck when played."
+    },
+    "Death from Below": {
+      "text": "Kill a unit at a battlefield. Then, if it had 3 Might or less, do this: You may play this from your trash for {any rune}.",
+      "_why": "'do this:' — the trash replay is a dependent follow-up of the kill."
+    },
+    "Deathgrip": {
+      "text": "[Reaction] (Play any time, even before spells and abilities resolve.)Kill a friendly unit. If you do, give +Might equal to its Might to another friendly unit this turn.Draw 1.",
+      "_why": "Split into three: the kill, a conditional buff, and an UNCONDITIONAL Draw 1 on its own line. It now cantrips even with no legal kill."
+    },
+    "Diana - Lunari": {
+      "text": "When a showdown begins here, you may pay {1 energy} to [Predict], then reveal the top card of your Main Deck. If it's a spell, draw it. (To Predict, look at the top card of your Main Deck. You may recycle it.)",
+      "_why": "'pay to Predict' folds the payment into the effect instead of a separate If-you-do."
+    },
+    "Disintegrate": {
+      "text": "[Action] (Play on your turn or in showdowns.)Deal 3 to a unit at a battlefield. If this kills it, do this: draw 1."
+    },
+    "Dragon's Rage": {
+      "text": "Move an enemy unit. Then do this: Choose another enemy unit at its destination. They deal damage equal to their Mights to each other.",
+      "_why": "'Then do this:' — the fight is dependent on the move actually happening."
+    },
+    "Draven - Vanquisher": {
+      "text": "When I win a combat, play a Gold gear token exhausted.When I attack or defend, you may pay {Fury rune} to give me +2 Might this turn."
+    },
+    "Dune Drake": {
+      "text": "When I attack, give me +2 Might this turn if there is a ready enemy unit here."
+    },
+    "Edge of Night": {
+      "text": "[Hidden] (Hide now for {any rune} to react with later for {0 energy}.)When you play this from face down, attach it to a unit you control (here).[Equip] {Chaos rune} ({Chaos rune}: Attach this to a unit you control.)",
+      "_why": "'(here)' is parenthesised — the location restriction rides the facedown play, not the Equip ability."
+    },
+    "Emperor's Dais": {
+      "text": "When you conquer here, you may pay {1 energy} and return a unit you control here to its owner's hand to play a 2 Might Sand Soldier unit token here."
+    },
+    "Falling Star": {
+      "text": "Deal 3 to a unit.Deal 3 to a unit."
+    },
+    "Fizz - Trickster": {
+      "text": "When you play me, you may play a spell from your trash with Energy cost no more than {3 energy}, ignoring its Energy cost. Then recycle it. (You must still pay its Power cost.)",
+      "_why": "Wording only; the recycle still follows the replay."
+    },
+    "Gangplank - Naval": {
+      "text": "[Empower] {Body rune}{Body rune} ({Body rune}{Body rune}: Empower me. Use only if not Empowered.)[Empowered][>] If a spell or ability that chooses me would stun me, give me -Might, or return me to hand, give me +3 Might this turn instead.",
+      "_why": "Adds the 'this turn' duration to the replacement buff.",
+      "_printed_name": "Gangplank, Naval"
+    },
+    "Guards!": {
+      "text": "[Hidden] (Hide now for {any rune} to react with later for {0 energy}.)Play a 2 Might Sand Soldier unit token. Then do this: You may pay {Order rune} to ready it."
+    },
+    "Highlander": {
+      "text": "[Reaction] (Play any time, even before spells and abilities resolve.)Choose a friendly unit. The next time it would die this turn, heal it, exhaust it, and recall it instead. (Send it to base. This isn't a move.)",
+      "_why": "Now a WOULD-DIE replacement that also HEALS. The heal is new and is what makes it save a damaged unit permanently."
+    },
+    "Icathian Rain": {
+      "text": "Deal 2 to a unit.Deal 2 to a unit.Deal 2 to a unit.Deal 2 to a unit.Deal 2 to a unit.Deal 2 to a unit."
+    },
+    "Janna - Savior": {
+      "text": "[Reaction] (Play any time, even before spells and abilities resolve, including to a battlefield you control.)When you play me, heal your units here, then move up to one enemy unit from here to its base.",
+      "_why": "'up to one' — 355.8 no longer blocks playing her when there is no enemy unit here."
+    },
+    "Jax - Unmatched": {
+      "text": "[Deflect] (Opponents must pay {any rune} to choose me with a spell or ability.)Your Equipment everywhere have [Quick-Draw]. (Each gains [Reaction]. When you play it, attach it to a unit you control.)",
+      "_why": "MAJOR: 'everywhere', not 'in your hand'. Equipment in trash/banishment/play carry Quick-Draw too."
+    },
+    "Karma - Channeler": {
+      "text": "[Vision] (When you play me, look at the top card of your Main Deck. You may recycle it.)When you recycle one or more cards to your Main Deck, buff a friendly unit. (If it doesn't have a buff, it gets a +1 Might buff. Runes aren't cards.)",
+      "_why": "Scoped to recycling TO YOUR MAIN DECK — recycling runes or opponents' cards no longer triggers it."
+    },
+    "Kato the Arm": {
+      "text": "[Deflect] (Opponents must pay {any rune} to choose me with a spell or ability.)When I move to a battlefield, give another friendly unit my keywords and +Might equal to my Might this turn.",
+      "_why": "'another' — he can no longer double his own Might by choosing himself."
+    },
+    "Keeper of Masks": {
+      "text": "[Hidden] (Hide now for {any rune} to react with later for {0 energy}.)[Temporary] (Kill me at the start of my controller's Beginning Phase, before scoring.)When you play me, play two Reflection unit tokens here. Then do this: They become copies of me."
+    },
+    "Kinkou Monk": {
+      "text": "When you play me, buff up to two other friendly units. (Each one that doesn't have a buff gets a +1 Might buff.)"
+    },
+    "LeBlanc - Deceiver": {
+      "text": "When you conquer or hold, you may discard 1 and exhaust me to play a ready Reflection unit token there. Then do this: It becomes a copy of another unit there. Give it [Temporary]."
+    },
+    "Mirror Image": {
+      "text": "Choose a unit. Play a ready Reflection unit token to your base. Then do this: It becomes a copy of that unit. Give it [Temporary]. (Kill it at the start of its controller's Beginning Phase, before scoring.)"
+    },
+    "Nocturne - Horrifying": {
+      "text": "[Ganking] (I can move from battlefield to battlefield.)As you look at or reveal me from the top of your deck, you may banish me. If you do, you may play me for {any rune}.",
+      "_why": "Rewritten as a banish-then-play: he is played from BANISHMENT, and the window is 'as you look at or reveal', not a standing permission."
+    },
+    "Pack of Wonders": {
+      "text": "Exhaust: Return another friendly gear, unit, or facedown card to its owner's hand.",
+      "_why": "Says FACEDOWN CARD, not '[Hidden] card' — it bounces anything hidden at a battlefield regardless of the keyword. Confirms the card-text-mentions-keywords trap."
+    },
+    "Portal Rescue": {
+      "text": "[Action] (Play on your turn or in showdowns.)Banish a friendly unit, then its owner plays it to their base, ignoring its cost.",
+      "_why": "'its owner ... their base' — targeting an opponent's unit you control returns it to THEIR base, not yours."
+    },
+    "Promising Future": {
+      "text": "Each player looks at the top 5 cards of their Main Deck, banishes one of them, then recycles the rest. Starting with the next player, each player plays those cards, ignoring Energy costs. (They must still pay Power costs.)",
+      "_why": "'banishes' rather than 'chooses' — the card is in banishment when played."
+    },
+    "Ravenborn Tome": {
+      "text": "Exhaust: The next spell you play this turn deals 1 Bonus Damage. (Each instance of damage the spell deals is increased by 1.)"
+    },
+    "Reinforce": {
+      "text": "Look at the top 5 cards of your Main Deck. You may banish a unit from among them, then play it, reducing its cost by {5 energy}. Recycle the remaining cards."
+    },
+    "Rek'Sai - Swarm Queen": {
+      "text": "When I attack, you may reveal the top 2 cards of your Main Deck. You may banish one, then play it. If it is a unit, you may play it here. Recycle the rest.",
+      "_why": "'banish one, then play it' — played from banishment."
+    },
+    "Rek'Sai - Void Burrower": {
+      "text": "When you conquer, you may exhaust me to reveal the top 2 cards of your Main Deck. You may banish one, then play it. Recycle the rest.",
+      "_why": "'banish one, then play it' — played from banishment.",
+      "_printed_name": "Rek'sai - Void Burrower"
+    },
+    "Relentless Pursuit": {
+      "text": "[Action] (Play on your turn or in showdowns.)Move a friendly unit. You may attach up to one Equipment with the same controller to it. This turn, that unit has \"When I conquer, you may move me to my base.\"",
+      "_why": "'up to one' — castable with no Equipment in play."
+    },
+    "Rell - Magnetic": {
+      "text": "[Tank] (I must be assigned combat damage first.)When I attack, you may play an Equipment with Energy cost no more than {2 energy}, ignoring its cost. If you do, then do this: Attach it to me."
+    },
+    "Rengar - Trophy Hunter": {
+      "text": "[Ambush] (You may play me as a [Reaction] to a battlefield where you have units.)I can Ambush to a battlefield where there are enemy units, even if you don't have units there.",
+      "_why": "Spells out that the exception is an AMBUSH (so Reaction speed), and that it works with no friendly units present.",
+      "_printed_name": "Rengar, Trophy Hunter"
+    },
+    "Resonating Strike": {
+      "text": "[Hidden] (Hide now for {any rune} to react with later for {0 energy}.)[Reaction] (Play any time, even before spells and abilities resolve.)Choose a battlefield you control and a unit you control at a different location. Move that unit to that battlefield and give it +2 Might this turn.",
+      "_why": "Fixes a DATA BUG: cards.json carried the [Action] reminder text ('Play on your turn or in showdowns') under a [Reaction] keyword. It is a true Reaction."
+    },
+    "Salvage": {
+      "text": "[Action] (Play on your turn or in showdowns.)You may kill up to one gear. Draw 1.",
+      "_why": "'up to one' — always a cantrip even with no gear on board."
+    },
+    "Sett - The Boss": {
+      "text": "If a buffed unit you control would die, you may pay {any rune}, exhaust me, and spend its buff to heal it, exhaust it, and recall it instead. (Send it to base. This isn't a move.)When you conquer, ready me.",
+      "_why": "Adds the HEAL to the recall replacement."
+    },
+    "Sigil of the Storm": {
+      "text": "When you conquer here, you must recycle one of your runes. (This doesn't choose anything.)",
+      "_why": "'must' plus the explicit note that it doesn't choose — so it dodges Deflect-style 'choose' taxes and can't be declined."
+    },
+    "Sona - Harmonious": {
+      "text": "At the end of your turn, if I'm at a battlefield, ready up to 4 friendly runes.",
+      "_printed_name": "Sona, Harmonious"
+    },
+    "Stalking Wolf": {
+      "text": "[Ambush] (You may play me as a [Reaction] to a battlefield where you have units.)As an additional cost to play me, kill a Bird, Cat, Dog, or Poro you control. You may Ambush me to its battlefield, even if you don't have other units there.",
+      "_why": "'Ambush me' — the exception is explicitly the Ambush permission, so it keeps Reaction speed."
+    },
+    "Targon's Peak": {
+      "text": "When you conquer here, ready up to 2 runes at the end of this turn.",
+      "_why": "'up to' — optional."
+    },
+    "Teemo - Strategist": {
+      "text": "[Hidden] (Hide now for {any rune} to react with later for {0 energy}.)When I defend, choose an enemy unit here and reveal the top 5 cards of your Main Deck. Deal 1 to that unit for each card with [Hidden] revealed this way, then recycle the revealed cards.",
+      "_why": "MAJOR NERF: the 'or I'm played from [Hidden]' trigger is GONE. He only fires WHEN HE DEFENDS. Also the target is chosen up front, before the reveal."
+    },
+    "The Dreaming Tree": {
+      "text": "When a player chooses a friendly unit here with a spell for the first time each turn, they draw 1."
+    },
+    "The Syren": {
+      "text": "{1 energy}, Exhaust: Move a friendly unit at a battlefield to its base.",
+      "_why": "'its base' — moving a unit you control but don't own sends it to the OWNER's base."
+    },
+    "Tianna Crownguard": {
+      "text": "[Deflect] (Opponents must pay {any rune} to choose me with a spell or ability.)While I'm at a battlefield, opponents can't gain points.",
+      "_why": "'gain points', not 'score points' — this now blocks EVERY point source, not just Scoring."
+    },
+    "Tideturner": {
+      "text": "[Hidden] (Hide now for {any rune} to react with later for {0 energy}.)When you play me, you may choose a unit you control at another location. Move me to its location and it to my original location.",
+      "_why": "'at another location' rather than 'a friendly unit'. Load-bearing for 811.1.d.2: the rules quote this card at 383.3.a and 811.1.d.2 as the worked example where the target may be chosen FREELY, precisely because the ability's own restriction makes the battlefield-only restriction impossible to satisfy."
+    },
+    "Unlicensed Armory": {
+      "text": "Discard 1, Exhaust: Choose a friendly unit. The next time it would die this turn, you may pay {Fury rune} to heal it, exhaust it, and recall it instead. (Send it to base. This isn't a move.)",
+      "_why": "Adds the HEAL to the recall replacement."
+    },
+    "Void Gate": {
+      "text": "Spells and abilities deal 1 Bonus Damage to units here. (Each instance of damage the spell deals to a unit here is increased by 1.)",
+      "_why": "Scoped to damage dealt TO UNITS HERE, rather than any spell that 'affects' a unit here."
+    },
+    "Void Rush": {
+      "text": "Reveal the top 2 cards of your Main Deck. You may banish one, then play it, reducing its cost by {2 energy}. Draw any you didn't banish.",
+      "_why": "'banish one, then play it' — played from banishment; and you DRAW the other rather than recycling it."
+    },
+    "Yasuo - Unforgiven": {
+      "text": "{2 energy}, Exhaust: Move a friendly unit to or from its base."
+    },
+    "Yone - Blademaster": {
+      "text": "[Weaponmaster] (When you play me, you may [Equip] one of your Equipment to me for {any rune} less, even if it's already attached.)When I conquer a battlefield that was uncontrolled, deal damage equal to my Might to an enemy unit in a base.",
+      "_why": "'that was uncontrolled' replaces the non-term 'open battlefield'."
+    },
+    "Zhonya's Hourglass": {
+      "text": "[Hidden] (Hide now for {any rune} to react with later for {0 energy}.)If a friendly unit would die, kill this instead. Heal that unit, exhaust it, and recall it. (Send it to base. This isn't a move.)",
+      "_why": "A standing WOULD-DIE replacement (not 'the next time'), and it now HEALS the saved unit."
+    }
+  },
+  "_gaps_comment": "The 'gaps' section is NOT errata. These are fields the upstream API (api.riftcodex.com) never carried, so the printed card and cards.json disagree by omission rather than by revision. THE SYSTEMIC GAP IS EQUIPMENT: not one of the 40 Equipment cards carried its 'Attached:' band -- the Might bonus and the ability granted while attached. Confirmed by inspecting the raw API payload (the field simply does not exist) and by scanning the pool for the string 'Attached:', which returned zero. All 40 were transcribed on 2026-09-10 from the official card images at cmsassets.rgpub.io, which are the only source that shows the band. Each entry appends the block to the synced text, so the Equip-cost encoding stays upstream's and only the missing half is added. _might_bonus and _attached_ability record the structured breakdown; they are commentary, because Card.from_dict is cls(**d) and raises on unknown fields. Re-transcribe from images when a new Equipment set lands.",
+  "gaps": {
+    "Serrated Dirk": {
+      "text": "[Equip] {Fury rune} ({Fury rune}: Attach this to a unit you control.)Attached: +0 Might. [Assault 2] (+2 Might while I'm an attacker.)",
+      "_might_bonus": 0,
+      "_attached_ability": "[Assault 2] (+2 Might while I'm an attacker.)"
+    },
+    "Recurve Bow": {
+      "text": "[Equip] {Fury rune} ({Fury rune}: Attach this to a unit you control.)Attached: +0 Might. When I attack or defend, deal 2 to an enemy unit here.",
+      "_might_bonus": 0,
+      "_attached_ability": "When I attack or defend, deal 2 to an enemy unit here."
+    },
+    "Long Sword": {
+      "text": "[Quick-Draw] (This has [Reaction]. When you play it, attach it to a unit you control.)[Equip] {Fury rune} ({Fury rune}: Attach this to a unit you control.)Attached: +2 Might.",
+      "_might_bonus": 2,
+      "_attached_ability": null
+    },
+    "Skyfall of Areion": {
+      "text": "[Equip] {1 energy}{Fury rune} ({1 energy}{Fury rune}: Attach this to a unit you control.)Attached: +2 Might. My hold effects are also conquer effects, and vice versa.",
+      "_might_bonus": 2,
+      "_attached_ability": "My hold effects are also conquer effects, and vice versa."
+    },
+    "Doran's Shield": {
+      "text": "[Equip] {Calm rune} ({Calm rune}: Attach this to a unit you control.)Attached: +1 Might. [Tank] (I must be assigned combat damage first.)",
+      "_might_bonus": 1,
+      "_attached_ability": "[Tank] (I must be assigned combat damage first.)"
+    },
+    "Brutalizer": {
+      "text": "[Equip] {Calm rune} ({Calm rune}: Attach this to a unit you control.)Attached: +1 Might. If this was attached to me this turn, I have an additional +2 Might.",
+      "_might_bonus": 1,
+      "_attached_ability": "If this was attached to me this turn, I have an additional +2 Might."
+    },
+    "Guardian Angel": {
+      "text": "[Equip] {Calm rune} ({Calm rune}: Attach this to a unit you control.)Attached: +1 Might. If I would die, kill Guardian Angel instead. Heal me, exhaust me, and recall me.",
+      "_might_bonus": 1,
+      "_attached_ability": "If I would die, kill Guardian Angel instead. Heal me, exhaust me, and recall me."
+    },
+    "Sterak's Gage": {
+      "text": "[Quick-Draw] (This has [Reaction]. When you play it, attach it to a unit you control.)[Equip] {Calm rune} ({Calm rune}: Attach this to a unit you control.)Attached: +3 Might.",
+      "_might_bonus": 3,
+      "_attached_ability": null
+    },
+    "Svellsongur": {
+      "text": "[Equip] {1 energy}{Calm rune} ({1 energy}{Calm rune}: Attach this to a unit you control.)As this is attached to a unit, copy that unit's text to this Equipment's effect text for as long as this is attached to it.Attached: +0 Might.",
+      "_might_bonus": 0,
+      "_attached_ability": null
+    },
+    "Cloth Armor": {
+      "text": "[Quick-Draw] (This has [Reaction]. When you play it, attach it to a unit you control.)[Equip] {Mind rune} ({Mind rune}: Attach this to a unit you control.)Attached: +0 Might. [Shield 2] (+2 Might while I'm a defender.)",
+      "_might_bonus": 0,
+      "_attached_ability": "[Shield 2] (+2 Might while I'm a defender.)"
+    },
+    "Experimental Hexplate": {
+      "text": "[Equip] {Mind rune} ({Mind rune}: Attach this to a unit you control.)Attached: +1 Might. I am a Mech.",
+      "_might_bonus": 1,
+      "_attached_ability": "I am a Mech."
+    },
+    "World Atlas": {
+      "text": "[Equip] {Mind rune} ({Mind rune}: Attach this to a unit you control.)Attached: +2 Might. When I hold, play two Gold gear tokens exhausted.",
+      "_might_bonus": 2,
+      "_attached_ability": "When I hold, play two Gold gear tokens exhausted."
+    },
+    "The Zero Drive": {
+      "text": "[Equip] {1 energy}{Mind rune} ({1 energy}{Mind rune}: Attach this to a unit you control.){3 energy}{Mind rune}, Banish this: Play all units banished with this, ignoring their costs. (Use only if unattached.)Attached: +2 Might. [Deathknell] — Banish me. (When I die, get the effect.)",
+      "_might_bonus": 2,
+      "_attached_ability": "[Deathknell] — Banish me. (When I die, get the effect.)"
+    },
+    "Doran's Blade": {
+      "text": "[Equip] {Body rune} ({Body rune}: Attach this to a unit you control.)Attached: +2 Might.",
+      "_might_bonus": 2,
+      "_attached_ability": null
+    },
+    "Hexdrinker": {
+      "text": "[Equip] {Body rune} ({Body rune}: Attach this to a unit you control.)Attached: +1 Might. [Deflect] (Opponents must pay {any rune} to choose me with a spell or ability.)",
+      "_might_bonus": 1,
+      "_attached_ability": "[Deflect] (Opponents must pay {any rune} to choose me with a spell or ability.)"
+    },
+    "Warmog's Armor": {
+      "text": "[Equip] {Body rune} ({Body rune}: Attach this to a unit you control.)Attached: +1 Might. When I conquer, buff me. (If I don't have a buff, I get a +1 Might buff.)",
+      "_might_bonus": 1,
+      "_attached_ability": "When I conquer, buff me. (If I don't have a buff, I get a +1 Might buff.)"
+    },
+    "Trinity Force": {
+      "text": "[Equip] {Body rune} ({Body rune}: Attach this to a unit you control.)Attached: +2 Might. When I hold, score 1 point.",
+      "_might_bonus": 2,
+      "_attached_ability": "When I hold, score 1 point."
+    },
+    "Boneshiver": {
+      "text": "[Equip] {1 energy}{Body rune} ({1 energy}{Body rune}: Attach this to a unit you control.)Attached: +2 Might. When I conquer, channel 1 rune exhausted.",
+      "_might_bonus": 2,
+      "_attached_ability": "When I conquer, channel 1 rune exhausted."
+    },
+    "Doran's Ring": {
+      "text": "[Equip] {Chaos rune} ({Chaos rune}: Attach this to a unit you control.)Attached: +1 Might. When I conquer, discard 1, then draw 1.",
+      "_might_bonus": 1,
+      "_attached_ability": "When I conquer, discard 1, then draw 1."
+    },
+    "Boots of Swiftness": {
+      "text": "[Equip] {Chaos rune} ({Chaos rune}: Attach this to a unit you control.)Attached: +2 Might. [Ganking] (I can move from battlefield to battlefield.)",
+      "_might_bonus": 2,
+      "_attached_ability": "[Ganking] (I can move from battlefield to battlefield.)"
+    },
+    "Cull": {
+      "text": "[Equip] {Chaos rune} ({Chaos rune}: Attach this to a unit you control.)Attached: +1 Might. When I conquer, play a Gold gear token exhausted.",
+      "_might_bonus": 1,
+      "_attached_ability": "When I conquer, play a Gold gear token exhausted."
+    },
+    "Edge of Night": {
+      "text": "[Hidden] (Hide now for {any rune} to react with later for {0 energy}.)When you play this from face down, attach it to a unit you control here.[Equip] {Chaos rune} ({Chaos rune}: Attach this to a unit you control.)Attached: +2 Might.",
+      "_might_bonus": 2,
+      "_attached_ability": null
+    },
+    "Last Rites": {
+      "text": "[Equip] — {Chaos rune}, Recycle 2 cards from your trash (Pay the cost: Attach this to a unit you control.)Attached: +2 Might. When I conquer or hold, you may play a unit from your trash. (You still pay its costs.)",
+      "_might_bonus": 2,
+      "_attached_ability": "When I conquer or hold, you may play a unit from your trash. (You still pay its costs.)"
+    },
+    "Eye of the Herald": {
+      "text": "[Equip] {Order rune} ({Order rune}: Attach this to a unit you control.)Attached: +0 Might. When I move, play a 1 Might Recruit unit token here.",
+      "_might_bonus": 0,
+      "_attached_ability": "When I move, play a 1 Might Recruit unit token here."
+    },
+    "B.F. Sword": {
+      "text": "[Equip] {Order rune} ({Order rune}: Attach this to a unit you control.)Attached: +3 Might.",
+      "_might_bonus": 3,
+      "_attached_ability": null
+    },
+    "Sacred Shears": {
+      "text": "[Equip] {Order rune} ({Order rune}: Attach this to a unit you control.)Attached: +1 Might. [Deathknell] — Draw 1. (When I die, get the effect.)",
+      "_might_bonus": 1,
+      "_attached_ability": "[Deathknell] — Draw 1. (When I die, get the effect.)"
+    },
+    "Blade of the Ruined King": {
+      "text": "[Equip] — {Order rune}, Kill a friendly unit (Pay the cost: Attach this to a unit you control.)Attached: +4 Might.",
+      "_might_bonus": 4,
+      "_attached_ability": null
+    },
+    "Spinning Axe": {
+      "text": "[Quick-Draw] (This has [Reaction]. When you play it, attach it to a unit you control.)[Equip] {any rune} ({any rune}: Attach this to a unit you control.)[Temporary] (If this is unattached, kill it at the start of its controller's Beginning Phase, before scoring.)Attached: +3 Might.",
+      "_might_bonus": 3,
+      "_attached_ability": null
+    },
+    "Forgefire Cape": {
+      "text": "[Unique] (Your deck can have only 1 card with this name.)[Equip] {any rune} ({any rune}: Attach this to a unit you control.)Attached: +3 Might. When I attack or defend, deal 2 to all enemy units here.",
+      "_might_bonus": 3,
+      "_attached_ability": "When I attack or defend, deal 2 to all enemy units here."
+    },
+    "Rabadon's Deathcrown": {
+      "text": "[Unique] (Your deck can have only 1 card with this name.)[Equip] {any rune} ({any rune}: Attach this to a unit you control.)Attached: +3 Might. Your spells and abilities deal 3 Bonus Damage (while this is attached).",
+      "_might_bonus": 3,
+      "_attached_ability": "Your spells and abilities deal 3 Bonus Damage (while this is attached)."
+    },
+    "Shurelya's Requiem": {
+      "text": "[Unique] (Your deck can have only 1 card with this name.)[Equip] {any rune} ({any rune}: Attach this to a unit you control.)When you play this, ready your units.Attached: +2 Might. Your units here have [Ganking] (We can move from battlefield to battlefield.)",
+      "_might_bonus": 2,
+      "_attached_ability": "Your units here have [Ganking] (We can move from battlefield to battlefield.)"
+    },
+    "Blighted Battleaxe": {
+      "text": "[Equip] {1 energy}{Fury rune} ({1 energy}{Fury rune}: Attach this to a unit you control.)Attached: +4 Might. At the end of your turn, if I didn't conquer this turn, unattach this and deal 4 to me.",
+      "_might_bonus": 4,
+      "_attached_ability": "At the end of your turn, if I didn't conquer this turn, unattach this and deal 4 to me."
+    },
+    "Soul Sword": {
+      "text": "[Equip] {Calm rune} ({Calm rune}: Attach this to a unit you control.)Attached: +1 Might. [Level 3] I have an additional +1 Might. (While you have 3+ XP, get the effect.)",
+      "_might_bonus": 1,
+      "_attached_ability": "[Level 3] I have an additional +1 Might. (While you have 3+ XP, get the effect.)"
+    },
+    "Hunter's Machete": {
+      "text": "[Equip] {Body rune} ({Body rune}: Attach this to a unit you control.)Attached: +2 Might. [Hunt] (When I conquer or hold, gain 1 XP.)",
+      "_might_bonus": 2,
+      "_attached_ability": "[Hunt] (When I conquer or hold, gain 1 XP.)"
+    },
+    "Shepherd's Heirloom": {
+      "text": "When you play this, gain 1 XP.[Equip] — Spend 1 XP (Pay the cost: Attach this to a unit you control.)Attached: +2 Might.",
+      "_might_bonus": 2,
+      "_attached_ability": null
+    },
+    "Hextech Gauntlets": {
+      "text": "[Equip] {3 energy}{any rune}. This ability's Energy cost is reduced by the Might of the unit you choose. (Pay the cost: Attach this to a unit you control.)Attached: +3 Might. When I conquer, if you assigned 3 or more excess damage, draw 1.",
+      "_might_bonus": 3,
+      "_attached_ability": "When I conquer, if you assigned 3 or more excess damage, draw 1."
+    },
+    "Pendulum Blade": {
+      "text": "[Equip] {Fury rune} ({Fury rune}: Attach this to a unit you control.)Attached: +1 Might. When I move to a battlefield, give me +2 Might this turn.",
+      "_might_bonus": 1,
+      "_attached_ability": "When I move to a battlefield, give me +2 Might this turn."
+    },
+    "Hand Hammer": {
+      "text": "[Equip] {Calm rune} ({Calm rune}: Attach this to a unit you control.)Attached: +1 Might. I have +2 Might while I'm at a battlefield with exactly one other unit you control.",
+      "_might_bonus": 1,
+      "_attached_ability": "I have +2 Might while I'm at a battlefield with exactly one other unit you control."
+    },
+    "Jagged Cutlass": {
+      "text": "Equip {Body rune} ({Body rune}: Attach this to a unit you control.)Attached: +2 Might. I can't be moved by enemy spells and abilities.",
+      "_might_bonus": 2,
+      "_attached_ability": "I can't be moved by enemy spells and abilities."
+    },
+    "Shady Spectacles": {
+      "text": "[Equip] {1 energy}{Order rune} ({1 energy}{Order rune}: Attach this to a unit you control.)As this is attached to a unit, choose another friendly unit. The equipped unit becomes a copy of that unit for as long as this is attached to it.Attached: +0 Might. (I am a copy of the chosen unit.)",
+      "_might_bonus": 0,
+      "_attached_ability": "(I am a copy of the chosen unit.)"
+    }
+  }
+}

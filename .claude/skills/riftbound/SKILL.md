@@ -570,8 +570,26 @@ the Beginning Step. Discounts like that are same-turn-sequencing effects only.
 Before rating any "per X you control" payoff, ask when X actually exists.
 
 **3. Where a token ENTERS decides forever whether it can conquer.**
-A Standard Move goes Base → Battlefield or Battlefield → Base, and *that is
-all* (144.4). Battlefield → Battlefield needs **Ganking** (810). A token that
+A **Standard Move** goes Base → Battlefield or Battlefield → Base, and *that is
+all* (144.4). Battlefield → Battlefield needs **Ganking** (810).
+
+**3a. But that restriction binds the STANDARD Move only — effect-driven moves
+are a different, much stronger thing (449-452).** 449.1: "The source of the Move
+will provide details on any restrictions on legality for Destination." So a card
+reading "Move a unit" follows its **own** text, needs **no Ganking** to cross
+battlefields, and — because 144.2 makes exhausting the unit the cost of the
+*Standard* Move only — the moved unit **arrives ready**. Consequences that make
+every "Move a unit" card far better than its text suggests:
+- 450: the destination **becomes Contested** if you did not control it, so moving
+  a friendly unit to an empty battlefield **conquers it** (469.1).
+- 452: moving into a battlefield with enemy units **causes Combat**, and the
+  moved unit is the attacker.
+- Moving an **enemy** unit into your board makes *their* unit the attacker
+  (323.2.a — units take their controller's designation), so a Charm-style effect
+  forces a bad attack and kills through combat.
+Rate "Move a friendly unit" (Ride The Wind, Twilight Step, Emperor's Divide) as
+conquer enablers, and "Move an enemy unit" (Charm, Isolate, Temptation) as
+removal, not as positioning. A token that
 dies each turn can never make a two-turn journey, so:
 - token created **in base**, printed **ready** → can move out and conquer.
 - token created **"here"** at a battlefield → reinforcement only, forever.
@@ -708,6 +726,27 @@ What produced the good revisions, in order:
    print; a spell that plays a unit counts as both. One card covering two
    requirements turns a three-card turn into a one-card turn.
 5. **Add copies of the best line, not new lines.**
+6a. **Never fix the same problem twice in one revision — a resource engine is
+   capped by DEMAND, not by supply.** A card that produces a resource (Power,
+   energy, runes, cards) is only worth a slot if the deck still wants to spend
+   that much. The failure mode is subtle because each half looks correct:
+   *(a)* you add producers to fix a shortage, and *(b)* in the same pass you cut
+   expensive cards that were causing the shortage. Now supply is up and demand is
+   down, and the producers are dead cards.
+
+   This happened for real. A Lillia build went to 4 Seals (2 Power per turn, so
+   ~24 over a game) while simultaneously cutting Charm, Riptide Rex and Unchecked
+   Power — dropping total deck Power demand to 14 pips, of which realistically
+   6-7 get spent. The user felt it immediately in play: *"I overcompensated on
+   the power costs. I added too many gold creation or seals, while also removing
+   lots of spells that required them."*
+
+   **Before adding any resource producer, count the demand AFTER the other cuts
+   in the same revision, not before.** State the ratio explicitly: N producers
+   supplying X per turn against Y pips of real demand. If a producer's own cost
+   is a meaningful share of the total (the Seals were 4 of 18 pips), that is the
+   tell that the engine is feeding itself.
+
 6. **State what each change costs.** A revision with no stated downside has not
    been thought through.
 
