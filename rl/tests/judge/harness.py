@@ -41,7 +41,7 @@ from rl.engine.state import (GameState, MAIN, P_ALIVE, P_CARD, P_CTRL, P_DMG,
 T = full_table()
 
 
-V1 = replace(Config().at_victory_score(8), units_only=False)
+V1 = replace(Config().at_victory_score(8).with_solved_damage(), units_only=False)
 
 # Staging a gear with `add_permanent` must mark it a non-unit, the way every
 # play path does (`is_unit=table.is_type(card, "Unit")`); otherwise the gear

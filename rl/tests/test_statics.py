@@ -34,7 +34,7 @@ from rl.engine.state import (F_EMPOWERED, MAIN, P_ALIVE, P_CARD, P_DMG, P_LOC,
                              P_READY, GameState, base_loc, bf_loc)
 
 T = full_table()
-CFG = replace(Config().at_victory_score(3), units_only=False)
+CFG = replace(Config().at_victory_score(3).with_solved_damage(), units_only=False)
 
 PIXIE = T.id_of("Petal Pixie")           # +1 Might per your [Temporary] here
 SHEPHERD = T.id_of("Soul Shepherd")      # your token units have +1 Might
@@ -297,7 +297,7 @@ from rl.engine.effects import (COND_LEVEL, TR_CONQUER, TR_HOLD, abilities_for,
                                ABILITIES)
 from rl.engine.state import C_FINAL, MAIN
 
-CFG_V1 = replace(Config(), units_only=False)
+CFG_V1 = replace(Config().with_solved_damage(), units_only=False)
 VIS = T.id_of("Targonian Visionary")
 HORROR = T.id_of("Arachnoid Horror")     # [Hunt 2]
 FAV = T.id_of("Crowd Favorite")          # [Hunt], Spend 2 XP: Buff me

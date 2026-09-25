@@ -27,8 +27,8 @@ from rl.engine.state import (C_CARD, C_UID, F_STUNNED, P_FLAGS,
                              GameState, bf_loc)
 
 T = full_table()
-CFG = Config()
-CFG_V1 = replace(Config(), units_only=False)
+CFG = Config().with_solved_damage()
+CFG_V1 = replace(Config().with_solved_damage(), units_only=False)
 
 BACK_OFF = T.id_of("Back Off")
 

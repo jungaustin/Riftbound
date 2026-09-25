@@ -29,8 +29,8 @@ from rl.engine.state import (C_CARD, C_FINAL, F_BUFFED, F_STUNNED, P_ALIVE,
                              GameState, base_loc, bf_loc)
 
 T = full_table()
-V0 = Config().at_victory_score(3)                      # units only
-V1 = replace(Config().at_victory_score(3), units_only=False)
+V0 = Config().at_victory_score(3).with_solved_damage()                      # units only
+V1 = replace(Config().at_victory_score(3).with_solved_damage(), units_only=False)
 
 BACK_OFF = T.id_of("Back Off")
 FACEBREAKER = T.id_of("Facebreaker")

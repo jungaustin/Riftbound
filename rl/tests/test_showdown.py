@@ -40,7 +40,7 @@ from rl.engine.state import (GameState, MAIN, P_ALIVE, P_CARD, P_LOC,
                              base_loc, bf_loc)
 
 T = full_table()
-V1 = replace(Config().at_victory_score(8), units_only=False)
+V1 = replace(Config().at_victory_score(8).with_solved_damage(), units_only=False)
 
 FAEFOLK = T.id_of("Irresistible Faefolk")    # move trigger, 1 Might
 GUST = T.id_of("Gust")                       # [Reaction] bounce, 3 Might or less

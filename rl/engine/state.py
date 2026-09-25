@@ -590,6 +590,8 @@ class GameState:
         "pend_cull_dest", "pend_split", "split_left", "split_loc",
         "split_xp", "split_spell", "split_alloc", "bf_prev_ctrl", "bf_replaced", "bf_first_use", "empower_src",
         "victory_bonus", "unit_tax_ply", "free_hide_ply", "pend_altar", "altar_ply",
+        "pend_dmg", "pend_dmg_pool", "pend_dmg_bf", "pend_dmg_targets",
+        "pend_dmg_n_tgt", "pend_dmg_kills", "pend_dmg_n_kill", "pend_dmg_done",
         "pool_rstr_e", "pool_rstr_p", "recycled_n", "rune_recycled_n",
         "banished_n", "chose_enemy_n", "legend_pile", "legend_pile_n",
         "pend_amount", "amt_kind",
@@ -1016,6 +1018,42 @@ class GameState:
         # twice: declining has to stick for the instant it takes the caller to
         # come back round and kill the unit for real.
         self.altar_ply = np.full(MAX_PERMS, -1, np.int16)
+
+        # --- Combat damage assignment (465.2.c), when the PLAYER assigns ------
+        #
+        # 465.2.c.2 gives the choice of which units die to the player dealing
+        # the damage, and `[Tank]` / `[Backline]` exist to constrain exactly
+        # that choice -- so an engine that picks for them makes both keywords
+        # strategically inert. `combat.solve_kills` still answers it whenever
+        # there is nothing to decide (the pool covers every target, so wiping
+        # the board is forced) or when `cfg.engine_solves_damage_assignment`
+        # pins the old behaviour; these slots carry the case that is a real
+        # decision.
+        #
+        # `pend_dmg` is the seat currently choosing, or -1. Both seats may owe
+        # a choice in the same damage step, and they are asked one after the
+        # other -- but **nothing either picks is applied until both are done**,
+        # because 465 deals damage simultaneously. Writing the first seat's
+        # kills to the board before asking the second would let the second
+        # answer while knowing the first's choice, which is information the
+        # real game never gives.
+        self.pend_dmg = -1
+        # The damage each seat still has left to spend, and the battlefield the
+        # assignment is happening at. The pools are computed once against the
+        # pre-damage board (`might_for_pool`) and then drawn down, so a unit
+        # that dies mid-assignment still contributed its full Might.
+        self.pend_dmg_pool = np.zeros(N_SEATS, np.int16)
+        self.pend_dmg_bf = -1
+        # Per seat: the candidate enemy rows, and the rows chosen to kill so
+        # far. Rows, not cards -- mirroring keeps rows in place.
+        self.pend_dmg_targets = np.full((N_SEATS, MAX_PERMS), -1, np.int16)
+        self.pend_dmg_n_tgt = np.zeros(N_SEATS, np.int16)
+        self.pend_dmg_kills = np.full((N_SEATS, MAX_PERMS), -1, np.int16)
+        self.pend_dmg_n_kill = np.zeros(N_SEATS, np.int16)
+        # Which seats have finished choosing. A seat whose assignment was
+        # forced (or solved by the engine) is marked done without being asked,
+        # so the damage step can tell "nothing to do" from "not asked yet".
+        self.pend_dmg_done = np.zeros(N_SEATS, np.int8)
         # Energy that may only pay for spells (Lux, Crownguard); pools empty
         # with the rest.
         # Energy and Power that may only be spent on certain things (135.2.e.4

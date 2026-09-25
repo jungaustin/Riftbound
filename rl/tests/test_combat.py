@@ -12,7 +12,7 @@ from rl.engine.state import (GameState, P_ALIVE, P_LOC, P_READY, P_DMG,
                              base_loc, bf_loc)
 
 T = full_table()
-CFG = Config()
+CFG = Config().with_solved_damage()
 
 # A fixture must be INERT in the step under test, or the test measures the
 # card instead of the rule. `_COMBAT_MODIFIERS` below records the first time
@@ -422,7 +422,7 @@ ok("gate for exposing assignment to the policy behaves as specified")
 
 
 print("[12] the Final Point (471.1.b) demands the whole board")
-CFG8 = Config().at_victory_score(8)
+CFG8 = Config().at_victory_score(8).with_solved_damage()
 
 
 def at_score(points, scored):
@@ -474,7 +474,7 @@ from rl.engine.state import C_FINAL, MAIN, P_MIGHT_MOD
 
 # Triggers do not fire under `units_only` -- that is what keeps v0
 # bit-identical -- so this section needs the v1 config.
-CFG_V1 = _replace(Config(), units_only=False)
+CFG_V1 = _replace(Config().with_solved_damage(), units_only=False)
 
 MASK = T.id_of("Mask of Foresight")
 MASK_UNIT = next(c for c in range(T.n) if T.is_type(c, "Unit")
@@ -710,5 +710,208 @@ combat.enforce_lethal(s, T)
 if s.perms[u, P_ALIVE] != 1:
     die("zhonya", "healed, the unit must survive 143.2.a's next check")
 ok("...and the errata's heal makes it answer damage, not just removal")
+
+# ---------------------------------------------------------------------------
+# D1 -- combat damage assignment belongs to the PLAYER (465.2.c.2).
+#
+# Everything above pins `with_solved_damage()`, because those tests assert which
+# units a given pool kills and that is only a fixed answer while the engine
+# owns the choice. This section is the other half: that the choice is offered,
+# that it is the player's, and that the rules still bound it.
+print("\n[D1] combat damage assignment is the player's choice")
+
+from rl.engine import actions as A                                # noqa: E402
+CFG_D1 = Config()          # engine_solves_damage_assignment=False by default
+assert not CFG_D1.engine_solves_damage_assignment, \
+    "D1 default regressed -- the engine is assigning damage again"
+
+
+def _attack(cfg, atk_cards, dfn_cards, ready=True):
+    """One combat: seat 0 attacks bf 0, which seat 1 garrisons."""
+    st = fresh()
+    st.active = 0
+    atk = [put(st, c, 0, base_loc(0)) for c in atk_cards]
+    dfn = [put(st, c, 1, bf_loc(0), ready) for c in dfn_cards]
+    st.bf_ctrl[0] = 1
+    combat.declare_move(st, bf_loc(0))
+    for u in atk:
+        combat.add_to_declaration(st, u)
+    log = combat.commit_declaration(st, T, cfg)
+    return st, atk, dfn, log
+
+
+# -- a forced assignment is still solved by the engine, and never suspends ----
+# One 5 into one 3. Neither side has a decision, for the two different reasons
+# that both count as "nothing to decide": the attacker's pool of 5 COVERS the
+# 3-Might defender (wiping is forced), and the defender's pool of 3 cannot
+# reach the 5-Might attacker at all, so nothing is affordable. Both must pass
+# through without asking -- `assignment_is_a_choice` gates the first and
+# `dmg_legal_kills` coming back empty gates the second. Gate on merely being in
+# combat instead and the action space fills with forced decisions.
+s, atk, dfn, _ = _attack(CFG_D1, [PLAIN[5]], [PLAIN[3]])
+if s.pend_dmg >= 0:
+    die("d1-forced", "an assignment with nothing to decide still suspended")
+if s.perms[dfn[0], P_ALIVE] != 0:
+    die("d1-forced", "the forced kill did not happen")
+if s.perms[atk[0], P_ALIVE] != 1:
+    die("d1-forced", "the attacker died to a pool that could not kill it")
+ok("neither a covered pool nor an unaffordable one asks -- no decision exists")
+
+# -- a real choice suspends and asks the right seat ---------------------------
+# Now the DEFENDER is short: pool 5 against two 3-Might attackers costs 6 to
+# wipe, so it must choose which one dies. The attacker's own pool of 6 covers
+# the lone 5-Might defender, so only one side is asked.
+s = fresh()
+s.active = 0
+atk = [put(s, PLAIN[3], 0, base_loc(0)), put(s, PLAIN[3], 0, base_loc(0))]
+dfn = put(s, PLAIN[5], 1, bf_loc(0))
+s.bf_ctrl[0] = 1
+combat.declare_move(s, bf_loc(0))
+for u in atk:
+    combat.add_to_declaration(s, u)
+combat.commit_declaration(s, T, CFG_D1)
+if int(s.pend_dmg) != 1:
+    die("d1-asks", f"expected seat 1 to be asked, pend_dmg={s.pend_dmg}")
+if A.acting_seat(s) != 1:
+    die("d1-asks", "acting_seat disagrees with pend_dmg")
+legal = A.legal_actions(s, T, CFG_D1, 1)
+kinds = {a.kind for a in legal}
+if kinds != {A.A_PICK, A.A_PICK_NONE}:
+    die("d1-asks", f"expected picks and a decline, got {kinds}")
+offered = sorted(int(a.arg) for a in legal if a.kind == A.A_PICK)
+if offered != sorted(atk):
+    die("d1-asks", f"both attackers should be killable, offered {offered}")
+# ...and the seat NOT being asked is offered nothing.
+if A.legal_actions(s, T, CFG_D1, 0):
+    die("d1-asks", "the non-assigning seat was offered actions")
+ok("a short pool asks the dealing seat, and only that seat")
+
+# -- and the player's pick is what happens, not the solver's ------------------
+# Both attackers are identical 3s, so `solve_kills` has a preference only by
+# index. Choosing the OTHER one proves the choice is real rather than advisory.
+prefer = combat.dmg_solver_choice(s, T, 1)
+other = next(u for u in atk if u != prefer)
+A.apply(s, T, CFG_D1, A.Action(A.A_PICK, other))
+if s.perms[other, P_ALIVE] != 0:
+    die("d1-owns", "the unit the player chose to kill survived")
+if s.perms[prefer, P_ALIVE] != 1:
+    die("d1-owns", "the unit the player did NOT choose died anyway")
+invariants.check(s)
+ok("the chosen unit dies and the unchosen one lives -- the pick is binding")
+
+# -- declining leaves the pool unspent ---------------------------------------
+# Killing can be actively bad (a [Deathknell] payoff, a death trigger that
+# draws), so stopping early has to be legal. Non-lethal damage heals at the
+# Resolution Step, so declining costs nothing else.
+s = fresh()
+s.active = 0
+atk = [put(s, PLAIN[3], 0, base_loc(0)), put(s, PLAIN[3], 0, base_loc(0))]
+dfn = put(s, PLAIN[5], 1, bf_loc(0))
+s.bf_ctrl[0] = 1
+combat.declare_move(s, bf_loc(0))
+for u in atk:
+    combat.add_to_declaration(s, u)
+combat.commit_declaration(s, T, CFG_D1)
+A.apply(s, T, CFG_D1, A.Action(A.A_PICK_NONE))
+if [u for u in atk if s.perms[u, P_ALIVE] == 1] != atk:
+    die("d1-decline", "declining still killed something")
+invariants.check(s)
+ok("A_PICK_NONE stops early and every attacker lives")
+
+# -- [Tank] and [Backline] bound the offer (815.1.c.2, 826.4.b) --------------
+# This is the argument for the whole change: the ordering keywords exist to
+# constrain the assigner's choice, so with the engine choosing they were
+# strategically inert. A Tank must be the only thing offered while it lives.
+s = fresh()
+s.active = 0
+atk = [put(s, PLAIN[3], 0, base_loc(0))]
+tank = put(s, TANK3, 1, bf_loc(0))
+back = put(s, BACK, 1, bf_loc(0))
+plain = put(s, PLAIN[1], 1, bf_loc(0))
+s.bf_ctrl[0] = 1
+combat.declare_move(s, bf_loc(0))
+combat.add_to_declaration(s, atk[0])
+combat.commit_declaration(s, T, CFG_D1)
+if int(s.pend_dmg) != 0:
+    die("d1-tiers", f"the attacker should be asked, pend_dmg={s.pend_dmg}")
+offered = {int(a.arg) for a in A.legal_actions(s, T, CFG_D1, 0)
+           if a.kind == A.A_PICK}
+if TANK_M <= 3:
+    if offered != {tank}:
+        die("d1-tiers", f"only the Tank may be offered, got {offered}")
+    ok(f"[Tank] is the only legal target while it lives ({TANK_M} might)")
+else:
+    # The pool cannot even kill the Tank, so nothing is reachable and the
+    # assignment is forced-empty rather than a choice.
+    if offered:
+        die("d1-tiers", f"nothing should be reachable past the Tank, got {offered}")
+    ok("an unkillable [Tank] blocks the tier entirely, so nothing is offered")
+
+# -- the two seats' assignments do not see each other (465.3) ----------------
+# Damage is simultaneous. Both seats are asked in turn, so the second must not
+# be able to read the first's answer -- which means nothing may be marked on
+# the board until both have finished.
+#
+# Getting BOTH seats short at once takes a 0-Might unit, and the algebra is
+# worth writing down. For vanilla undamaged units a side's pool equals the sum
+# of its Mights, and the cost to wipe it is that same sum -- so "my pool is
+# short of wiping them" is `their_might > my_might`, which cannot hold for both
+# sides at once. A 0-Might unit breaks the symmetry: it adds nothing to its
+# own side's pool but still costs 1 to kill, because 465.2.c.2 defines Lethal
+# Damage as NON-ZERO. One on each side puts both seats one point short.
+ZERO = next(cid for cid in range(len(T.names))
+            if T.is_type(cid, "Unit") and int(T.might[cid]) == 0
+            and _inert(cid)
+            and not any(T.has(cid, k) for k in
+                        ("Tank", "Backline", "Temporary") + _COMBAT_MODIFIERS))
+s = fresh()
+s.active = 0
+atk = [put(s, PLAIN[3], 0, base_loc(0)), put(s, ZERO, 0, base_loc(0))]
+dfn = [put(s, PLAIN[3], 1, bf_loc(0)), put(s, ZERO, 1, bf_loc(0))]
+s.bf_ctrl[0] = 1
+combat.declare_move(s, bf_loc(0))
+for u in atk:
+    combat.add_to_declaration(s, u)
+combat.commit_declaration(s, T, CFG_D1)
+first = int(s.pend_dmg)
+if first < 0:
+    die("d1-simul", "expected an assignment to be pending")
+guard = 0
+while int(s.pend_dmg) == first:
+    guard += 1
+    assert guard < 10, "assignment failed to terminate"
+    nxt = combat.dmg_solver_choice(s, T, first)
+    A.apply(s, T, CFG_D1, A.Action(A.A_PICK, nxt) if nxt >= 0
+            else A.Action(A.A_PICK_NONE))
+second = int(s.pend_dmg)
+if second < 0:
+    die("d1-simul", "the second seat was never asked -- the 0-Might trick broke")
+if second == first:
+    die("d1-simul", "the same seat was asked twice in a row")
+marked = [i for i in list(atk) + list(dfn) if int(s.perms[i, P_DMG]) != 0]
+if marked:
+    die("d1-simul",
+        f"rows {marked} were already damaged while seat {second} was still "
+        f"choosing -- a sequential ask leaked the first seat's answer")
+dead = [i for i in list(atk) + list(dfn) if int(s.perms[i, P_ALIVE]) != 1]
+if dead:
+    die("d1-simul", f"rows {dead} died before both seats had answered")
+ok("both seats are asked, and nothing is marked or killed until both answer")
+
+# -- pinning the flag restores the old behaviour ------------------------------
+s = fresh()
+s.active = 0
+atk = [put(s, PLAIN[3], 0, base_loc(0)), put(s, PLAIN[3], 0, base_loc(0))]
+dfn = put(s, PLAIN[5], 1, bf_loc(0))
+s.bf_ctrl[0] = 1
+combat.declare_move(s, bf_loc(0))
+for u in atk:
+    combat.add_to_declaration(s, u)
+combat.commit_declaration(s, T, CFG)          # with_solved_damage()
+if int(s.pend_dmg) >= 0:
+    die("d1-pin", "with_solved_damage() still suspended")
+if len([u for u in atk if s.perms[u, P_ALIVE] == 1]) != 1:
+    die("d1-pin", "the engine's own assignment changed")
+ok("with_solved_damage() pins the pre-D1 behaviour for the scenario suites")
 
 print("\n\033[32mall combat tests passed\033[0m")

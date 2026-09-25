@@ -999,6 +999,26 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         out.append(Action(A_MULLIGAN_DONE))
         return out
 
+    # --- mid-damage: who dies to combat damage (465.2.c.2) ----------------
+    # The assigning player chooses, one kill at a time, from the lowest
+    # ordering tier that still holds a live target -- which is what makes
+    # `[Tank]` and `[Backline]` mean anything. Only opened when the pool cannot
+    # cover every target: with enough damage to wipe the board there is nothing
+    # to decide and `combat.damage_step` never suspends.
+    #
+    # `A_PICK_NONE` stops early, and it is not a formality: killing a unit can
+    # be actively bad when its death is what its controller wants (a
+    # [Deathknell] payoff, a death trigger that draws). Declining leaves the
+    # rest of the pool unspent, which costs nothing -- non-lethal damage heals
+    # at the Resolution Step anyway.
+    if state.pend_dmg >= 0:
+        if seat != int(state.pend_dmg):
+            return []
+        out = [Action(A_PICK, i)
+               for i in combat.dmg_legal_kills(state, table, seat)]
+        assert out, "an assignment with no affordable target should not open"
+        return out + [Action(A_PICK_NONE)]
+
     # --- mid-death: Altar of Blood offers to buy a death back -------------
     # 136.2.d -- a replacement is applied INSTEAD of the event, so this is
     # asked before the unit dies and not after. The sweep that was killing it
@@ -1572,7 +1592,8 @@ def _mid_decision(state: GameState) -> bool:
         or state.pend_split >= 0 or state.pend_amount >= 0
         or state.steal_seat >= 0 or state.pend_name >= 0
         or state.dj_seat >= 0 or state.pend_altar >= 0
-        or state.pend_kill_play >= 0 or is_terminal(state))
+        or state.pend_kill_play >= 0 or state.pend_dmg >= 0
+        or is_terminal(state))
 
 
 def flush_player_events(state: GameState, table: CardTable) -> None:
@@ -1923,6 +1944,13 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
 
     if k == A_MULLIGAN_DONE:
         return _finish_mulligan(state, table, cfg)
+
+    # Combat damage assignment (465.2.c.2). Before every other `A_PICK` site:
+    # the arg is a PERMANENT ROW here, not a buffer index, and a suspended
+    # assignment blocks all the other offers anyway.
+    if k in (A_PICK, A_PICK_NONE) and state.pend_dmg >= 0:
+        return _assign_damage_pick(
+            state, table, cfg, int(action.arg) if k == A_PICK else -1)
 
     if k == A_PICK and state.dj_seat >= 0:
         return dj_pick(state, table, cfg, int(action.arg))
@@ -3112,6 +3140,43 @@ def _answer_altar(state: GameState, table: CardTable, cfg: Config,
     state.perms[perm, P_READY] = 0
     state.set_location(perm, base_loc(seat))
     return {"altar": "paid", "saved": perm}
+
+
+def _assign_damage_pick(state: GameState, table: CardTable, cfg: Config,
+                        perm: int) -> dict:
+    """Record one combat-damage kill, or stop assigning (`perm` < 0).
+
+    465.2.c.2 -- the player dealing the damage chooses who dies. Collected one
+    unit at a time rather than as a subset, which keeps the action space the
+    size of the board instead of 2**board, and makes the ordering keywords fall
+    out for free: `combat.dmg_legal_kills` only ever offers the lowest tier
+    that still holds a live target.
+
+    Nothing reaches the board here. Both seats' choices are held in
+    `pend_dmg_kills` until every seat has answered, because 465.3 deals the
+    damage simultaneously -- marking the first seat's kills now would let the
+    second answer while reading them.
+    """
+    seat = int(state.pend_dmg)
+    if perm >= 0:
+        assert perm in combat.dmg_legal_kills(state, table, seat), \
+            "damage assignment picked an illegal target"
+        n = int(state.pend_dmg_n_kill[seat])
+        state.pend_dmg_kills[seat, n] = perm
+        state.pend_dmg_n_kill[seat] = n + 1
+    else:
+        # Declining ends THIS seat's assignment, not the whole step.
+        state.pend_dmg_done[seat] = 1
+    state.pend_dmg = -1
+    log = combat.advance_combat(state, table, cfg,
+                               {"combat_at": int(state.showdown_bf)}) \
+        if state.showdown_bf >= 0 else {}
+    if state.showdown_bf < 0:
+        # That Combat finished -- resolve any Combat still staged at the other
+        # battlefield, exactly as the Showdown-Step resume does.
+        log.update(combat.cleanup(state, table, cfg, mover=-1, dst=-1))
+    log.update(_settle_after_decision(state, table, cfg))
+    return log
 
 
 def _resolve_play(state: GameState, table: CardTable, cfg: Config,
@@ -4311,6 +4376,7 @@ def _settle_after_decision(state: GameState, table: CardTable,
             and state.pend_split < 0 and state.pend_amount < 0
             and state.steal_seat < 0 and state.pend_name < 0
             and state.dj_seat < 0 and state.pend_altar < 0
+            and state.pend_dmg < 0
             and int(state.pend_double[0]) < 0
             and int(state.pend_reveal[0]) < 0
             and not is_terminal(state)):
@@ -4623,6 +4689,11 @@ def acting_seat(state: GameState) -> int:
         return -1
     if state.pend_mull >= 0:
         return int(state.pend_mull)
+    # Combat damage assignment: the seat DEALING the damage chooses, which is
+    # the opposite of Altar of Blood below -- tested first because a suspended
+    # assignment happens before any death it goes on to cause.
+    if state.pend_dmg >= 0:
+        return int(state.pend_dmg)
     # Altar of Blood asks the dying unit's CONTROLLER, who is not necessarily
     # the player whose combat damage killed it.
     if state.pend_altar >= 0:

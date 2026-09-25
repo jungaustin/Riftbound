@@ -2602,6 +2602,7 @@ def _decision_pending(state: GameState) -> bool:
         or state.pend_discard >= 0 or state.pend_grave >= 0
         or state.pend_split >= 0 or state.pend_amount >= 0 or state.pend_name >= 0
         or state.pend_ask >= 0 or state.pend_altar >= 0 or state.pend_kill_play >= 0
+        or state.pend_dmg >= 0
         or int(state.pend_double[0]) >= 0 or int(state.pend_reveal[0]) >= 0
         # `resume_kind` is 0 when nothing is suspended, not -1.
         or bool(int(state.resume_kind)))
@@ -2985,10 +2986,16 @@ def advance_combat(state: GameState, table: CardTable, cfg: Config,
         # whether to buy a death back). Resuming has to pick up at the
         # Resolution Step: dealing the damage a second time would kill the very
         # unit the player just paid to save.
-        if state.showdown_step != SD_DAMAGE:
+        # `pend_dmg_bf >= 0` means the damage step is SUSPENDED part-way
+        # through collecting a player's assignment, so re-enter it even though
+        # `showdown_step` already says SD_DAMAGE. That flag is what tells
+        # "damage dealt, yielded afterwards for Altar of Blood" apart from
+        # "damage not dealt yet, yielded to ask who dies" -- and getting it
+        # wrong would either skip the damage or deal it twice.
+        if state.showdown_step != SD_DAMAGE or int(state.pend_dmg_bf) >= 0:
             log.setdefault("rounds", []).append(
                 damage_step(state, table, cfg, bf))
-            if int(state.pend_altar) >= 0:
+            if int(state.pend_dmg) >= 0 or int(state.pend_altar) >= 0:
                 return log
         resolution_step(state, table, cfg, bf, attacker, log)
     return log
@@ -3369,20 +3376,27 @@ def assignment_is_a_choice(state: GameState, table: CardTable, pool: int,
     return sum(lethal_cost(state, table, i) for i in targets) > pool
 
 
-def _assign(state: GameState, table: CardTable, pool: int,
-            targets: list[int], assigner: int = -1) -> list[int]:
-    """Assign `pool` damage and return the rows that took lethal.
-
-    Marks the damage as well as picking the kills, because a Reaction that heals
-    or buffs mid-assignment will need the real numbers later. The leftover goes
-    onto the next legal target (465.2.c.4): it changes nothing, since the
-    Resolution Step heals it away, but assigning it keeps the model honest.
-    """
-    # Dune Surfer -- "you ignore [Tank] while assigning combat damage here".
-    ignore_tank = bool(targets) and assigner >= 0 and _named_at_bf(
+def _ignore_tank_here(state: GameState, table: CardTable,
+                      targets: list[int], assigner: int) -> bool:
+    """Dune Surfer -- "you ignore [Tank] while assigning combat damage here"."""
+    return bool(targets) and assigner >= 0 and _named_at_bf(
         state, table, IGNORE_TANK_HERE, seat=assigner,
         loc=int(state.perms[targets[0], P_LOC]))
-    kills = solve_kills(state, table, pool, targets, ignore_tank, assigner)
+
+
+def _apply_kills(state: GameState, table: CardTable, pool: int,
+                 targets: list[int], kills: list[int], assigner: int = -1,
+                 ignore_tank: bool = False) -> list[int]:
+    """Mark `kills` as having taken lethal and spill the leftover (465.2.c.4).
+
+    Split out of `_assign` so that a PLAYER-chosen assignment and the engine's
+    own `solve_kills` answer run through identical code once the choice is
+    made. Everything here is consequence, not decision: marking the damage
+    (because a Reaction that heals or buffs mid-assignment needs the real
+    numbers later), the excess bookkeeping, and the spill onto the next legal
+    target -- which changes nothing, since the Resolution Step heals it away,
+    but keeps the model honest.
+    """
     left = pool
     for i in kills:
         c = lethal_cost(state, table, i, assigner)
@@ -3422,6 +3436,87 @@ def _assign(state: GameState, table: CardTable, pool: int,
     return kills
 
 
+def _assign(state: GameState, table: CardTable, pool: int,
+            targets: list[int], assigner: int = -1) -> list[int]:
+    """Assign `pool` damage the engine's own way and return the lethal rows.
+
+    The automatic path: `solve_kills` picks, `_apply_kills` performs. Used when
+    the assignment is forced (the pool covers every target) or when
+    `cfg.engine_solves_damage_assignment` pins the pre-D1 behaviour. When the
+    player owns the choice, `damage_step` suspends instead and `actions`
+    collects it -- see `state.pend_dmg`.
+    """
+    ignore_tank = _ignore_tank_here(state, table, targets, assigner)
+    kills = solve_kills(state, table, pool, targets, ignore_tank, assigner)
+    return _apply_kills(state, table, pool, targets, kills, assigner, ignore_tank)
+
+
+def _dmg_spent(state: GameState, table: CardTable, seat: int) -> int:
+    """Damage `seat` has already committed to its chosen kills."""
+    return sum(lethal_cost(state, table, int(state.pend_dmg_kills[seat, j]), seat)
+               for j in range(int(state.pend_dmg_n_kill[seat])))
+
+
+def _dmg_targets(state: GameState, seat: int) -> list[int]:
+    return [int(state.pend_dmg_targets[seat, j])
+            for j in range(int(state.pend_dmg_n_tgt[seat]))]
+
+
+def _dmg_chosen(state: GameState, seat: int) -> list[int]:
+    return [int(state.pend_dmg_kills[seat, j])
+            for j in range(int(state.pend_dmg_n_kill[seat]))]
+
+
+def dmg_legal_kills(state: GameState, table: CardTable, seat: int) -> list[int]:
+    """Rows `seat` may still choose to kill with what is left of its pool.
+
+    The ordering keywords make the choice an *ordered* subset: you may not
+    reach into a tier until every unit in the tiers below it is dead
+    (815.1.c.2, 826.4.b). So the offer is always drawn from the lowest tier
+    that still holds an unchosen unit, and within it only the units the
+    remaining pool can actually kill.
+
+    Returning empty means the seat is finished -- either everything reachable
+    is already chosen, or nothing left is affordable.
+    """
+    chosen = set(_dmg_chosen(state, seat))
+    alive = [i for i in _dmg_targets(state, seat)
+             if state.perms[i, P_ALIVE] == 1]
+    ignore_tank = _ignore_tank_here(state, table, alive, seat)
+    budget = int(state.pend_dmg_pool[seat]) - _dmg_spent(state, table, seat)
+    for tier in _tiers(state, table, alive, ignore_tank):
+        rest = [i for i in tier if i not in chosen]
+        if rest:
+            return [i for i in rest
+                    if lethal_cost(state, table, i, seat) <= budget]
+    return []
+
+
+def dmg_solver_choice(state: GameState, table: CardTable, seat: int) -> int:
+    """The next kill `solve_kills` would take, or -1 to stop.
+
+    The engine's own answer to a *player-owned* assignment, for agents that
+    want it. `greedy` uses this so that handing the choice to the player does
+    not quietly weaken the baseline: before D1 the engine solved every
+    assignment optimally for both sides, and a baseline that started taking
+    whatever was offered first would make the policy's win rate rise for
+    reasons that have nothing to do with the policy.
+
+    Not used by the learner -- the whole point is that it chooses for itself.
+    """
+    legal = set(dmg_legal_kills(state, table, seat))
+    if not legal:
+        return -1
+    tg = _dmg_targets(state, seat)
+    want = solve_kills(state, table, int(state.pend_dmg_pool[seat]), tg,
+                       _ignore_tank_here(state, table, tg, seat), seat)
+    chosen = set(_dmg_chosen(state, seat))
+    for i in want:
+        if i in legal and i not in chosen:
+            return int(i)
+    return -1
+
+
 def damage_step(state: GameState, table: CardTable, cfg: Config,
                 bf: int) -> dict:
     """Both sides sum Might, assign, and deal simultaneously (465).
@@ -3429,8 +3524,19 @@ def damage_step(state: GameState, table: CardTable, cfg: Config,
     Simultaneity is the whole point: there is no priority window in which to
     kill an attacker and save a defender, so a unit that dies still deals its
     full Might. That makes the two allocations separable.
+
+    **Assignment may belong to the player** (465.2.c.2), in which case this
+    suspends rather than solving: `state.pend_dmg` names the seat being asked
+    and `actions` collects one kill at a time. Re-entering with
+    `state.pend_dmg_bf == bf` continues a suspended assignment. Nothing is
+    marked on the board until *both* seats have answered, so the second seat
+    asked cannot read the first's choice -- damage is simultaneous, and asking
+    sequentially must not leak.
     """
     state.showdown_step = SD_DAMAGE
+    if int(state.pend_dmg_bf) == bf:
+        return _continue_assignment(state, table, bf)
+
     loc = bf_loc(bf)
     units = [list(state.units_at(loc, s)) for s in range(N_SEATS)]
 
@@ -3440,9 +3546,67 @@ def damage_step(state: GameState, table: CardTable, cfg: Config,
 
     pools = [sum(might_for_pool(state, table, i) for i in units[s])
              for s in range(N_SEATS)]
-    # Assign against the pre-damage board for both seats, then deal at once.
-    killed = [_assign(state, table, pools[s], units[1 - s], s)
-              for s in range(N_SEATS)]
+
+    state.pend_dmg_targets[:] = -1
+    state.pend_dmg_kills[:] = -1
+    state.pend_dmg_n_kill[:] = 0
+    state.pend_dmg_done[:] = 0
+    for s in range(N_SEATS):
+        tg = units[1 - s]
+        state.pend_dmg_n_tgt[s] = len(tg)
+        for j, i in enumerate(tg):
+            state.pend_dmg_targets[s, j] = i
+        state.pend_dmg_pool[s] = pools[s]
+        # The engine answers when there is nothing to decide -- the pool covers
+        # every target, so wiping the board is forced -- or when the old
+        # behaviour is pinned by config. Otherwise the player owns it.
+        if (cfg.engine_solves_damage_assignment
+                or not assignment_is_a_choice(state, table, pools[s], tg)):
+            ignore_tank = _ignore_tank_here(state, table, tg, s)
+            kills = solve_kills(state, table, pools[s], tg, ignore_tank, s)
+            for j, i in enumerate(kills):
+                state.pend_dmg_kills[s, j] = i
+            state.pend_dmg_n_kill[s] = len(kills)
+            state.pend_dmg_done[s] = 1
+    state.pend_dmg_bf = bf
+    return _continue_assignment(state, table, bf)
+
+
+def _continue_assignment(state: GameState, table: CardTable, bf: int) -> dict:
+    """Ask the next seat that owes a choice, or deal the damage once both have."""
+    for s in range(N_SEATS):
+        if int(state.pend_dmg_done[s]):
+            continue
+        if dmg_legal_kills(state, table, s):
+            state.pend_dmg = s
+            return {"assigning": s,
+                    "left": int(state.pend_dmg_pool[s]) - _dmg_spent(state, table, s)}
+        # Nothing reachable is affordable, so there was never a choice here.
+        state.pend_dmg_done[s] = 1
+    state.pend_dmg = -1
+    return _apply_assignment(state, table, bf)
+
+
+def _apply_assignment(state: GameState, table: CardTable, bf: int) -> dict:
+    """Mark both seats' chosen kills, then destroy -- simultaneously (465.3)."""
+    pools = [int(state.pend_dmg_pool[s]) for s in range(N_SEATS)]
+    killed = []
+    for s in range(N_SEATS):
+        tg = _dmg_targets(state, s)
+        killed.append(_apply_kills(state, table, pools[s], tg,
+                                  _dmg_chosen(state, s), s,
+                                  _ignore_tank_here(state, table, tg, s)))
+    # Cleared before `_destroy`, which can suspend again (Altar of Blood) and
+    # re-enter the driver: a stale `pend_dmg_bf` would re-open the assignment
+    # and deal the damage twice.
+    state.pend_dmg = -1
+    state.pend_dmg_bf = -1
+    state.pend_dmg_done[:] = 0
+    state.pend_dmg_n_tgt[:] = 0
+    state.pend_dmg_n_kill[:] = 0
+    state.pend_dmg_targets[:] = -1
+    state.pend_dmg_kills[:] = -1
+    state.pend_dmg_pool[:] = 0
     for s, side in enumerate(killed):
         _prev = KILLER[:]
         KILLER[:] = [s, False]

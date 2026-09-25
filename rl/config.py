@@ -183,7 +183,18 @@ class Config:
     # In v1 the engine solves damage assignment instead of exposing it to the
     # policy: the subgame is separable and reduces to an ordered exact-lethal
     # knapsack, so there is nothing to learn. PLAN.md §5.3 gotcha 8.
-    engine_solves_damage_assignment: bool = True
+    # 465.2.c.2 gives the choice of which units combat damage kills to the
+    # player dealing it, and `[Tank]` / `[Backline]` exist to constrain exactly
+    # that choice -- so deciding it in the engine made both keywords
+    # strategically inert and left the policy with no gradient toward
+    # sequencing its attacks: batching was never punished, because the
+    # engine's defender never sniped the unit that mattered.
+    #
+    # False (the default since D1) hands the choice to the player whenever
+    # there IS one -- `combat.assignment_is_a_choice`, i.e. the pool cannot
+    # cover every target. True pins the old behaviour, which the judge cases
+    # and the combat tests rely on to stay deterministic.
+    engine_solves_damage_assignment: bool = False
 
     # --- reward ------------------------------------------------------------
     # Terminal-only, +/-1. gamma=1.0 makes the critic a literal win-probability
@@ -193,6 +204,16 @@ class Config:
 
     def at_victory_score(self, score: int) -> "Config":
         return replace(self, victory_score=score)
+
+    def with_solved_damage(self) -> "Config":
+        """Pin the pre-D1 behaviour: the ENGINE assigns combat damage.
+
+        For scenario tests. They assert which units a given pool kills, and
+        that is only a fixed answer while `solve_kills` owns the choice -- with
+        the player owning it the damage step suspends and waits to be asked,
+        which is the point of D1 but not what those tests are measuring.
+        """
+        return replace(self, engine_solves_damage_assignment=True)
 
 
 DEFAULT = Config()

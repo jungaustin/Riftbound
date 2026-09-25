@@ -42,8 +42,8 @@ from rl.engine.state import (C_ABIL, C_CARD, C_SRC, MAIN, P_ALIVE, P_CARD, P_DMG
                              bf_loc, fd_slots)
 
 T = full_table()
-V0 = Config().at_victory_score(3)                       # units only
-V1 = replace(Config().at_victory_score(3), units_only=False)
+V0 = Config().at_victory_score(3).with_solved_damage()                       # units only
+V1 = replace(Config().at_victory_score(3).with_solved_damage(), units_only=False)
 
 YORDLE = T.id_of("Lecturing Yordle")          # [Tank] When you play me, draw 1
 SPRITE_MOTHER = T.id_of("Sprite Mother")      # ...play a Sprite token here

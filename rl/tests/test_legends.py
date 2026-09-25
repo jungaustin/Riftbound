@@ -31,7 +31,7 @@ from rl.engine.state import (MAIN, P_ALIVE, P_CARD, P_CTRL, P_LOC, P_READY,
                              GameState, base_loc, bf_loc, legend_src)
 
 T = full_table()
-V1 = replace(Config().at_victory_score(8), units_only=False)
+V1 = replace(Config().at_victory_score(8).with_solved_damage(), units_only=False)
 
 VANILLA = next(c for c in range(T.n) if T.names[c] == "Shipyard Skulker")
 

@@ -32,7 +32,7 @@ from rl.engine.state import (N_BF, P_ALIVE, P_CARD, P_LOC, GameState,
                              base_loc, bf_loc)
 
 T = full_table()
-CFG = Config()
+CFG = Config().with_solved_damage()
 
 
 def ok(name):
@@ -449,7 +449,7 @@ from rl.engine import actions as A
 from rl.engine import chain
 from rl.engine.state import MAIN
 
-V1 = _replace(Config().at_victory_score(3), units_only=False)
+V1 = _replace(Config().at_victory_score(3).with_solved_damage(), units_only=False)
 BIRD = T.id_of("Bird")                     # 1 Might, [Deflect]
 RUNE_PRISON = T.id_of("Rune Prison")       # [Action] 2e1p: Stun a unit
 

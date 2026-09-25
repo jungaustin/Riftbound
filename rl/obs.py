@@ -154,7 +154,9 @@ ZONES = ("hand", "board", "battlefields", "facedown", "legends", "chain",
 # The +50 is `_standing` -- see that method for why each entry is there. A
 # measured audit found 24 pieces of standing state that the ENGINE reads to
 # decide the game and the encoder never touched, `victory_bonus` among them.
-GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2 + 7 + 4 + 51
+# The +4 after it is the suspended damage assignment -- who is assigning, the
+# budget left, and how many kills are committed. See `_standing`'s tail.
+GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2 + 7 + 4 + 51 + 4
 
 # ---------------------------------------------------------------------------
 # Every GameState field is either READ here or listed below with a reason.
@@ -199,6 +201,14 @@ OBS_UNREAD = frozenset({
     "pend_ask_yes", "pend_cost_recycle", "pend_cost_recycle_n", "pend_cull",
     "pend_cull_dest", "pend_cull_first", "pend_cull_keep", "pend_cull_mode",
     "pend_cull_skip", "pend_cull_type", "pend_discard", "pend_discard_ops",
+    # Combat damage assignment. The candidate rows ARE the action rows, so the
+    # target list and its count need no global; `pend_dmg_bf` is the battlefield
+    # the Showdown is already at. `pend_dmg_kills` is the honest exception --
+    # see `_standing`'s tail for why its identities are left out and what it
+    # would cost to include them. `pend_dmg`, `pend_dmg_pool` and
+    # `pend_dmg_n_kill` ARE read there -- the budget is the decision.
+    "pend_dmg_targets", "pend_dmg_n_tgt", "pend_dmg_bf", "pend_dmg_kills",
+    "pend_dmg_done",
     "pend_discard_src", "pend_discard_tgt", "pend_double", "pend_grave",
     "pend_grave_dest", "pend_grave_owner", "pend_hide", "pend_kill_play_loc",
     "pend_kill_play_seat", "pend_mull", "pend_order", "pend_phase",
@@ -791,6 +801,26 @@ class Encoder:
                 float(state.recycled_n[sd]) / 6.0,
                 float(state.banished_n[sd]) / 6.0,
             ]
+        # A suspended combat-damage assignment (465.2.c.2). The candidates are
+        # the action rows, so what they cannot carry is the BUDGET: how much of
+        # the pool is left to spend, and how many kills are already committed.
+        # Without those two the policy is choosing its second kill unable to
+        # tell a unit it has already doomed from one it can no longer afford --
+        # both simply stop being offered.
+        #
+        # Known gap, deliberately left: WHICH units this seat has already
+        # chosen is still invisible, because nothing is marked on the board
+        # until both seats answer (that is what keeps the sequential ask from
+        # leaking). Encoding it properly means a per-row "doomed by my pending
+        # assignment" flag, which widens `row_dim` for every zone; the two
+        # numbers here are the first-order part of the decision.
+        asg = int(state.pend_dmg)
+        g += [float(asg == seat),
+              float(asg == foe),
+              (float(int(state.pend_dmg_pool[seat])
+                     - combat._dmg_spent(state, self.table, seat)) / 6.0
+               if asg == seat else 0.0),
+              float(int(state.pend_dmg_n_kill[seat])) / 4.0 if asg == seat else 0.0]
         return g
 
     def _globals(self, state: GameState, seat: int,
@@ -981,6 +1011,16 @@ class Encoder:
             # offered this action, and they know what they hid.
             card = int(state.fd_card[act.arg])
             loc = bf_loc(fd_bf(act.arg))          # the arg is a SLOT
+        elif k == A.A_PICK and state.pend_dmg >= 0:
+            # Combat damage assignment: the arg is a PERMANENT ROW, not any
+            # buffer index, so `pick_card` would describe the wrong card
+            # entirely -- the same class of bug as `A_TARGET`'s below, where a
+            # location arg was read as a permanent row. What discriminates the
+            # candidates is the unit itself: what it is, where it stands, and
+            # how much Might it takes off the board when it dies.
+            card = int(state.perms[act.arg, P_CARD])
+            loc = int(state.perms[act.arg, P_LOC])
+            might = combat.might(state, self.table, act.arg)
         elif k == A.A_PICK:
             # The whole decision is WHICH card, so naming it is the only
             # feature that could discriminate between the candidates -- and it

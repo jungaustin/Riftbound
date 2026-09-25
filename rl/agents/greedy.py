@@ -125,6 +125,22 @@ def greedy_agent(rng: np.random.Generator):
         for a in legal:
             kinds.setdefault(a.kind, []).append(a)
 
+        # Combat damage assignment (465.2.c.2). Take the engine's own solver's
+        # answer, for the same reason `_would_wipe` does: the baseline must not
+        # disagree with the rules about Tank/Backline ordering or exact-lethal
+        # spending. It also keeps this baseline exactly as strong as it was
+        # before the choice was handed to players -- falling through to
+        # `legal[0]` would have made greedy worse and inflated every win rate
+        # measured against it.
+        if state.pend_dmg >= 0:
+            want = combat.dmg_solver_choice(state, table, seat)
+            if want >= 0:
+                for a in kinds.get(A.A_PICK, []):
+                    if int(a.arg) == want:
+                        return a
+            if A.A_PICK_NONE in kinds:
+                return kinds[A.A_PICK_NONE][0]
+
         # Filling a target slot: stun the biggest thing that is not ours.
         # Only unit slots carry a permanent row -- for every other kind the
         # baseline has no opinion and takes the first offer, which is honest

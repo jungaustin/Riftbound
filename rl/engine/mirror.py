@@ -61,6 +61,12 @@ SEAT_AXIS = (
     # does not touch -- so the rows swap wholesale, exactly like `no_spells`.
     "delayed",
     "played_types", "died_in_beginning",
+    # Combat damage assignment, per seat. `pend_dmg_targets` / `pend_dmg_kills`
+    # hold permanent ROWS, which mirroring leaves in place, and the pools and
+    # counts are plain numbers -- so each seat's row swaps wholesale and
+    # nothing inside it is rewritten. Same shape as `pend_cull_keep`.
+    "pend_dmg_pool", "pend_dmg_targets", "pend_dmg_n_tgt",
+    "pend_dmg_kills", "pend_dmg_n_kill", "pend_dmg_done",
     # Turn stamps indexed BY the seat that may look, so the permission follows
     # its owner across a swap.
     "saw_hand", "saw_fd",
@@ -92,6 +98,10 @@ SEAT_VALUED_SCALAR = ("pend_cull_first", "pend_cull_skip", "cull_spell_seat",
                       # seat-agnostic (it lists card ids) while this names who
                       # is looking -- the same split as pend_mull.
                       "pend_look", "pend_cull", "pend_discard",
+                      # Which seat is assigning combat damage right now. The
+                      # battlefield it happens at is `pend_dmg_bf`, which is a
+                      # BF slot shared by both players and so does not flip.
+                      "pend_dmg",
                       "pend_repeat_seat", "rp_seat", "rp_owner", "pend_split",
                       "pend_amount", "steal_seat", "pend_name", "resume_seat",
                       "pend_group_loc",
@@ -169,6 +179,10 @@ UNCHANGED = (
     "n_attached",
     # A permanent ROW: the row does not move when the seats swap.
     "pend_altar",
+    # A BATTLEFIELD slot (0..N_BF-1), not a location and not a seat: both
+    # players share the same three battlefields, so the index is already
+    # canonical. `bf_loc` turns it into a location where one is needed.
+    "pend_dmg_bf",
     # Parallel to `perms` by ROW, which mirroring leaves in place.
     "once_used", "desig", "altar_ply", "death_shield_ply", "guillotine_ply",
     "mark_ply", "mark_slot", "move_ply", "move_count",
