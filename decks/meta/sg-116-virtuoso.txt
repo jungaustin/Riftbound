@@ -1,0 +1,39 @@
+# Singapore Regional Qualifier -- #116 Jibbs
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Jhin - Virtuoso
+Champion: Jhin - Meticulous Killer
+Main Deck:
+3x Consult the Past
+3x Curtain Call
+3x Deadly Flourish
+2x Downstage Dramatics
+1x Falling Star
+2x Ferrous Forerunner
+3x Forecaster
+3x Noxus Hopeful
+1x Orb of Regret
+3x Plundering Poro
+2x Rocket Barrage
+2x Singularity
+3x Sprite Burst
+3x Stupefy
+2x Thousand-Tailed Watcher
+2x Time Warp
+1x Unchecked Power
+Battlefields:
+1x Frozen Fortress
+1x Rockfall Path
+1x Sigil of the Storm
+Runes:
+4x Fury Rune
+8x Mind Rune
+Sideboard:
+1x Bellows Breath
+1x Brittle Steel
+2x Decree of Insight
+1x Ferrous Forerunner
+1x Frigid Touch
+2x Pickpocket
+1x Square Up
+1x Temporal Breach

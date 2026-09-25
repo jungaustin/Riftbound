@@ -102,15 +102,21 @@ def make_game(table, cfg, seed):
     decks = [[int(rng.choice(pool)) for _ in range(30)] for _ in range(2)]
     runes = [[int(rng.integers(6)) for _ in range(12)] for _ in range(2)]
     bfs = [c for c in range(table.n) if table.is_type(c, "Battlefield")][:2]
-    return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
+    # The same match context the env derives -- see `game.deck_knowledge`.
+    return game.new_game(table, cfg, decks, runes, bfs, seed=seed,
+                         deck_known=game.deck_knowledge(cfg, seed))
 
 
 def make_v1_game(table, cfg, seed):
     """A spell game -- real deck size, real spell density, the DSL pool."""
     from rl.ppo import v1_deal            # imported lazily: ppo pulls in torch
     decks, runes, bfs, legends = v1_deal(table)(seed)
+    # No champions: a random pool is not a decklist, so it has no Chosen
+    # Champion to separate out (112). `deck_known` still applies -- it is match
+    # context, not a property of the list.
     return game.new_game(table, cfg, decks, runes, bfs, seed=seed,
-                         legends=legends)
+                         legends=legends,
+                         deck_known=game.deck_knowledge(cfg, seed))
 
 
 _DECK_DEAL = None
@@ -128,9 +134,14 @@ def make_deck_game(table, cfg, seed):
     if _DECK_DEAL is None:
         from rl.ppo import deck_pool_deal
         _DECK_DEAL = deck_pool_deal(table)
-    decks, runes, bfs, legends = _DECK_DEAL(seed)
+    decks, runes, bfs, legends, champions = _DECK_DEAL(seed)
+    # `champions` is not optional here even though `make_v1_game` has none to
+    # pass: `state_hash` digests every slot, so an env that places the Chosen
+    # Champion and an oracle that does not are two different games under one
+    # seed. That is exactly how `deck_known` broke test_env [1].
     return game.new_game(table, cfg, decks, runes, bfs, seed=seed,
-                         legends=legends)
+                         legends=legends, champions=champions,
+                         deck_known=game.deck_knowledge(cfg, seed))
 
 
 

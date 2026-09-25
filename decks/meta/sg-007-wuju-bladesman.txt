@@ -1,0 +1,39 @@
+# Singapore Regional Qualifier -- #7 GN Malediction
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Master Yi - Wuju Bladesman
+Champion: Master Yi - Tempered
+Main Deck:
+1x Back Off
+3x Charm
+3x Defy
+3x Discipline
+3x First Mate
+2x Grim Resolve
+3x Lonely Poro
+1x Onslaught
+2x Pit Rookie
+1x Primal Strength
+3x Punch First
+2x Rampage
+3x Rengar, Trophy Hunter
+2x Ruin Runner
+2x Sabotage
+3x Scuttle Crab
+2x Zhonya's Hourglass
+Battlefields:
+1x Emperor's Dais
+1x Grove of the God-Willow
+1x Seat of Power
+Runes:
+7x Body Rune
+5x Calm Rune
+Sideboard:
+1x Alpha Strike
+2x Decree of Focus
+1x Decree of Strength
+1x Disarming Rake
+1x Sabotage
+2x Tomb-Raider Barbara
+1x Vilemaw
+1x Zhonya's Hourglass

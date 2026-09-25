@@ -1,0 +1,39 @@
+# Singapore Regional Qualifier -- #35 justmilkey
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Jayce - Defender of Tomorrow
+Champion: Jayce, Brilliant Inventor
+Main Deck:
+3x Bellows Breath
+3x Catalyst of Aeons
+3x Clairvoyance
+3x Dazzling Aurora
+1x Deadly Flourish
+1x Downstage Dramatics
+3x Dredge Up
+3x Elder Dragon
+2x Flurry of Blades
+2x Garbage Grabber
+1x Gutter Palace
+3x Mobilize
+3x Platewyrm Egg
+3x Promising Future
+1x Rocket Barrage
+2x Sabotage
+2x Sprite Burst
+Battlefields:
+1x Dragon Roost
+1x Forgotten Monument
+1x Sigil of the Storm
+Runes:
+7x Body Rune
+5x Mind Rune
+Sideboard:
+1x Deadly Flourish
+1x Decree of Strength
+2x Disposal Order
+2x Repulse
+1x Sabotage
+1x Sprite Burst
+1x Turn to Dust
+1x Unyielding Spirit

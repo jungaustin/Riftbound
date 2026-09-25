@@ -1,0 +1,42 @@
+# Singapore Regional Qualifier -- #38 Big Willy Dfoe
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Irelia - Blade Dancer
+Champion: Irelia, Fervent
+Main Deck:
+2x Akali, Silent
+3x Boots of Swiftness
+2x Charm
+3x Defiant Dance
+3x Defy
+3x Discipline
+1x Edge of Night
+2x En Garde
+2x Flash
+2x Guardian Angel
+1x Lonely Poro
+1x Pyke - Returned
+1x Rebuke
+2x Ride The Wind
+3x Scuttle Crab
+2x Stacked Deck
+3x Stellacorn Herder
+3x Tideturner
+Battlefields:
+1x Abandoned Hall
+1x Sunken Temple
+1x Targon's Peak
+Runes:
+6x Calm Rune
+6x Chaos Rune
+Sideboard:
+2x Adaptatron
+1x Crumbling Sands
+1x Draven - Audacious
+1x Gust
+1x Hard Bargain
+1x Pyke - Returned
+1x Star-Crossed
+1x Twilight Shroud
+1x Vex - Apathetic

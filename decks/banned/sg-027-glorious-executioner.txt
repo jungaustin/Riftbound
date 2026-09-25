@@ -1,0 +1,39 @@
+# Singapore Regional Qualifier -- #27 V0LKATA2
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Draven - Glorious Executioner
+Champion: Draven, Showboat
+Main Deck:
+1x Blood Rush
+1x Cleave
+2x Edge of Night
+3x Evelynn - Entrancing
+2x Falling Star
+3x Kai'Sa, Survivor
+1x Kha'Zix - Mutating Horror
+3x Noxus Hopeful
+3x Overzealous Fan
+1x Pyke - Dockside Butcher
+2x Pyke - Returned
+3x Rebuke
+1x Rek'Sai - Breacher
+1x Rengar - Pouncing
+3x Spinning Axe
+3x Stacked Deck
+3x Tideturner
+3x Vex - Apathetic
+Battlefields:
+1x Forge of the Fluft
+1x Sigil of the Storm
+1x Star Spring
+Runes:
+6x Chaos Rune
+6x Fury Rune
+Sideboard:
+1x Abandon
+2x Brittle Steel
+1x Brynhir Thundersong
+1x Falling Star
+2x Ferrous Forerunner
+3x Ravenbloom Prefect

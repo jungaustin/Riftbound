@@ -12,4 +12,12 @@ venv/
 
 # macOS
 .DS_Store
+
+# Tooling caches
+.pytest_cache/
+.benchmarks/
+.ruff_cache/
+
+# Training artifacts -- checkpoints are megabytes and runs are reproducible from
+# their PROVENANCE.txt + the engine commit recorded in each checkpoint.
 rl/runs/

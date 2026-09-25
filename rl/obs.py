@@ -43,6 +43,7 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_SRC, F_BUFFED,
                              N_DOMAINS, N_GRANTABLE, N_SEATS, P_ALIVE,
                              P_ARRIVED, P_CARD,
                              P_CTRL, P_DMG, P_FLAGS, P_LOC, P_MIGHT_MOD,
+                             P_OWNER,
                              P_READY,
                              PHASE_NAMES, GameState, base_loc, bf_index,
                              bf_loc, fd_bf, fd_slots, is_battlefield, N_FD,
@@ -69,7 +70,16 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_SRC, F_BUFFED,
     25, 26, 27, 28, 29, 30, 31, 32, 33, 34)
 # CX_LOC spans N_LOCATIONS (5: two bases, two chosen battlefields, and the
 # Baron Pit's token slot), which is why CX_AFFORD starts at 14.
-CTX_DIM = 34 + N_GRANTABLE
+# --- the registered decklist (`_decks`) ---
+# Defined after the tuple rather than inside it because their indices depend on
+# N_GRANTABLE, which CX_GRANT spans.
+CX_ZONE_DECK = 34 + N_GRANTABLE      # this row describes a DECK, not an object
+CX_COPIES = CX_ZONE_DECK + 1         # copies in the registered list
+CX_SEEN = CX_ZONE_DECK + 2           # copies already visible in public zones
+CX_KNOWN = CX_ZONE_DECK + 3          # is CX_COPIES real, or is this a sighting?
+# --- the Champion Zone (108.3) ---
+CX_ZONE_CHAMP = CX_ZONE_DECK + 4     # this row is a Chosen Champion (103.2.a)
+CTX_DIM = 39 + N_GRANTABLE
 
 # Slot counts. Overflow is a bug, not a resize -- silently dropping a card from
 # the observation would be invisible in training.
@@ -106,12 +116,135 @@ CHAIN_SLOTS = 12
 # seat's "Exhaust:" ability is still available this turn. Nothing failed; the
 # information simply was not there. One definition, so a new zone cannot be
 # added to the observation and dropped from the network again.
-ZONES = ("hand", "board", "battlefields", "facedown", "legends", "chain")
+# Distinct cards per deck, one row each. **Derived from the real decklists**,
+# not chosen: measured over `deck_pool_deal`, a real 40-card list runs 14-22
+# distinct cards (mean 16.5, p95 20) because constructed decks play 3-ofs.
+# 32 is that with headroom.
+#
+# Unlike `hand` and `board`, overflow here must NOT assert -- not because it is
+# expected, but because the dealers are not all equally realistic. `v1_deal`
+# used to average 36.5 distinct cards: it sampled a large pool one card at a
+# time and only rejected a 4th copy, so repeats were accidents and its decks
+# were nearly singleton. It now picks distinct cards and assigns copy counts
+# from the measured distribution (17.4 distinct, `ppo.COPY_WEIGHTS`), and
+# `test_ppo` [8] holds it there. Rows are still ordered by copy count
+# descending, so anything that does overflow is the thinnest part of the least
+# realistic deck, and `n_deck_rows` in the globals tells the net how much it is
+# not seeing.
+DECK_SLOTS_PER_SEAT = 32
+DECK_SLOTS = N_SEATS * DECK_SLOTS_PER_SEAT
+
+# One row per seat, like `legends`: 108.3.a gives each player exactly one
+# Champion Zone and 112 puts exactly one card in it. Its own zone rather than
+# two more `legends` rows because 107.4 and 108.3 are different zones with
+# different rules -- a Legend never leaves (107.4.d) while a Chosen Champion is
+# meant to be played out of its zone (108.3.d) -- and a shared zone marker
+# would have the net learn the difference from a single context column.
+CHAMP_SLOTS = N_SEATS
+
+ZONES = ("hand", "board", "battlefields", "facedown", "legends", "chain",
+         "decks", "champions")
 
 # 5*N_DOMAINS: runes_ready + runes_spent for both seats (4), plus this seat's
 # pool_power (1). The +1 is pool_power's [A] column -- see state.D_ANY.
 # The +2 is `pending_ready_runes` for both seats -- see `_globals`.
-GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2 + 7
+# The +4 at the end is `_decks`' two knowledge flags and two row counts --
+# masked mean/max pooling discards how MANY rows a zone had, and "how much
+# of their deck have I actually seen" is the whole point of the zone.
+# The +50 is `_standing` -- see that method for why each entry is there. A
+# measured audit found 24 pieces of standing state that the ENGINE reads to
+# decide the game and the encoder never touched, `victory_bonus` among them.
+GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2 + 7 + 4 + 51
+
+# ---------------------------------------------------------------------------
+# Every GameState field is either READ here or listed below with a reason.
+#
+# `victory_bonus` is why this exists. Aspirant's Climb raises the Victory Score
+# by 1, `check_winner` honours it, and the observation never mentioned it -- so
+# the agent played every game of that matchup toward the wrong finish line, with
+# nothing failing. A measured probe (perturb a field, re-encode, see whether
+# anything moves) found 24 more like it.
+#
+# The lesson is not "add 24 fields". It is that the engine grows and the encoder
+# does not follow, silently, and no test noticed for months. So this set is the
+# same device as `mirror.SEAT_AXIS`: a new field must be classified, or the gate
+# in `test_env` fails and names it. Being listed here is a CLAIM -- that the
+# policy either does not need the field or can already see its consequence --
+# and the reason has to hold.
+#
+# The distinction that does the work: state which gates LEGALITY needs no entry
+# in the globals, because the action rows carry what is on offer and absence is
+# information. State that changes what a position is WORTH without changing what
+# can be done in it has to be given.
+
+OBS_UNREAD = frozenset({
+    # HIDDEN BY RULE -- a leak if encoded. 107.3.f / the deck's order.
+    "deck", "mull_mask", "n_look", "rune_deck", "rune_head",
+
+    # MID-RESOLUTION SCRATCH -- the ACTION ROWS carry the choice on offer, which
+    # is the only part a policy needs. These live between a suspend and its
+    # resume and are meaningless outside it.
+    "amt_kind", "amt_loc", "amt_spell", "bonus_uid", "chain_from_trigger",
+    "chain_targets", "chain_uid", "copy_pending", "cull_spell_seat",
+    "dj_cat", "dj_first", "dj_hand_keep", "dj_keep", "dj_rune_keep",
+    "dj_seat", "empower_src", "grenade_hits", "grenade_ply", "group_loc",
+    "group_loc_opts", "hp_attach", "hp_cost", "hp_dest", "hp_discount",
+    "hp_kw", "hp_max_energy", "hp_optional", "hp_spells", "hp_tag",
+    "hp_types", "kill_disc_e", "kill_disc_p", "last_burned", "last_token",
+    "last_token_n", "look_domain", "look_last_pick", "look_max_might",
+    "look_min_energy", "look_multi", "look_optional", "look_pick_dest",
+    "look_rest_dest", "look_reveal", "look_type_mask", "move_from",
+    "move_to", "n_attached", "n_group_loc", "n_name_opts", "n_sarc",
+    "name_opts", "name_src", "pend_altar", "pend_ask_caster", "pend_ask_no",
+    "pend_ask_yes", "pend_cost_recycle", "pend_cost_recycle_n", "pend_cull",
+    "pend_cull_dest", "pend_cull_first", "pend_cull_keep", "pend_cull_mode",
+    "pend_cull_skip", "pend_cull_type", "pend_discard", "pend_discard_ops",
+    "pend_discard_src", "pend_discard_tgt", "pend_double", "pend_grave",
+    "pend_grave_dest", "pend_grave_owner", "pend_hide", "pend_kill_play_loc",
+    "pend_kill_play_seat", "pend_mull", "pend_order", "pend_phase",
+    "pend_play_seat", "pend_repeat_bound", "pend_repeat_card",
+    "pend_repeat_hand", "pend_repeat_seat", "pend_repeat_tgts",
+    "pend_reveal", "pend_reveal_xp", "pend_split", "pend_tax_cost",
+    "pend_then", "pf_cards", "pf_first", "pf_stage", "resolving_bonus",
+    "resolving_paid", "resume_bound", "resume_card", "resume_ctx",
+    "resume_ctx2", "resume_hand", "resume_idx", "resume_kind", "resume_op",
+    "resume_seat", "resume_src", "resume_subj", "resume_tgts",
+    "reveal_hold_return", "reveal_play_loc", "rp_armed", "rp_cost",
+    "rp_discount", "rp_empower", "rp_from_sarc", "rp_here", "rp_kill",
+    "rp_owner", "rp_power", "rp_zone", "sarc_cards", "split_alloc",
+    "split_left", "split_loc", "split_spell", "split_xp", "steal_seat",
+    "steal_slot", "steal_stage", "steal_targets", "steal_uid",
+
+    # PER-PERMANENT DETAIL -- reflected in the board row's True Might / flags, or
+    # in whether the action is offered at all. A spent once-per-turn ability
+    # is visible as an A_ACTIVATE that is simply not there.
+    "altar_ply", "armory_ply", "banish_death_ply", "base_might_ply",
+    "base_might_val", "block_next_ply", "combat_might_ply",
+    "combat_might_val", "conquer_ply", "copy_of", "copy_via", "ctrl_link",
+    "death_shield_ply", "desig", "desig_seat", "double_dmg_ply", "eot_kind",
+    "eot_ply", "extra_buffs", "flow_grant_banish", "flow_grant_card",
+    "flow_grant_e", "flow_grant_p", "flow_grant_ply", "foe_dmg",
+    "granted_card", "granted_ply", "guillotine_ply", "hold_return",
+    "kw_grant_turn", "legend_pile", "mark_ply", "mark_seat", "mark_slot",
+    "might_hi", "mode_used_mask", "mode_used_ply", "move_count", "move_ply",
+    "n_hold_return", "named", "once_used", "shield_amt", "shield_ply",
+    "tag_grant", "zero_cards", "zero_owner",
+
+    # TERMINAL OR STRUCTURAL -- the episode is over, or a count the zone MASK
+    # already carries.
+    "bf_conquered_ply", "bf_contester", "bf_first_use", "bf_prev_ctrl",
+    "bf_replaced", "big_spell_ply", "buff_bonus_n", "buff_bonus_ply",
+    "chose_enemy_n", "chose_enemy_ply", "decl_mask", "died_in_beginning",
+    "discarded_ply", "draw_ply", "equip_played_ply", "excess_attacking",
+    "excess_ply", "focus", "free_gear_ply", "free_hide_ply",
+    "next_spell_bonus_ply", "next_spell_repeat_ply", "next_unit_ready_ply",
+    "no_cards", "no_effect_damage_ply", "pending_add_any", "played_types",
+    "pool_rstr_e", "pool_rstr_p", "power_spent_ply", "rune_recycled_n",
+    "second_draw_ply", "showdown_step", "trig", "truncated", "unit_died_ply",
+    "victory_score", "winner",
+
+})
+
 
 # Action-row layout after the kind one-hot and card block.
 ACT_EXTRA = N_LOCATIONS + 1 + 3 + 1 + 1 + 1 + 1 + 2 + 1 + MAX_MODES
@@ -440,9 +573,228 @@ class Encoder:
             m[k] = True
         return z, m
 
+
+    def _champions(self, state: GameState, seat: int):
+        """108.3 -- the Champion Zone, one Chosen Champion per seat.
+
+        **This is the other half of the pre-game archetype signature.** 103.1.a
+        puts the Champion Legend in a Public zone and `_decks` already reads it;
+        103.2.a.2 then requires the Chosen Champion to share that Legend's
+        champion tag, and 108.3.e makes this zone Public too. So before a card
+        is drawn both players know each other's Legend AND which build of that
+        champion is being piloted -- Darius - Trifarian and Darius - Reaper of
+        Noxus are the same Legend and very different decks.
+
+        Unconditional, with no `deck_known` gate: unlike the 40-card list, this
+        is public by rule in every game, in Bo1 game 1 as much as Bo3 game 3.
+
+        Not counted in `_decks`. 103.2 registers it inside the 40 but 133.4
+        starts it OUTSIDE the Main Deck, so folding it into the deck rows would
+        claim a card can still be drawn that is already on the table. The two
+        zones are complementary, and 11 of the 30 real lists run further copies
+        in the deck proper, which `_decks` reports on its own.
+
+        `CX_READY` is deliberately unset. A card in a zone is not a Game Object
+        with a ready state (133.4), and 705.1 has it hold no Buffs either.
+        """
+        z = np.zeros((CHAMP_SLOTS, self.row_dim), np.float32)
+        m = np.zeros(CHAMP_SLOTS, bool)
+        for k, owner in enumerate((seat, 1 - seat)):     # canonical: mine first
+            card = int(state.champion[owner])
+            if card < 0:
+                continue          # a random-pool deal has no decklist (112)
+            r = self._row(card, CX_ZONE_CHAMP)
+            r[self.card_dim + CX_MINE] = float(owner == seat)
+            z[k] = r
+            m[k] = True
+        return z, m
+
+
+    def _decks(self, state: GameState, seat: int):
+        """What this seat legitimately knows about each player's DECK.
+
+        **Why this zone exists.** The deck used to be one number -- how many
+        cards were left -- so a policy could not tell whether it was piloting
+        an aggressive list or a grindy one, and "play to your deck's plan" was
+        not a behaviour it could express. It saw four cards in hand and the
+        number 31.
+
+        **Three grades of knowledge, and the rules fix which applies.**
+
+        Your own list you always know. Against an opponent, 103.1.a puts their
+        Champion Legend in the Legend Zone at the start of the game and
+        355.10.a.1 makes that zone Public, while 103.1.b.2 has the Legend fix
+        the deck's entire Domain Identity -- so you always know the *shape* of
+        their deck before a card is drawn, and at competitive level a Legend
+        implies most of a list. On top of that, cards of theirs that have been
+        seen in public zones are known individually. Only the full registered
+        40 is conditional, and `state.deck_known` carries it: true in a match
+        after game 1, false against a stranger.
+
+        So each row is a distinct card with three numbers rather than one:
+
+          CX_COPIES   how many are in the registered list  (known lists only)
+          CX_SEEN     how many are already sitting in public zones
+          CX_KNOWN    whether CX_COPIES means anything at all
+
+        `CX_COPIES - CX_SEEN` is then "how many could still be hidden", which is
+        the quantity a player actually counts, and the net can form it. With an
+        unknown list only `CX_SEEN` is filled, and the row is a sighting.
+
+        **This is also where the trash finally arrives.** A trash is Public
+        (108.5) and is the single richest evidence for what remains in an
+        opponent's deck, but the observation carried it as `n_trash / 20` --
+        one scalar, contents discarded. Folding it in here rather than giving
+        it a zone of its own is the honest framing: a card in their trash is
+        not interesting as a trash card, it is interesting as a card you now
+        know their deck contained and no longer holds.
+
+        **Read as a multiset, never in order.** `state.decklist` is stored in
+        registration order and the live `deck` is in draw order; either read
+        positionally would leak the shuffle. Counting copies per distinct card
+        is order-free by construction, which is what keeps `test_env`'s
+        deck-order perturbation invisible.
+        """
+        z = np.zeros((DECK_SLOTS, self.row_dim), np.float32)
+        m = np.zeros(DECK_SLOTS, bool)
+        counts = np.zeros(2, np.float32)
+        for k, owner in enumerate((seat, 1 - seat)):     # canonical: mine first
+            known = (owner == seat) or bool(state.deck_known[owner])
+            reg: dict[int, int] = {}
+            if known:
+                n = int(state.n_decklist[owner])
+                for j in range(n):
+                    c = int(state.decklist[owner, j])
+                    if c >= 0:
+                        reg[c] = reg.get(c, 0) + 1
+            seen = self._seen_cards(state, owner)
+            # Deterministic order -- replay is bit-identical and must stay so.
+            # Copy count descending, so an overflowing procedural deck drops
+            # its singletons rather than its core.
+            cards = sorted(set(reg) | set(seen),
+                           key=lambda c: (-(reg.get(c, 0) + seen.get(c, 0)), c))
+            base = k * DECK_SLOTS_PER_SEAT
+            for i, card in enumerate(cards[:DECK_SLOTS_PER_SEAT]):
+                r = self._row(card, CX_ZONE_DECK)
+                c = self.card_dim
+                r[c + CX_MINE] = float(owner == seat)
+                r[c + CX_COPIES] = float(reg.get(card, 0)) / 3.0
+                r[c + CX_SEEN] = float(seen.get(card, 0)) / 3.0
+                r[c + CX_KNOWN] = float(known)
+                z[base + i] = r
+                m[base + i] = True
+            counts[k] = float(len(cards))
+        return z, m, counts
+
+    def _seen_cards(self, state: GameState, owner: int) -> dict[int, int]:
+        """Cards of `owner`'s that ANY player has legitimately seen, by count.
+
+        Public zones only, so this is safe to show either seat: the Trash
+        (108.5), the Banish pile (108.6.e), live permanents on the board, and
+        the Legend Zone (355.10.a.1). Deliberately NOT the hand, the facedown
+        card or the undrawn deck -- those are the hidden information the belief
+        head is meant to predict, and putting them here would be the leak the
+        zone is otherwise built to avoid.
+        """
+        out: dict[int, int] = {}
+
+        def add(card: int) -> None:
+            if card >= 0:
+                out[card] = out.get(card, 0) + 1
+
+        for j in range(int(state.n_trash[owner])):
+            add(int(state.trash[owner, j]))
+        for j in range(int(state.n_banished[owner])):
+            add(int(state.banished[owner, j]))
+        for i in range(int(state.n_perms)):
+            if (int(state.perms[i, P_ALIVE]) == 1
+                    and int(state.perms[i, P_OWNER]) == owner):
+                add(int(state.perms[i, P_CARD]))
+        add(int(state.legend[owner]))
+        return out
+
     # -- globals ---------------------------------------------------------
 
-    def _globals(self, state: GameState, seat: int) -> np.ndarray:
+    def _standing(self, state: GameState, seat: int) -> list[float]:
+        """Standing state the ENGINE reads and the policy could not see.
+
+        **Found by measurement, not by reading.** Perturbing a field and
+        re-encoding says definitively whether the policy can see it -- the same
+        trick as `test_env`'s leak test, inverted. 24 fields survived that probe
+        invisible, every one of them something a player at the table tracks.
+
+        The distinction that matters: state which gates LEGALITY is already
+        visible, because the action rows carry what is on offer and the agent
+        reads the consequence from an action's absence. What is not visible is
+        state that changes **what a position is worth** without changing what
+        can be done in it right now. `victory_bonus` is the pure case -- it
+        moves the finish line and touches no legal action.
+
+        Two encoding rules:
+          * a `*_ply` field holds a ply stamp, so what matters is `== state.ply`
+            ("is this live right now"), never the raw number. A stamp keyed on
+            anything else covered the opponent's turn too, which is the bug
+            [[riftbound-turn-is-a-round-ply-is-a-turn]] records.
+          * counters are scaled by roughly what a card counts TO, not by a
+            theoretical maximum, so the useful range fills the unit interval.
+        """
+        foe = 1 - seat
+        ply = int(state.ply)
+        # The REAL target, bonus included. `check_winner` computes exactly this
+        # (`cfg.victory_score + victory_bonus`), so anything else here would be
+        # the observation disagreeing with the rule that ends the game.
+        # Aspirant's Climb makes it 9, and because turns-to-win is
+        # `ceil((V - points) / 2)`, moving V by one INVERTS which scores are
+        # tempo-efficient. An off-by-one here is a whole wasted turn.
+        v = int(self.cfg.victory_score) + int(state.victory_bonus)
+        g = [float(v) / 8.0]
+        # Turns to win at ~2 points a turn, both seats. A LOWER BOUND, not a
+        # promise: non-Conquer sources (471.1.a.1) and a third battlefield both
+        # beat 2 a turn. Given exactly because it is exact arithmetic the policy
+        # would otherwise have to carve out of a smooth `points / vs` scalar --
+        # and because it is what decides whether a single point is worth the
+        # unit it costs. At 6 of 8 a point saves a turn; at 7 of 8 it saves
+        # nothing, and the unit that walked into a losing showdown to get it was
+        # spent for free.
+        for sd in (seat, foe):
+            need = max(0, v - int(state.points[sd]))
+            g.append(float((need + 1) // 2) / 4.0)
+        # Triggers queued but not yet resolved (383.3.d orders them). Something
+        # is about to happen that the board does not show yet.
+        g.append(min(1.0, float(state.n_trig) / 8.0))
+        # Consecutive passes: how close this priority window is to closing, and
+        # so whether the top of the Chain is about to resolve (340.4).
+        g.append(min(1.0, float(state.passes) / 2.0))
+        for sd in (seat, foe):
+            g += [
+                float(state.extra_turns[sd]),              # Time Warp
+                float(state.hold_points[sd]) / 2.0,         # bonus per Hold
+                float(state.hold_points_ply[sd] == ply),
+                float(state.legend_emp[sd]),                # 441.1.a, binary
+                float(state.legend_once[sd] == ply),        # already used
+                float(state.death_guard[sd] == ply),        # 136.2.d promise
+                float(state.riches_on[sd]),                 # Endless Riches
+                float(state.unit_tax_ply[sd] == ply),       # units cost more
+                float(state.units_enter_ready_turn[sd] == ply),
+                float(state.xp_gained_ply[sd] == ply),      # Wily Newtfish
+                float(state.next_spell_discount[sd]) / 3.0,
+                float(state.next_discount[sd, 0]) / 3.0,    # energy, and power
+                float(state.next_discount[sd, 1]) / 3.0,    # separately: runes
+                float(state.n_zero[sd]) / 4.0,              # The Zero Drive
+                float(state.legend_pile_n[sd]) / 4.0,       # Jhin counts to 4
+                float(state.spells_played[sd]) / 6.0,
+                float(state.cards_completed[sd]) / 6.0,
+                float(state.power_spent[sd]) / 6.0,
+                float(state.draw_count[sd]) / 6.0,
+                float(state.excess_amt[sd]) / 6.0,
+                float(int((state.delayed[sd] >= 0).sum())) / 4.0,
+                float(state.recycled_n[sd]) / 6.0,
+                float(state.banished_n[sd]) / 6.0,
+            ]
+        return g
+
+    def _globals(self, state: GameState, seat: int,
+                 deck_rows: np.ndarray) -> np.ndarray:
         foe = 1 - seat
         cfg = self.cfg
         vs = float(cfg.victory_score)
@@ -538,6 +890,18 @@ class Encoder:
         # OPPONENT's turn") would be invisible to the policy.
         g += [float(state.pending_ready_runes[seat]) / 2.0,
               float(state.pending_ready_runes[foe]) / 2.0]
+        # `_decks`, which masked pooling cannot carry on its own. The flags say
+        # whether each registered list is known -- theirs is what the policy
+        # conditions on, and MINE matters too, because a list the opponent has
+        # seen has no surprise left in it. The counts say how many distinct
+        # cards each deck row-set actually held, which is "how much of their
+        # deck have I seen" and is lost to mean/max pooling.
+        g += [float(state.deck_known[foe]),
+              float(state.deck_known[seat]),
+              float(deck_rows[0]) / float(DECK_SLOTS_PER_SEAT),
+              float(deck_rows[1]) / float(DECK_SLOTS_PER_SEAT)]
+
+        g += self._standing(state, seat)
 
         out = np.asarray(g, np.float32)
         assert out.size == GLOBAL_DIM, f"{out.size} globals, expected {GLOBAL_DIM}"
@@ -769,16 +1133,23 @@ class Encoder:
         builders = {"hand": self._hand, "board": self._board,
                     "battlefields": self._battlefields,
                     "facedown": self._facedown, "legends": self._legends,
-                    "chain": self._chain}
+                    "chain": self._chain, "decks": self._decks,
+                    "champions": self._champions}
         assert set(builders) == set(ZONES), "a zone has no builder"
         zones, masks = {}, {}
         for name in ZONES:
-            zones[name], masks[name] = builders[name](state, seat)
+            if name == "decks":
+                # The one builder that also returns a count, because pooling
+                # destroys it and `_globals` needs it. Kept explicit rather
+                # than stashed on `self`.
+                zones[name], masks[name], deck_rows = self._decks(state, seat)
+            else:
+                zones[name], masks[name] = builders[name](state, seat)
         acts, amask = self._actions(legal, state, seat)
         return Obs(
             zones=zones,
             zone_mask=masks,
-            globals=self._globals(state, seat),
+            globals=self._globals(state, seat, deck_rows),
             legal_actions=acts,
             action_mask=amask,
             to_move=seat,
@@ -800,6 +1171,8 @@ class Encoder:
             "facedown": (N_FD, self.row_dim),
             "legends": (N_SEATS, self.row_dim),
             "chain": (CHAIN_SLOTS, self.row_dim),
+            "decks": (DECK_SLOTS, self.row_dim),
+            "champions": (CHAMP_SLOTS, self.row_dim),
             "globals": (GLOBAL_DIM,),
             "actions": (self.a_max, self.act_dim),
             "privileged": (self.priv_dim,),

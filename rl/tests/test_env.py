@@ -501,6 +501,169 @@ ok(f"all {len(ZONES)} zones are declared in one place and reach the network")
 
 
 # ---------------------------------------------------------------------------
+print("\n[4d] the Champion Zone: the pre-game archetype signature (108.3)")
+from rl.decks import load_all, matchup
+from rl.obs import CX_MINE, CX_ZONE_CHAMP, CHAMP_SLOTS
+
+_pool = load_all(T, latest_only=True)
+
+# 103.2 registers the Chosen Champion inside the 40-card Main Deck; 133.4 starts
+# it in the Champion Zone instead. So `main` being 39 is not a card short of a
+# legal deck -- it is 40 minus the one that begins elsewhere. If this ever fails
+# the corpus has drifted and every deck in training is illegal by a card.
+_sizes = {len(d.main) + (1 if d.champion >= 0 else 0) for d in _pool}
+if _sizes != {40}:
+    die("champion", f"registered deck sizes are {_sizes}, not 40")
+# 103.2.b -- and three copies is the cap ACROSS both zones, not per zone.
+_over = [d.name for d in _pool
+         if d.champion >= 0 and d.main.count(d.champion) + 1 > 3]
+if _over:
+    die("champion", f"4 copies once the Champion Zone is counted: {_over}")
+ok(f"{len(_pool)} decklists are 39 + a Chosen Champion = 40, 3-copy limit intact")
+
+# 103.2.a.2 -- the Chosen Champion must share a champion tag with the Champion
+# Legend. That is what makes the pair an archetype rather than two cards: seeing
+# the Legend narrows the champion, and seeing the champion names the build.
+_bad = []
+for d in _pool:
+    if d.legend < 0 or d.champion < 0:
+        continue
+    if not (T.tags[d.legend] & T.tags[d.champion]):
+        _bad.append((d.name, T.names[d.legend], T.names[d.champion]))
+if _bad:
+    die("champion", f"103.2.a.2 -- champion tag does not match the Legend: {_bad[:3]}")
+ok("103.2.a.2 -- every list's champion shares a tag with its Legend")
+
+_e = Encoder(T, CFG)
+_d0, _d1 = _pool[0], _pool[1 % len(_pool)]
+_st = game.new_game(T, CFG, *matchup(_d0, _d1)[:3], seed=7,
+                    legends=[_d0.legend, _d1.legend],
+                    champions=[_d0.champion, _d1.champion])
+if [int(c) for c in _st.champion] != [_d0.champion, _d1.champion]:
+    die("champion", "112 -- the Chosen Champion was not placed in the zone")
+
+# 108.3.e -- Public Information, so BOTH seats see BOTH champions. This is the
+# one deck fact that needs no `deck_known`: it is public in Bo1 game 1.
+for _seat in range(2):
+    _o = _e.encode(_st, _seat, A.legal_actions(_st, T, CFG, _seat))
+    _m, _z = _o.zone_mask["champions"], _o.zones["champions"]
+    if not _m.all():
+        die("champion", f"seat {_seat} cannot see both champions: {_m}")
+    # Canonical order, as every other zone: this seat's own row first.
+    if not (_z[0][_e.card_dim + CX_MINE] == 1.0
+            and _z[1][_e.card_dim + CX_MINE] == 0.0):
+        die("champion", "CX_MINE is not canonical (own champion first)")
+    if not all(r[_e.card_dim + CX_ZONE_CHAMP] == 1.0 for r in _z):
+        die("champion", "the zone marker is unset, so rows alias the Legend Zone")
+    # Different decks, different champions -- the signal has to be a signal.
+    if _d0.champion != _d1.champion and np.array_equal(_z[0], _z[1]):
+        die("champion", "two different champions encode identically")
+ok("108.3.e -- both champions are public to both seats, own row first")
+
+# NOT double-counted. `_decks` reports what can still be DRAWN; a champion that
+# is already on the table must not also appear as a card left in the deck.
+_o0 = _e.encode(_st, 0, A.legal_actions(_st, T, CFG, 0))
+_reg = [int(c) for c in _st.decklist[0][:int(_st.n_decklist[0])]]
+if len(_reg) != len(_d0.main):
+    die("champion", "the registered deck absorbed the champion")
+if _reg.count(_d0.champion) != _d0.main.count(_d0.champion):
+    die("champion", "the Champion Zone copy leaked into the Main Deck Zone")
+ok("133.4 -- the champion is in its zone, not counted among cards left to draw")
+
+# A random pool is not a decklist, so it has no champion to separate out (112).
+# The zone must then be empty rather than holding a fabricated card.
+_sv = make_game(T, CFG, 3)
+_ov = _e.encode(_sv, 0, A.legal_actions(_sv, T, CFG, 0))
+if _ov.zone_mask["champions"].any() or _ov.zones["champions"].any():
+    die("champion", "a dealer with no decklist still produced a champion row")
+ok("a random-pool deal leaves the zone empty, not fabricated")
+
+
+# ---------------------------------------------------------------------------
+print("\n[4e] every engine field is read by the encoder, or classified")
+import re as _re
+from rl.obs import OBS_UNREAD
+from rl.engine.state import GameState as _GS
+
+# The gate that `victory_bonus` needed and did not have. Aspirant's Climb moved
+# the Victory Score, `check_winner` honoured it, the observation never mentioned
+# it -- so the agent aimed at the wrong finish line and nothing failed. This is
+# `mirror.SEAT_AXIS`'s device applied to the encoder: a new GameState field must
+# be read here or listed in OBS_UNREAD with a reason.
+_src = (__import__("pathlib").Path(__file__).resolve().parents[1] / "obs.py").read_text()
+_read = set(_re.findall(r"state\.(\w+)", _src))
+_slots = [x for x in _GS.__slots__ if x != "rng"]
+_unread = {x for x in _slots if x not in _read}
+
+_new = sorted(_unread - set(OBS_UNREAD))
+if _new:
+    die("obs-coverage",
+        f"{len(_new)} GameState field(s) reach neither the encoder nor "
+        f"OBS_UNREAD: {_new}\n"
+        f"    Either encode them, or add them to obs.OBS_UNREAD with the "
+        f"reason the policy does not need them.")
+_gone = sorted(set(OBS_UNREAD) - _unread)
+if _gone:
+    die("obs-coverage",
+        f"OBS_UNREAD lists {len(_gone)} field(s) the encoder now DOES read, or "
+        f"that no longer exist: {_gone}\n"
+        f"    Remove them -- a stale exemption hides the next one.")
+ok(f"all {len(_slots)} GameState fields accounted for "
+   f"({len(_slots) - len(_unread)} encoded, {len(OBS_UNREAD)} classified)")
+
+# The 24 that the audit found invisible. Perturb each into a LIVE value and the
+# encoding must move -- the leak test, inverted. Cheap, and it is the only check
+# that survives a refactor of how the globals are laid out.
+import copy as _copy
+_probe = make_game(T, CFG, 7)
+for _ in range(40):
+    if A.is_terminal(_probe): break
+    _lg = A.legal_actions(_probe, T, _cfg, int(_probe.priority))
+    if not _lg: break
+    A.apply(_probe, T, _cfg, _lg[0])
+_PLY_STAMPS = {"legend_once", "death_guard", "unit_tax_ply",
+               "units_enter_ready_turn", "xp_gained_ply", "hold_points_ply"}
+_AUDITED = ["victory_bonus", "extra_turns", "hold_points", "power_spent",
+            "spells_played", "cards_completed", "legend_pile_n", "legend_emp",
+            "legend_once", "death_guard", "riches_on", "unit_tax_ply",
+            "next_spell_discount", "next_discount", "n_zero",
+            "units_enter_ready_turn", "xp_gained_ply", "excess_amt",
+            "draw_count", "recycled_n", "banished_n", "delayed", "n_trig",
+            "passes"]
+_seat = 0
+_g0 = _enc.encode(_probe, _seat, A.legal_actions(_probe, T, _cfg, _seat)).globals
+_blind = []
+for _f in _AUDITED:
+    _s2 = _copy.deepcopy(_probe)
+    _v = getattr(_s2, _f)
+    if isinstance(_v, np.ndarray):
+        _v.reshape(-1)[:] = int(_s2.ply) if _f in _PLY_STAMPS else 3
+    else:
+        setattr(_s2, _f, int(_v) + 1)
+    _g1 = _enc.encode(_s2, _seat, A.legal_actions(_s2, T, _cfg, _seat)).globals
+    if np.array_equal(_g0, _g1):
+        _blind.append(_f)
+if _blind:
+    die("obs-coverage", f"standing state invisible to the policy again: {_blind}")
+ok(f"all {len(_AUDITED)} audited fields move the observation, incl. victory_bonus")
+
+# The tempo feature, which is the reason victory_bonus mattered. turns-to-win is
+# ceil((V - points)/2), so scores PAIR UP: at V=8, 6 and 7 are both one turn
+# away and the 7th point buys no tempo at all. Moving V by one inverts which
+# scores are efficient, which is why the bonus cannot be left out.
+def _turns(v, pts):
+    return (max(0, v - pts) + 1) // 2
+if not (_turns(8, 6) == _turns(8, 7) == 1 and _turns(8, 5) == 2):
+    die("obs-coverage", "turns-to-win arithmetic is wrong at V=8")
+if not (_turns(9, 7) == _turns(9, 8) == 1 and _turns(9, 6) == 2):
+    die("obs-coverage", "turns-to-win arithmetic is wrong at V=9")
+# ...and the parity really does invert: 6 is a milestone at V=8, 7 is at V=9.
+if not (_turns(8, 6) < _turns(8, 5) and _turns(9, 6) == _turns(9, 5)):
+    die("obs-coverage", "the parity of (V - score) does not invert with V")
+ok("471/194.3 tempo: (6,7) pair at V=8, (7,8) at V=9 -- parity inverts as it must")
+
+
+# ---------------------------------------------------------------------------
 print("\n[5] mask hygiene and the action cap")
 hist: Counter = Counter()
 for seed in range(120):
@@ -590,7 +753,7 @@ print("\n[mulligan] 116-117: draw 4, set aside up to 2, draw, THEN recycle")
 from rl.engine.game import MULLIGAN_MAX, STARTING_HAND, mulligan, new_game
 
 from rl.ppo import deck_pool_deal
-_decks, _runes, _bfs, _legends = deck_pool_deal(T, 0.0)(3)
+_decks, _runes, _bfs, _legends, _champs = deck_pool_deal(T, 0.0)(3)
 _s = new_game(T, CFG, _decks, _runes, _bfs, seed=3)
 # Seat 1 has not taken a turn, so its hand is the untouched 116 deal.
 if int(_s.n_hand[1]) != STARTING_HAND or STARTING_HAND != 4:

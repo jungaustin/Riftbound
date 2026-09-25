@@ -15,9 +15,14 @@ That makes this file the reference for the observation encoder. If the viewer
 shows it at `seat`, the policy may encode it; if it does not, encoding it is an
 information leak. Keeping the rule in one readable place beats rediscovering it
 inside a tensor layout -- a leak there is invisible and inflates every result
-that follows. The value head is the deliberate exception (asymmetric
-actor-critic, PLAN.md §1.5): it may see everything during training, because it
-is discarded at play time.
+that follows.
+
+This used to note the value head as a deliberate exception that saw everything.
+That is no longer the default: `value_sym` sees exactly what this viewer shows
+and drives learning, while the privileged `value_priv` is a detached diagnostic
+(`nets.RiftboundNet.values`). So the rule here now has no exception -- which is
+the point, since a stale spec is how `play.py` came to call a method that no
+longer existed.
 """
 
 from __future__ import annotations

@@ -1604,8 +1604,8 @@ _A, _B = _WITH_BF[0], _WITH_BF[1]
 # evaluator averages over a seat swap to cancel the first-player advantage --
 # and each half of that average was being played on a different pair of
 # battlefields, which is a confound and not an average.
-_, _, _fwd, _ = matchup(_A, _B)
-_, _, _rev, _ = matchup(_B, _A)
+_, _, _fwd, _, _ = matchup(_A, _B)
+_, _, _rev, _, _ = matchup(_B, _A)
 if sorted(_fwd) != sorted(_rev):
     die("matchup", f"swapping the seats changed which battlefields are in "
                    f"play: {[T.names[c] for c in _fwd]} vs "
@@ -1631,7 +1631,7 @@ ok("the 3x3 grid of presentations reaches all nine pairs")
 # A decklist with no battlefields must not supply BOTH of them.
 _EMPTY = DeckLoad(name="none", main=list(_A.main), runes=list(_A.runes),
                   battlefields=[], coverage=1.0)
-_, _, _borrowed, _ = matchup(_EMPTY, _B)
+_, _, _borrowed, _, _ = matchup(_EMPTY, _B)
 if _borrowed[0] not in _B.battlefields or _borrowed[1] not in _B.battlefields:
     die("matchup", "a deck printing no battlefields borrows, which is fine")
 if present(_EMPTY, 0, None) != -1:
@@ -9441,6 +9441,34 @@ opts = _rsv.legal_targets(s, T, spec[1], 0, 0, [], -1, source=lst)
 if poro not in opts or other in opts:
     die("the list", "only units with the named tag")
 ok("The List names a tag and shrinks units carrying it")
+
+# Flickered: it leaves the board and comes back, so TR_PLAY_ME fires again and a
+# NEW tag is named. Raised by the project owner. The hazard is not the rename --
+# it is that `state.named` is indexed by permanent ROW and rows are recycled, so
+# a reused row could inherit the last occupant's tag. `add_permanent` does not
+# clear `named` (unlike `kw_grant`); `compact_permanents` is what does it, moving
+# the value with the row and clearing freed rows to -1. This pins that.
+combat._destroy(s, T, lst)
+s.compact_permanents()
+if int(s.named[s.n_perms]) != -1:
+    die("the list", "compaction left a stale named tag on a freed row")
+# Compaction RENUMBERS the live rows, so `poro` and `other` are stale now --
+# which is the same hazard from the other side, and worth spelling out rather
+# than quietly working around. Re-find them by card.
+poro = next(i for i in range(s.n_perms) if int(s.perms[i, P_CARD]) == PLAIN2)
+other = next(i for i in range(s.n_perms) if int(s.perms[i, P_CARD]) == P3)
+lst2 = s.add_permanent(T.id_of("The List"), 0, base_loc(0), ready=True)
+if int(s.named[lst2]) != -1:
+    die("the list", f"re-entered row {lst2} inherited a named tag -- stale row")
+if _rsv.legal_targets(s, T, spec[1], 0, 0, [], -1, source=lst2):
+    die("the list", "targets offered before anything was named")
+_rsv.resolve(s, T, V1, spec[0], 0, [], -1, False, source=lst2)
+names2 = [_tv45(T)[int(s.name_opts[a.arg])] for a in A.legal_actions(s, T, V1, 0)]
+A.apply(s, T, V1, A.Action(A.A_PICK, names2.index("Pirate")))
+opts2 = _rsv.legal_targets(s, T, spec[1], 0, 0, [], -1, source=lst2)
+if other not in opts2 or poro in opts2:
+    die("the list", "renaming did not replace the previous tag restriction")
+ok("...and renames on re-entry, dropping the old tag rather than inheriting it")
 
 s = fresh(hand=[VENG])
 s.trash[0, 0] = VENG                             # seen in the OPPONENT's trash

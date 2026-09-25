@@ -1,0 +1,37 @@
+# Singapore Regional Qualifier -- #384 MaskofMomentum
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Renekton - Butcher of the Sands
+Champion: Renekton, Rage Fueled
+Main Deck:
+1x Cleave
+1x Darius - Trifarian
+1x Ferrous Forerunner
+3x First Mate
+1x Grim Apothecary
+3x Inferna
+3x Irresistible Faefolk
+3x Kai'Sa, Survivor
+3x Kinkou Initiate
+3x Nidalee - Cat Form
+3x Noxus Hopeful
+3x Pit Rookie
+3x Punch First
+3x Rampage
+3x Rengar, Trophy Hunter
+2x Sabotage
+Battlefields:
+1x Protective Sands
+1x Seat of Power
+1x Star Spring
+Runes:
+8x Body Rune
+4x Fury Rune
+Sideboard:
+1x Brittle Steel
+1x Brynhir Thundersong
+2x Decree of Rage
+2x Decree of Strength
+2x Ferrous Forerunner
+1x Sabotage
+1x Thermo Beam

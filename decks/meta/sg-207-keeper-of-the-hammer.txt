@@ -1,0 +1,35 @@
+# Singapore Regional Qualifier -- #207 SD LynisAllegra
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Poppy - Keeper of the Hammer
+Champion: Poppy - Paragon
+Main Deck:
+3x Blood Money
+3x Catalyst of Aeons
+3x Confront
+2x Cull the Weak
+3x Dazzling Aurora
+2x Divine Judgment
+3x Elder Dragon
+2x Flurry of Blades
+3x Forge of the Future
+3x Harnessed Dragon
+3x Mobilize
+2x Rift Herald
+2x Sabotage
+3x Sacrifice
+1x Salvage
+1x Vanguard Armory
+Battlefields:
+1x Forgotten Monument
+1x Sigil of the Storm
+1x Threshold of the Gray
+Runes:
+6x Body Rune
+6x Order Rune
+Sideboard:
+2x Rampage
+3x Rengar, Trophy Hunter
+1x Sabotage
+2x Salvage
+2x The Ruination

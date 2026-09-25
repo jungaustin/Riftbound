@@ -1,0 +1,35 @@
+# Singapore Regional Qualifier -- #40 MICE TheManLand
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Ornn - Fire Below the Mountain
+Champion: Ornn - Blacksmith
+Main Deck:
+2x Aspiring Engineer
+3x Brutalizer
+2x Charm
+3x Clockwork Keeper
+1x Cloth Armor
+3x Defy
+2x Guardian Angel
+1x Mask of Foresight
+3x Patched Porobot
+3x Pit Crew
+3x Poro Snax
+1x Retreat
+3x Scuttle Crab
+3x Seal of Focus
+3x Sprite Fountain
+3x Sterak's Gage
+Battlefields:
+1x Ornn's Forge
+1x Seat of Power
+1x Veiled Temple
+Runes:
+8x Calm Rune
+4x Mind Rune
+Sideboard:
+1x Charm
+2x Decree of Focus
+3x Decree of Insight
+3x Disarming Rake
+1x Not So Fast

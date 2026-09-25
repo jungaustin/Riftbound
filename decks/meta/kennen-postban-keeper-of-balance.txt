@@ -1,0 +1,38 @@
+# post-banlist list (unattributed) -- Keeper of Balance champion, Zed / Dragon Form
+# post-banlist Kennen -- added 2026-09-25 from lists supplied by the project owner
+Legend: Yordle, Kennen - Heart of the Tempest
+Champion: Kennen, Keeper of Balance
+Main Deck:
+2x Baron Nashor
+3x Treasure Hunter
+3x Traveling Merchant
+3x Tideturner
+3x Up from the Deep
+2x Dragon Form
+2x Star-Crossed
+3x Zed, Without a Sound
+2x Switcheroo
+3x Ride The Wind
+3x Hidden Blade
+1x Salvage
+3x Lightning Rush
+2x Fizz - Trickster
+1x Ocean Drake
+2x The Harrowing
+1x Abandon
+Battlefields:
+1x Forbidding Waste
+1x Zaun Warrens
+1x Minefield
+Runes:
+8x Chaos Rune
+4x Order Rune
+Sideboard:
+2x Illaoi, Prophet of the Great Kraken
+1x Kha'Zix - Mutating Horror
+1x Vex - Apathetic
+1x Ki Barrier
+1x Star-Crossed
+1x Invert Timelines
+2x Salvage
+1x Imperial Decree

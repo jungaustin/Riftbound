@@ -1,0 +1,38 @@
+# Singapore Regional Qualifier -- #380 Kudos
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Jax - Grandmaster At Arms
+Champion: Jax - Unmatched
+Main Deck:
+1x Back Off
+3x Brutalizer
+2x Challenge
+3x Counter Strike
+3x Defy
+3x Discipline
+2x Doran's Blade
+3x First Mate
+3x Guardian Angel
+3x Lonely Poro
+2x Lucian - Merciless
+2x Punch First
+1x Rampage
+2x Rengar, Trophy Hunter
+2x Sabotage
+2x Scuttle Crab
+2x Stellacorn Herder
+Battlefields:
+1x Ornn's Forge
+1x Sandswept Tomb
+1x Targon's Peak
+Runes:
+7x Body Rune
+5x Calm Rune
+Sideboard:
+2x Akshan - Mischievous
+1x Decree of Focus
+1x Disposal Order
+2x Fiora - Peerless
+1x Not So Fast
+1x Repulse
+2x Ruin Runner

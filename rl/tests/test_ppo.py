@@ -13,6 +13,8 @@ rather than crash it.
   [4] Entropy normalization -- invariant to the number of legal actions.
   [5] Gradients -- finite, and reaching every parameter.
   [6] An untrained net is ~50% against random, so the eval harness is sane.
+  [7] Hidden information reaches neither the policy nor the shared trunk.
+  [8] The procedural dealer is as REDUNDANT as a real decklist.
 """
 import sys
 
@@ -28,7 +30,8 @@ from rl.env import RiftboundEnv
 from rl.eval import duel
 from rl.nets import RiftboundNet, count_params, to_torch
 from rl.obs import Encoder
-from rl.ppo import HP, Step, Trainer, finish_episode, v0_deal
+from rl.ppo import (HP, MAIN_DECK_SIZE, Step, Trainer, deal_stats,
+                    deck_pool_deal, finish_episode, v0_deal, v1_deal)
 from rl.vec import batch
 
 T = full_table()
@@ -91,7 +94,7 @@ print("\n[2] masked logits carry no probability and no NaNs")
 env = RiftboundEnv(T, CFG, encoder=enc)
 obs = env.reset(3, *DEAL(3))
 t = to_torch(batch([obs] * 4), "cpu")
-logits, value = net(t)
+logits, value, value_aux = net(t)     # two critics since the symmetric head
 p = torch.softmax(logits, -1)
 n = obs.n_legal
 assert torch.isfinite(logits).all(), "non-finite logit"
@@ -206,5 +209,98 @@ if not 0.35 <= rate <= 0.65:
     die("eval", f"untrained net scored {rate:.1%} vs random -- the eval harness "
                 f"or the seat swap is wrong")
 ok(f"untrained net {rate:.1%} vs random (seat-swapped, so ~50% is correct)")
+
+
+# ---------------------------------------------------------------------------
+# The claim: the agent cannot learn to play by cheating. Two halves, and both
+# are architectural rather than conventional, so both can be tested directly.
+print("\n[7] hidden information cannot reach the policy, or the trunk")
+
+env = RiftboundEnv(T, CFG, encoder=enc)
+t = to_torch(batch([env.reset(11, *DEAL(11))]), "cpu")
+assert "privileged" in t, "the test needs the privileged field to perturb"
+
+# (a) Rewriting what ONLY the critic sees must not move a single action score.
+# `test_env` proves the observation excludes hidden information; this proves
+# the network has no second path to it.
+base_logits, _, _ = net(t)
+cheat = {k: (v if k != "privileged" else torch.randn_like(v))
+         for k, v in t.items()}
+cheat_logits, _, _ = net(cheat)
+if not torch.equal(base_logits, cheat_logits):
+    die("cheating", "scrambling the privileged input changed the action "
+                    "logits -- hidden information reaches the policy")
+ok("scrambling the opponent's hand and facedowns leaves every action score identical")
+
+# ...and the perturbation is not a no-op, or (a) proves nothing.
+if torch.equal(net(t)[2], net(cheat)[2]):
+    die("cheating", "the privileged critic did not move either -- the "
+                    "perturbation was inert and the test above is vacuous")
+ok("...while the privileged critic does move, so the control is live")
+
+# (b) The spare critic is fitted to the same returns, so its gradient exists --
+# but it must not reach the shared trunk. Otherwise switching the privileged
+# critic off would still let hidden-information gradients shape the features
+# the policy reads, which is the entire point of switching it off.
+net.zero_grad(set_to_none=True)
+_, _, aux = net(t)
+aux.sum().backward()
+trunk_grad = [p.grad for p in net.trunk.parameters() if p.grad is not None]
+enc_grad = [p.grad for p in net.card_enc.parameters() if p.grad is not None]
+leaked = [g for g in trunk_grad + enc_grad if g.abs().sum().item() > 0.0]
+if leaked:
+    die("cheating", f"the auxiliary critic put gradient on {len(leaked)} shared "
+                    f"trunk tensors -- `values` is not detaching it")
+ok("the auxiliary critic's gradient stops at its own head; the trunk is untouched")
+
+head_grad = sum(p.grad.abs().sum().item()
+                for p in net.value_priv.parameters() if p.grad is not None)
+if head_grad <= 0.0:
+    die("cheating", "the auxiliary critic got no gradient at all, so the "
+                    "detach test above is vacuous")
+ok("...and its own weights do get gradient, so it is genuinely being trained")
+net.zero_grad(set_to_none=True)
+
+# ---------------------------------------------------------------------------
+print("\n[8] the procedural dealer builds decks, not samples of a pool")
+# `v1_deal` drew 39 cards one at a time from a 339-card pool and rejected a 4th
+# copy, so a repeat was an accident: 36.5 distinct cards of 39, against 16.7 for
+# the real corpus. Nothing failed -- and nothing tested it -- but the `decks`
+# observation zone exists to condition on draw consistency, on what a trash
+# implies about what is left, and on archetype, and a near-singleton deck
+# misrepresents all three. Measured against the corpus, not against a guess.
+_real = deal_stats(T, deck_pool_deal(T, 0.0), 120)
+_proc = deal_stats(T, v1_deal(T), 300)
+print(f"    real  decks: {_real['distinct_mean']:.1f} distinct of "
+      f"{MAIN_DECK_SIZE}, copies 1/2/3 = {_real['copy_frac']}")
+print(f"    v1_deal    : {_proc['distinct_mean']:.1f} distinct of "
+      f"{MAIN_DECK_SIZE}, copies 1/2/3 = {_proc['copy_frac']}")
+
+if _proc["max_copies"] > 3:
+    die("dealer", f"103.2.b -- {_proc['max_copies']} copies of one card")
+# Within 3 of the corpus mean. Loose on purpose: the target is "a deck shaped
+# like a deck", not a specific number, and the spell/unit split forces two
+# truncations per deck which leaves a small excess of 1-ofs.
+if abs(_proc["distinct_mean"] - _real["distinct_mean"]) > 3.0:
+    die("dealer", f"v1_deal runs {_proc['distinct_mean']:.1f} distinct cards "
+                  f"against the corpus' {_real['distinct_mean']:.1f} -- decks "
+                  f"are not redundant like real lists")
+# The shape, not just the count: most of a real deck's distinct cards are maxed
+# out. A dealer could hit the mean with all-2-ofs and still be wrong.
+if _proc["copy_frac"][2] < 0.35:
+    die("dealer", f"only {_proc['copy_frac'][2]:.0%} of distinct cards are "
+                  f"3-ofs, against {_real['copy_frac'][2]:.0%} for real decks")
+ok(f"{_proc['distinct_mean']:.1f} distinct of {MAIN_DECK_SIZE} "
+   f"(corpus {_real['distinct_mean']:.1f}), {_proc['copy_frac'][2]:.0%} of them 3-ofs")
+
+# The reason the old dealer was not simply replaced by the real one: spell
+# density is what `v1_deal` is FOR, and it has to survive the rewrite.
+if not 0.28 <= _proc["spell_frac_mean"] <= 0.67:
+    die("dealer", f"spell density {_proc['spell_frac_mean']:.0%} left the "
+                  f"real range 28-67%")
+if _proc["deck_size"] != [MAIN_DECK_SIZE]:
+    die("dealer", f"deck sizes {_proc['deck_size']}, not {MAIN_DECK_SIZE}")
+ok(f"...at {_proc['spell_frac_mean']:.0%} mean spell density, every deck exactly "
+   f"{MAIN_DECK_SIZE} cards")
 
 print("\n\033[32mall ppo tests passed\033[0m")

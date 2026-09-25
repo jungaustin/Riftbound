@@ -1,0 +1,37 @@
+# Singapore Regional Qualifier -- #450 SGF Sevya
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Shen - Eye of Twilight
+Champion: Shen, Scourge of Shadows
+Main Deck:
+2x B.F. Sword
+1x Back Off
+2x Charm
+2x Deathgrip
+3x Defy
+3x Discipline
+2x Emperor's Divide
+2x En Garde
+2x Fiora - Victorious
+3x Hidden Blade
+2x Kennen, Keeper of Balance
+2x Ki Barrier
+3x Lonely Poro
+3x Loyal Poro
+2x Tasty Faefolk
+3x Unsung Hero
+2x Vi - Peacekeeper
+Battlefields:
+1x Fortified Position
+1x Kinkou Temple
+1x Trifarian War Camp
+Runes:
+6x Calm Rune
+6x Order Rune
+Sideboard:
+2x Ashe - Focused
+2x Decree of Focus
+2x Decree of Unity
+2x Disarming Rake
+1x Imperial Decree
+1x Vilemaw

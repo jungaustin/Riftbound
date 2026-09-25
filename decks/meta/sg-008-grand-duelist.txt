@@ -1,0 +1,36 @@
+# Singapore Regional Qualifier -- #8 Fr0zen
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Fiora - Grand Duelist
+Champion: Fiora - Worthy
+Main Deck:
+2x Challenge
+3x Dazzling Aurora
+2x Divining Shells
+3x Elder Dragon
+2x Flurry of Blades
+2x Harnessed Dragon
+3x Mobilize
+2x Poppy - Paragon
+3x Rampage
+3x Rengar, Trophy Hunter
+2x Repulse
+3x Rift Herald
+2x Riposte
+3x Sacrifice
+1x Sett, Brawler
+3x Shepherd's Heirloom
+Battlefields:
+1x Amateur Recital
+1x Risen Altar
+1x Sunken Temple
+Runes:
+8x Body Rune
+4x Order Rune
+Sideboard:
+1x Akshan - Mischievous
+1x Fiora - Victorious
+1x Forge of the Future
+3x Kayle, Justified
+2x Punch First
+2x Salvage

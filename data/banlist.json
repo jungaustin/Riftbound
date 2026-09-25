@@ -1,21 +1,61 @@
 {
-  "source": "https://riftbound.example/rules/banned-cards (Riot official rules site, Banned Cards tab)",
+  "source": "https://playriftbound.com/en-us/rules-hub/ (Riot official Rules Hub, Constructed Format Legality)",
   "note": "Riot bans outright rather than restricting - there is no restricted list.",
-  "effective": "2026-07-24",
-  "recorded": "2026-08-05",
+  "effective": "2026-09-18",
+  "recorded": "2026-09-25",
   "constructed": [
-    {"name": "Aspirant's Climb", "type": "Battlefield"},
-    {"name": "Obelisk of Power", "type": "Battlefield"},
-    {"name": "Reaver's Row", "type": "Battlefield"},
-    {"name": "The Arena's Greatest", "type": "Battlefield"},
-    {"name": "The Dreaming Tree", "type": "Battlefield"},
-    {"name": "Scrapheap", "type": "Gear"},
-    {"name": "Called Shot", "type": "Spell"},
-    {"name": "Fight or Flight", "type": "Spell"},
-    {"name": "Stacked Deck", "type": "Spell", "effective": "unknown (reported 2026-09-14)"},
-    {"name": "Draven - Vanquisher", "type": "Unit"},
-    {"name": "Ekko - Recurrent", "type": "Unit", "effective": "unknown (reported 2026-09-14)"},
-    {"name": "Stealthy Pursuer", "type": "Unit"}
+    {
+      "name": "Aspirant's Climb",
+      "type": "Battlefield"
+    },
+    {
+      "name": "Obelisk of Power",
+      "type": "Battlefield"
+    },
+    {
+      "name": "Reaver's Row",
+      "type": "Battlefield"
+    },
+    {
+      "name": "The Arena's Greatest",
+      "type": "Battlefield"
+    },
+    {
+      "name": "The Dreaming Tree",
+      "type": "Battlefield"
+    },
+    {
+      "name": "Scrapheap",
+      "type": "Gear"
+    },
+    {
+      "name": "Called Shot",
+      "type": "Spell"
+    },
+    {
+      "name": "Fight or Flight",
+      "type": "Spell"
+    },
+    {
+      "name": "Stacked Deck",
+      "type": "Spell",
+      "effective": "2026-09-18",
+      "note": "Date confirmed 2026-09-25 on the official Rules Hub; was recorded as 'unknown (reported 2026-09-14)'."
+    },
+    {
+      "name": "Draven - Vanquisher",
+      "type": "Unit"
+    },
+    {
+      "name": "Ekko - Recurrent",
+      "type": "Unit",
+      "effective": "2026-09-18",
+      "note": "Date confirmed 2026-09-25 on the official Rules Hub; was recorded as 'unknown (reported 2026-09-14)'."
+    },
+    {
+      "name": "Stealthy Pursuer",
+      "type": "Unit"
+    }
   ],
   "constructed_2v2_only": [
     {
@@ -23,7 +63,8 @@
       "type": "Legend",
       "printing": "Starter",
       "reason": "overshadowing every other 2v2 Legend option",
-      "note": "Banned as the Starter printing specifically. 2v2 Constructed only; legal in 1v1."
+      "note": "Banned as the Starter printing specifically. 2v2 Constructed only; legal in 1v1. Confirmed still listed 2026-09-25. rl/ trains 1v1, so this must NOT be filtered there -- two Singapore top-8 decks legally play it."
     }
-  ]
+  ],
+  "verified": "2026-09-25 against the live Rules Hub: the 7 cards and 5 battlefields match exactly. Only the effective date was stale (was recorded as 2026-07-24)."
 }

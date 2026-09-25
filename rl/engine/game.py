@@ -28,10 +28,29 @@ from rl.engine.state import MAX_DECK, N_DOMAINS, N_SEATS, RUNE_RING, GameState
 
 
 
+def deck_knowledge(cfg: Config, seed: int) -> list[int]:
+    """Which seats' registered decklists are known to the opponent, per episode.
+
+    Derived from the episode seed rather than dealt, so every existing
+    `deal_fn` keeps its signature and a replay reproduces the match context
+    along with the shuffle.
+
+    **Shared with the engine-side paths on purpose.** `deck_known` is inert to
+    the rules -- nothing in `actions`, `resolve` or `combat` reads it -- but it
+    is in `state_hash` because it is part of the position the *policy* sees.
+    So the env and `fuzz.make_game` have to derive it identically or test_env's
+    equivalence check fails on a difference that is not a wrapper bug.
+    """
+    rng = np.random.default_rng((int(seed), 0x9E3779B9))
+    return [int(rng.random() < cfg.deck_known_prob) for _ in range(N_SEATS)]
+
+
 def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
              rune_decks: list[list[int]], battlefields: list[int],
              seed: int = 0, mulligan_choices=None,
-             legends: list[int] | None = None) -> GameState:
+             legends: list[int] | None = None,
+             champions: list[int] | None = None,
+             deck_known: list[int] | None = None) -> GameState:
     """Deal a game. `decks` are card ids, `rune_decks` are domain ids.
 
     Battlefields start **uncontrolled**: each player picked one (486.5) but
@@ -43,6 +62,15 @@ def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
     before the first turn and never leaving it. Optional, and -1 per seat when
     omitted: a caller dealing a random pool has no decklist to take one from,
     and a game with no legend is a legal game with one fewer ability.
+
+    `champions` is each seat's Chosen Champion (103.2.a), the 40th registered
+    card, which 133.4 starts in the Champion Zone rather than the Main Deck --
+    which is why `decks` is 39 cards and not 40. Optional for the same reason
+    as `legends`: a random pool has no decklist, so no Chosen Champion.
+
+    `deck_known[seat]` says whether THIS seat's registered decklist is known to
+    its opponent -- the Bo3 game-2 case. Defaults to nobody knowing anything
+    beyond what the rules make public.
     """
     s = GameState()
     s.rng = np.random.default_rng(seed)
@@ -52,8 +80,13 @@ def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
 
     for seat in range(N_SEATS):
         deck = list(decks[seat])
-        s.rng.shuffle(deck)
+        # Registered before the shuffle, because that is what a decklist is.
+        # Kept because `deck` stops being one the moment cards are drawn --
+        # see `GameState.decklist`.
         assert len(deck) <= MAX_DECK, "deck larger than MAX_DECK"
+        s.n_decklist[seat] = len(deck)
+        s.decklist[seat, :len(deck)] = deck
+        s.rng.shuffle(deck)
         s.n_deck[seat] = len(deck)
         s.deck[seat, :len(deck)] = deck
 
@@ -80,6 +113,33 @@ def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
         if legends is not None and seat < len(legends):
             s.legend[seat] = int(legends[seat])
     s.legend_ready[:] = 1
+
+    # 112 -- and each player separates their Chosen Champion into the Champion
+    # Zone. 103.2 counts it in the 40-card Main Deck but 133.4 starts it here,
+    # so `decks` holding 39 and this holding the 40th is one deck, not a card
+    # short of one. Public to BOTH players (108.3.e), which together with the
+    # Legend is the whole pre-game archetype: you know what your opponent is
+    # playing before a single card is drawn.
+    #
+    # **108.3.d -- "can be played from here as normal" -- is NOT implemented.**
+    # Every play path takes a hand index, so a second source zone is a real
+    # feature and not a line of wiring. Until it lands the Chosen Champion is
+    # public information the policy conditions on and a card neither player can
+    # cast, which understates every deck by one guaranteed threat. Recorded as
+    # an engine gap in `rl/docs/PLAN.md`, not in `PARTIAL_TRANSCRIPTIONS` -- that set
+    # withholds cards whose own TEXT is unscripted, and there is nothing wrong
+    # with these cards' text. What is missing is a zone.
+    for seat in range(N_SEATS):
+        if champions is not None and seat < len(champions):
+            s.champion[seat] = int(champions[seat])
+
+    # 103.1.b.2 -- a Legend fixes the deck's Domain Identity, and the Legend
+    # Zone is Public (355.10.a.1), so *some* knowledge of the opponent's deck
+    # is unconditional. `deck_known` is the stronger claim on top of that: the
+    # full 40-card list, as in a match after game 1.
+    if deck_known is not None:
+        for seat in range(N_SEATS):
+            s.deck_known[seat] = int(bool(deck_known[seat]))
 
     s.active = 0
     s.turn = 1

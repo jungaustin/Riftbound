@@ -49,7 +49,7 @@ of it, which is another non-hand play that re-empowers the Legend.
 > legal Chosen Champions here are **Kennen, Storm of Shuriken** and **Kennen, Keeper of
 > Balance**. The repo's validator shared the same bug and has been fixed
 > (`riftbound/model.py: NON_CHAMPION_TAGS`, re-derivable via
-> `tools/derive_champion_tags.py`). The 100-player Vendetta tournament list in
+> `riftbound/tools/derive_champion_tags.py`). The 100-player Vendetta tournament list in
 > `decks/meta/ven-4-kennen-chaos-order.txt` independently runs this exact
 > configuration — Storm of Shuriken in the Champion Zone, 3x Fizz in the main deck.
 

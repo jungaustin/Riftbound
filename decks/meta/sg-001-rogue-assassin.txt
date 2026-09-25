@@ -1,0 +1,40 @@
+# Singapore Regional Qualifier -- #1 Gorica
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Akali - Rogue Assassin
+Champion: Akali, Deadly Weapon
+Main Deck:
+3x Astral Heron
+2x Back Off
+2x Blitzcrank - Impassive
+1x Block
+1x Darius - Trifarian
+3x Defy
+3x Discipline
+2x Falling Star
+3x Kai'Sa, Survivor
+2x Long Sword
+2x Mischievous Marai
+3x Mournful Witness
+1x Not So Fast
+1x Noxus Hopeful
+3x Shuriken Flip
+3x Stellacorn Herder
+1x Sterak's Gage
+3x Zhonya's Hourglass
+Battlefields:
+1x Forgotten Monument
+1x Sigil of the Storm
+1x Void Gate
+Runes:
+6x Calm Rune
+6x Fury Rune
+Sideboard:
+1x Against the Odds
+1x Akali, Silent
+1x Decree of Focus
+2x Disarming Rake
+1x En Garde
+2x Ferrous Forerunner
+1x Not So Fast
+1x Thermo Beam

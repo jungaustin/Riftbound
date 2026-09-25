@@ -1,0 +1,40 @@
+# Singapore Regional Qualifier -- #25 CTG Alanzq
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Mel - Soul's Reflection
+Champion: Mel, Defiant Soul
+Main Deck:
+3x Applied Researchers
+1x Bellows Breath
+3x Dredge Up
+1x Lecturing Yordle
+3x Ravenbloom Student
+3x Rebuttal
+3x Shock Blast
+2x Singularity
+1x Smoke Screen
+3x Stacked Deck
+1x Star-Crossed
+3x Stupefy
+1x Switcheroo
+2x Thousand-Tailed Watcher
+3x Time Warp
+3x Traveling Merchant
+3x Up from the Deep
+Battlefields:
+1x Ravenbloom Conservatory
+1x Rockfall Path
+1x Threshold of the Gray
+Runes:
+5x Chaos Rune
+7x Mind Rune
+Sideboard:
+1x Abandon
+1x Acceptable Losses
+2x Decree of Insight
+1x Kha'Zix - Mutating Horror
+1x Mel, Newly Awakened
+2x Pickpocket
+1x Star-Crossed
+1x Turn to Dust

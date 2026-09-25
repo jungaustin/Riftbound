@@ -85,10 +85,15 @@ class DeckLoad:
     # 103.1 -- the Champion Legend, which every decklist declares and which is
     # in the Legend Zone from turn 1 (111). -1 when the list did not name one.
     legend: int = -1
-    # 103.1.b's Champion Unit. Recorded but not yet read by the engine: the
-    # Champion Zone (107.5) and its interactions are not built, and a field
-    # that looks live but is never consulted is worse than an absent one, so
-    # this is here only because the decklists carry it.
+    # 103.2.a's Chosen Champion. **The 40th card**: 103.2 counts it in the
+    # 40-card Main Deck, 133.4 starts it in the Champion Zone instead, and that
+    # is exactly why `main` is 39 -- every list in the corpus is 39 + this, and
+    # the 3-copy limit holds across both zones (11 of the 30 run further copies
+    # in `main`, never a 4th).
+    #
+    # Read by the engine since 2026-09-24: `game.new_game` places it (112) and
+    # the observation carries it as public information (108.3.e). What is still
+    # missing is 108.3.d, playing it from that zone -- see `new_game`.
     champion: int = -1
     # **`coverage` deliberately excludes battlefields**, and that is a
     # reporting hazard, not a convenience: every deck in the corpus prints 3,
@@ -595,14 +600,25 @@ def decklist_files(root: Path | None = None,
     newest version of each personal deck; the meta folder is always kept whole.
     """
     root = Path(root or (ROOT / "decks"))
-    meta = sorted((root / "meta").glob("*.txt"))
+    # `decks/banned/` holds real tournament lists that are ILLEGAL under the
+    # current banlist -- kept for reference and meta analysis, never trained on.
+    # Excluded here rather than at the call sites: `rglob` would otherwise sweep
+    # them in silently, and a policy trained against a banned card is learning a
+    # game nobody is allowed to play. `cli.py check` is the other half of this.
+    EXCLUDE = {"banned"}
+    def _keep(f: Path) -> bool:
+        return not (set(f.relative_to(root).parts[:-1]) & EXCLUDE)
+    meta = sorted(f for f in (root / "meta").glob("*.txt") if _keep(f))
     if meta_only:
         return meta
     if not latest_only:
-        return sorted(root.rglob("*.txt"))
+        return sorted(f for f in root.rglob("*.txt") if _keep(f))
     by_folder: dict[Path, list[Path]] = {}
     for f in sorted(root.rglob("*.txt")):
-        if f.parent.name == "meta":
+        # `_keep` is needed here too, not just above: a banned PERSONAL deck sits
+        # at decks/banned/<deck>/vN.txt, whose parent is the deck name rather
+        # than "meta", so the skip below would let it straight through.
+        if f.parent.name == "meta" or not _keep(f):
             continue
         by_folder.setdefault(f.parent, []).append(f)
     # An unversioned filename sorts to -1, so a folder holding exactly one
@@ -658,8 +674,10 @@ def present(deck: DeckLoad, pick: int = 0,
 
 def matchup(a: DeckLoad, b: DeckLoad, rune_size: int = 12,
             n_bf: int = 2, picks: tuple[int, int] = (0, 0)
-            ) -> tuple[list, list, list, list]:
+            ) -> tuple[list, list, list, list, list]:
     """Two DeckLoads as `game.new_game` arguments.
+
+    Five elements: decks, rune decks, battlefields, legends, champions.
 
     486.5: **each player selects one of their OWN three battlefields**, and the
     two are placed simultaneously. With N_BF=2 that is exactly one from each
@@ -684,4 +702,8 @@ def matchup(a: DeckLoad, b: DeckLoad, rune_size: int = 12,
     runes = [(a.runes * 3)[:rune_size], (b.runes * 3)[:rune_size]]
     bfs = [present(a, picks[0], b), present(b, picks[1], a)][:n_bf]
     legends = [a.legend, b.legend]
-    return decks, runes, bfs, legends
+    # 112/133.4 -- the Chosen Champion starts in the Champion Zone, so it is a
+    # FIFTH element rather than a 40th card in `decks`. Callers that only want
+    # the board setup unpack four and ignore it.
+    champions = [a.champion, b.champion]
+    return decks, runes, bfs, legends, champions

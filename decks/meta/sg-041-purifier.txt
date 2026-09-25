@@ -1,0 +1,36 @@
+# Singapore Regional Qualifier -- #41 Motionless
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Lucian - Purifier
+Champion: Lucian - Merciless
+Main Deck:
+2x Blighted Battleaxe
+3x Doran's Blade
+2x Falling Star
+2x Ferrous Forerunner
+3x First Mate
+3x Irresistible Faefolk
+3x Kai'Sa, Survivor
+3x Kinkou Initiate
+3x Long Sword
+3x Noxus Hopeful
+3x Pit Rookie
+2x Poppy - Paragon
+3x Punch First
+2x Relentless Pursuit
+2x Sabotage
+Battlefields:
+1x Forbidding Waste
+1x Forge of the Fluft
+1x Windswept Hillock
+Runes:
+6x Body Rune
+6x Fury Rune
+Sideboard:
+1x Brynhir Thundersong
+1x Decree of Strength
+1x Ferrous Forerunner
+1x Pendulum Blade
+3x Rampage
+2x Ruin Runner
+1x Sabotage

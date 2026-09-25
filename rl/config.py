@@ -159,6 +159,21 @@ class Config:
 
     # --- action space ------------------------------------------------------
     max_actions: int = 64             # assert on overflow, log the distribution
+
+    # How often each seat's registered decklist is KNOWN to its opponent, drawn
+    # independently per seat at reset. This is not a rules value -- it is the
+    # match context the episode is standing in. A Legend is public from setup
+    # (103.1.a, 355.10.a.1) and fixes the Domain Identity (103.1.b.2), so the
+    # archetype is never hidden; what this knob varies is the stronger claim of
+    # the full 40, which is the Bo3 game-2 situation.
+    #
+    # **Randomized rather than fixed on purpose.** Trained always-known, the
+    # policy never learns to read an archetype from how it is being played, and
+    # is helpless in game 1 -- which is most games against a stranger. Trained
+    # always-unknown, the explicit conditioning is dead weight. 0.5 exercises
+    # both paths; the per-seat independence also produces the one-sided case,
+    # where the opponent knows your list and you do not know theirs.
+    deck_known_prob: float = 0.5
     # Ordinary movement is base <-> battlefield ONLY; lateral battlefield-to-
     # battlefield movement requires [Ganking]. Confirmed with the project owner.
     lateral_movement_needs_ganking: bool = True

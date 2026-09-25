@@ -455,12 +455,22 @@ TIP: Sideboard against the specific decks you expect to face.
   everywhere converts nothing.
 
 TIP: Battlefields are legal sideboard cards.
-  WHY: Competitive lists do include them, and the sideboard rules explicitly
-  note battlefield rules still apply. This is easy to overlook.
+  *** WRONG -- CORRECTED 2026-09-25. Battlefields may NOT be sideboarded. ***
+  Tournament Rules 601.1.c.2: "A sideboard can consist only of valid Main Deck
+  cards." A battlefield is not a Main Deck card -- each player provides exactly
+  3 separately (601.1.a). And 403.4.b is explicit: "In constructed formats, a
+  player may not change their Runes, Legend, or Battlefields at any point after
+  deck registration." Flagged by the project owner, confirmed against
+  data/tournament_rules.txt.
 
 TIP: Run zero sideboard cards if you only play best-of-one.
-  WHY: Sideboarding isn't permitted in best-of-one at all, so the slots do
-  nothing. The rules allow 0 as a legal choice for exactly this reason.
+  *** STALE -- CORRECTED 2026-09-25. Bo1 sideboarding IS permitted, at the
+  head judge's option. *** Tournament Rules 406.1.g lets the head judge use an
+  altered Bo1 setup "to closer mirror the best of 3 experience", and 406.1.g.5
+  gives players "the opportunity to sideboard as if they were in between games
+  of a best of 3 match". So it is event-dependent rather than forbidden, and
+  recently it has typically been allowed (project owner). 0 is still a legal
+  sideboard size, but not for this reason.
 
 TIP: Situational-but-powerful cards belong here, not in the main deck.
   WHY: Cards with a fantastic power-to-cost ratio against one narrow target

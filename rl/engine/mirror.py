@@ -29,6 +29,9 @@ from rl.engine.state import (C_CTRL, C_CTX, C_CTX2, C_OWNER, N_SEATS, P_CTRL, P_
 # Rows are per-seat: swap axis 0.
 SEAT_AXIS = (
     "hand", "n_hand", "deck", "deck_ptr", "n_deck", "trash", "n_trash",
+    # The registered decklist and whether the opponent knows it. Card ids,
+    # which mirroring does not touch -- the row swaps wholesale.
+    "decklist", "n_decklist", "deck_known",
     "runes_ready", "runes_spent", "rune_deck", "rune_head", "rune_left",
     "banished", "n_banished",
     "pool_energy", "pool_power", "bf_scored", "bf_first_use", "points",

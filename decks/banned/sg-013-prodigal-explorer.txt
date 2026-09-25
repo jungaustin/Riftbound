@@ -1,0 +1,45 @@
+# Singapore Regional Qualifier -- #13 fafafgvcwrqrebcg
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Ezreal - Prodigal Explorer
+Champion: Ezreal, Prodigy
+Main Deck:
+3x Bellows Breath
+3x Bewitching Spirit
+3x Deadly Flourish
+3x Fizz - Trickster
+1x Gust
+1x Hard Bargain
+3x Pack of Wonders
+1x Pickpocket
+1x Rebuke
+1x Singularity
+1x Sprite Fountain
+3x Stacked Deck
+1x Star-Crossed
+3x Stupefy
+2x The List
+2x Thousand-Tailed Watcher
+2x Treasure Trove
+1x Turn to Dust
+2x Vex - Apathetic
+2x Wages of Pain
+Battlefields:
+1x Frozen Fortress
+1x Sigil of the Storm
+1x Void Gate
+Runes:
+6x Chaos Rune
+6x Mind Rune
+Sideboard:
+1x Abandon
+1x Acceptable Losses
+1x Angler Beast
+1x Kha'Zix - Mutating Horror
+1x Mindsplitter
+1x Pickpocket
+1x Sprite Fountain
+1x Star-Crossed
+1x Turn to Dust
+1x Vex - Apathetic

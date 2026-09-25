@@ -72,6 +72,12 @@ class HP:
     clip_coef: float = 0.2
     ent_coef: float = 0.01        # applied to the NORMALIZED entropy (§6.3)
     vf_coef: float = 0.5
+    # Which critic drives the advantage. False -- the honest one, seeing only
+    # what the policy sees -- is the default; see `nets.RiftboundNet.values`
+    # for why the privileged critic is an approximation rather than a free
+    # variance reduction. Both are trained either way, so flipping this and
+    # comparing `explained_var` / `explained_var_aux` settles it by measurement.
+    privileged_critic: bool = False
     max_grad_norm: float = 0.5
     anneal_lr: bool = True
 
@@ -184,7 +190,9 @@ class Trainer:
         self.table, self.cfg, self.hp, self.device = table, cfg, hp, device
         self.deal_fn = deal_fn
         self.vec = VecRiftbound(table, cfg, hp.n_envs, deal_fn, seed0=seed)
-        self.net = RiftboundNet(self.vec.shapes()).to(device)
+        self.net = RiftboundNet(
+            self.vec.shapes(),
+            privileged_critic=hp.privileged_critic).to(device)
         self.opt = torch.optim.Adam(self.net.parameters(), lr=hp.lr, eps=1e-5)
         self.gen = torch.Generator(device="cpu").manual_seed(seed)
         self.obs = self.vec.reset()
@@ -207,7 +215,9 @@ class Trainer:
         key = id(entry)
         net = self._opp_cache.get(key)
         if net is None:
-            net = RiftboundNet(self.vec.shapes()).to(self.device)
+            net = RiftboundNet(
+                self.vec.shapes(),
+                privileged_critic=self.hp.privileged_critic).to(self.device)
             net.load_state_dict(entry.state_dict)
             net.eval()
             if len(self._opp_cache) > self.hp.pool_capacity + 2:
@@ -306,7 +316,8 @@ class Trainer:
         ret_all = torch.as_tensor([s.ret for s in steps], dtype=torch.float32,
                                   device=dev)
 
-        stats = {"pg": 0.0, "vf": 0.0, "ent": 0.0, "kl": 0.0, "clipfrac": 0.0}
+        stats = {"pg": 0.0, "vf": 0.0, "vf_aux": 0.0, "ent": 0.0,
+                 "kl": 0.0, "clipfrac": 0.0}
         nb = 0
         for _ in range(hp.update_epochs):
             order = torch.randperm(n, generator=self.gen).to(dev)
@@ -328,7 +339,7 @@ class Trainer:
                 if "privileged" in obs:
                     sub["privileged"] = obs["privileged"][mb]
 
-                logp, ent, value = self.net.evaluate(sub, act[mb])
+                logp, ent, value, value_aux = self.net.evaluate(sub, act[mb])
                 ratio = (logp - old_logp[mb]).exp()
 
                 # Normalized per minibatch, which is what CleanRL does and what
@@ -340,7 +351,13 @@ class Trainer:
                                -a * ratio.clamp(1 - hp.clip_coef,
                                                 1 + hp.clip_coef)).mean()
                 vf = 0.5 * (value - ret_all[mb]).pow(2).mean()
-                loss = pg - hp.ent_coef * ent.mean() + hp.vf_coef * vf
+                # The spare critic is fitted to the same returns so the two can
+                # be compared head to head, and it reaches the trunk through a
+                # detached input, so this term cannot move the shared
+                # representation -- only its own weights. See `nets.values`.
+                vf_aux = 0.5 * (value_aux - ret_all[mb]).pow(2).mean()
+                loss = (pg - hp.ent_coef * ent.mean()
+                        + hp.vf_coef * vf + hp.vf_coef * vf_aux)
                 # A single NaN reaches every parameter through one Adam step
                 # and the run continues producing plausible-looking output
                 # forever after. Cheap to check, impossible to notice later.
@@ -356,6 +373,7 @@ class Trainer:
                 with torch.no_grad():
                     stats["pg"] += pg.item()
                     stats["vf"] += vf.item()
+                    stats["vf_aux"] += vf_aux.item()
                     stats["ent"] += ent.mean().item()
                     # Schulman's low-variance KL estimator.
                     d = old_logp[mb] - logp
@@ -409,6 +427,37 @@ MAIN_DECK_SIZE = 39
 MAX_COPIES = 3
 SPELL_RATE_RANGE = (0.28, 0.67)
 
+# Copies per DISTINCT card, measured over the same 30 lists: 17.8% of a real
+# deck's distinct cards are singletons, 30.4% are 2-ofs and 51.8% are 3-ofs --
+# 16.7 distinct cards in 39, with more than half of them maxed out. A deck is
+# not a sample of a pool, it is a short list of cards you want to see every
+# game, and that redundancy is what `obs.py`'s `decks` zone conditions on:
+# draw consistency, what the trash implies about what is left, and archetype.
+# A near-singleton deck misrepresents all three.
+COPY_WEIGHTS = (0.178, 0.304, 0.518)
+
+
+def _engine_rev() -> str:
+    """The engine commit a checkpoint was trained against.
+
+    Without it, a checkpoint is unreproducible: find a rules bug in three days
+    and there is no way to tell which runs were trained against the broken rule.
+    `"<sha>-dirty"` when the tree has uncommitted changes, because that is the
+    honest answer and a silent sha would be worse than none.
+    """
+    import subprocess
+    try:
+        root = Path(__file__).resolve().parents[1]
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root,
+                             capture_output=True, text=True, timeout=10)
+        if sha.returncode != 0:
+            return "unknown"
+        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=root,
+                               capture_output=True, text=True, timeout=10)
+        return sha.stdout.strip() + ("-dirty" if dirty.stdout.strip() else "")
+    except Exception:
+        return "unknown"
+
 
 def v1_deal(table, deck_size: int = MAIN_DECK_SIZE,
             spell_rate: tuple[float, float] | float = SPELL_RATE_RANGE):
@@ -432,21 +481,33 @@ def v1_deal(table, deck_size: int = MAIN_DECK_SIZE,
     bfs = [c for c in range(table.n) if table.is_type(c, "Battlefield")][:2]
 
     def _build(rng, want_spells: int) -> list[int]:
-        """Fill a deck respecting the 3-copy limit, spells first."""
+        """Fill a deck the way a list is WRITTEN: distinct cards, then copies.
+
+        The old version drew `deck_size` cards one at a time from the whole
+        pool and rejected a 4th copy, so a repeat was an accident -- with 233
+        spells and 106 units to choose from, decks came out nearly singleton
+        (36.5 distinct of 39, against 16.7 for the real lists). Copies are
+        chosen deliberately instead, from the measured distribution.
+        """
         deck: list[int] = []
-        counts: dict[int, int] = {}
 
         def take(pool, n):
-            tries = 0
-            while n > 0 and tries < 500:
-                tries += 1
-                c = int(rng.choice(pool))
-                if counts.get(c, 0) >= MAX_COPIES:
-                    continue
-                counts[c] = counts.get(c, 0) + 1
-                deck.append(c)
-                n -= 1
-            return n
+            """Add exactly `n` cards as 1-3 copies each of distinct cards."""
+            if n <= 0:
+                return
+            assert MAX_COPIES * len(pool) >= n, "pool too small to fill"
+            # Without replacement, so each card is chosen at most once and its
+            # copy count is decided in one place. The LAST card takes whatever
+            # is left of `n`, because the deck has to come out at exactly
+            # `deck_size` -- that truncation is the only reason the output
+            # holds slightly more 1- and 2-ofs than the corpus does.
+            order = rng.permutation(np.asarray(pool, np.int64))
+            i = 0
+            while n > 0:
+                c, i = int(order[i]), i + 1
+                k = min(n, 1 + int(rng.choice(MAX_COPIES, p=COPY_WEIGHTS)))
+                deck.extend([c] * k)
+                n -= k
 
         take(spells, want_spells)
         take(units, deck_size - len(deck))
@@ -508,11 +569,61 @@ def deck_pool_deal(table, min_coverage: float = 0.0, seed_decks=None):
     return deal
 
 
+def select_decks(table, names: str | None, min_coverage: float = 0.0):
+    """The training deck pool, optionally narrowed to `names`.
+
+    This is what makes generalist and specialist the same code path:
+
+      * `None`        -> all 30 lists. The generalist.
+      * `"a,b,c"`     -> a narrow generalist over three archetypes.
+      * `"lillia"`    -> one deck, so every game is a MIRROR match. The
+                         cheapest specialist, and an honest one: the net only
+                         ever pilots that list.
+
+    Matching is by substring, case-insensitive, so `lillia-fae-fawn` or just
+    `fae` both work. An unmatched name is an error rather than an empty pool --
+    a typo that silently trained on nothing would look exactly like a bad run.
+
+    **The mirror match is not the specialist you probably want.** It never faces
+    another archetype, and reading the opponent is most of the skill. The better
+    one -- pilot deck D against the whole field, and take gradient only from D's
+    seat -- needs the deal to tell the Trainer which seat it put D on; see
+    `PLAN.md`. `learner_seat` and `collect`'s `mine` filter already do the
+    credit-masking half.
+    """
+    from rl.decks import load_all
+    pool = [d for d in load_all(table, latest_only=True)
+            if d.coverage >= min_coverage]
+    assert pool, f"no decks at coverage >= {min_coverage:.0%}"
+    if not names:
+        return pool
+    out, missing = [], []
+    for want in (x.strip().lower() for x in names.split(",") if x.strip()):
+        hit = [d for d in pool if want in d.name.lower()]
+        if not hit:
+            missing.append(want)
+        out.extend(hit)
+    assert not missing, (
+        f"no deck matches {missing}; available:\n  "
+        + "\n  ".join(sorted(d.name for d in pool)))
+    # de-duplicate, keep order
+    seen, uniq = set(), []
+    for d in out:
+        if d.name not in seen:
+            seen.add(d.name); uniq.append(d)
+    return uniq
+
+
 def deal_stats(table, deal_fn, n: int = 500) -> dict:
     """What the deal function actually produces, as opposed to what it was asked
     for. Worth checking whenever the card pool changes."""
     spells = {table.id_of(x) for x in SPELLS}
-    fracs, sizes, copies = [], [], []
+    fracs, sizes, copies, distinct = [], [], [], []
+    # Redundancy, not just legality. `max_copies` alone says a deck obeyed the
+    # 3-copy limit; it cannot tell a real list from 39 singletons, which is the
+    # shape `v1_deal` used to produce. Compare against the corpus: 16.7
+    # distinct of 39, 51.8% of them 3-ofs.
+    at = {1: 0, 2: 0, 3: 0}
     for i in range(n):
         for deck in deal_fn(i)[0]:
             sizes.append(len(deck))
@@ -521,10 +632,17 @@ def deal_stats(table, deal_fn, n: int = 500) -> dict:
             for c in deck:
                 counts[c] = counts.get(c, 0) + 1
             copies.append(max(counts.values()))
+            distinct.append(len(counts))
+            for k in counts.values():
+                at[min(k, 3)] += 1
+    tot = max(1, sum(at.values()))
     return {"deck_size": sorted(set(sizes)),
             "spell_frac_mean": float(np.mean(fracs)),
             "spell_frac_max": float(np.max(fracs)),
-            "max_copies": int(np.max(copies))}
+            "max_copies": int(np.max(copies)),
+            "distinct_mean": float(np.mean(distinct)),
+            "distinct_range": (int(np.min(distinct)), int(np.max(distinct))),
+            "copy_frac": tuple(round(at[k] / tot, 3) for k in (1, 2, 3))}
 
 
 # Deliberately still 30, not MAIN_DECK_SIZE. Every Phase 1-4 number was
@@ -556,6 +674,20 @@ def main(argv=None) -> int:
                    help="train on sampled real decklists, so domain "
                         "identity is learnable")
     p.add_argument("--min-coverage", type=float, default=0.6)
+    p.add_argument("--decks", default=None,
+                   help="comma-separated deck names (substring match) to train "
+                        "on. One name = mirror-match specialist; omit for all "
+                        "30 = generalist. Requires --real-decks.")
+    p.add_argument("--holdout", type=int, default=0,
+                   help="reserve N decks the learner never trains on, and report "
+                        "on them separately at the end. This is how you measure "
+                        "GENERALIZATION rather than assuming it: a v5 checkpoint "
+                        "scored 54.5%% vs greedy on its own 30 decks and 48.0%% "
+                        "once 17 unseen ones were added.")
+    p.add_argument("--per-deck", type=int, default=0,
+                   help="after training, report the win rate broken down by the "
+                        "deck the learner piloted, with this many deals each. "
+                        "This is what decides whether specialists are needed.")
     p.add_argument("--envs", type=int, default=64)
     p.add_argument("--rollout", type=int, default=2048)
     p.add_argument("--device", default="cpu")
@@ -575,7 +707,22 @@ def main(argv=None) -> int:
         cfg = dc_replace(cfg, units_only=False)
     hp = HP(n_envs=a.envs, rollout=a.rollout)
     if a.real_decks:
-        deal = deck_pool_deal(table, a.min_coverage)
+        pool = select_decks(table, a.decks, a.min_coverage)
+        held: list = []
+        if a.holdout > 0:
+            # Deterministic in `--seed`, so the split is reproducible and a
+            # later run can be compared against this one honestly.
+            _r = np.random.default_rng(a.seed)
+            idx = _r.permutation(len(pool))
+            held = [pool[int(i)] for i in idx[:a.holdout]]
+            pool = [pool[int(i)] for i in idx[a.holdout:]]
+            print(f"     holdout: training on {len(pool)}, holding back "
+                  f"{len(held)} -> " + ", ".join(d.name for d in held))
+        if a.decks:
+            print(f"     decks: {len(pool)} -- "
+                  + ", ".join(d.name for d in pool)
+                  + ("  (MIRROR match)" if len(pool) == 1 else ""))
+        deal = deck_pool_deal(table, a.min_coverage, seed_decks=pool)
     else:
         deal = v1_deal(table) if a.spells else v0_deal(table)
 
@@ -629,9 +776,29 @@ def main(argv=None) -> int:
             if score > best:
                 best = score
                 torch.save({"net": tr.net.state_dict(), "shapes": tr.vec.shapes(),
-                            "iter": it, "eval": r}, out / "best.pt")
+                            "iter": it, "eval": r, "engine": _engine_rev()},
+                           out / "best.pt")
+            # **Also roll `last.pt` forward at every eval, not just at the end.**
+            # A multi-hour run that dies overnight would otherwise leave only
+            # `best.pt` (which lags, by design) and nothing from the last hours.
+            # Written via a temp file so a crash mid-write cannot corrupt it.
+            _tmp = out / "last.pt.tmp"
+            torch.save({"net": tr.net.state_dict(), "shapes": tr.vec.shapes(),
+                        "iter": it, "eval": r, "engine": _engine_rev()}, _tmp)
+            _tmp.replace(out / "last.pt")
     torch.save({"net": tr.net.state_dict(), "shapes": tr.vec.shapes(),
-                "iter": a.iterations}, out / "last.pt")
+                "iter": a.iterations, "engine": _engine_rev()}, out / "last.pt")
+
+    if a.per_deck and a.real_decks:
+        from rl.eval import per_deck, print_per_deck
+        print(f"\nper-deck breakdown vs greedy "
+              f"({a.per_deck} deals x 2 seats x {len(pool)} decks)")
+        print_per_deck(per_deck(tr.net, table, cfg, pool, n=a.per_deck,
+                                device=a.device))
+        if held:
+            print(f"\nHELD-OUT decks -- never trained on ({len(held)}):")
+            print_per_deck(per_deck(tr.net, table, cfg, held, n=a.per_deck,
+                                    device=a.device))
     return 0
 
 

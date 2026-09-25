@@ -1,0 +1,34 @@
+# MOVED 2026-09-25: contains banned card(s) -- The Arena's Greatest
+# Master Yi Body/Calm
+Legend: Master Yi, Wuju Bladesman
+Champion: Master Yi, Tempered
+Main Deck:
+1x Akshan, Mischievous
+1x Back Off
+1x Challenge
+3x Charm
+3x Defy
+3x Discipline
+2x En Garde
+3x First Mate
+1x Grim Resolve
+3x Irelia, Fervent
+3x Lonely Poro
+1x Not So Fast
+2x Pit Rookie
+3x Punch First
+3x Rengar, Trophy Hunter
+1x Sabotage
+3x Scuttle Crab
+2x Zhonya's Hourglass
+Battlefields:
+1x Emperor's Dais
+1x Star Spring
+1x The Arena's Greatest
+Runes:
+7x Body Rune
+5x Calm Rune
+Sideboard:
+2x Disarming Rake
+1x Not So Fast
+3x Ruin Runner

@@ -1,0 +1,41 @@
+# Singapore Regional Qualifier -- #261 GANSHU008
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Pyke - Bloodharbor Ripper
+Champion: Pyke - Dockside Butcher
+Main Deck:
+3x Bewitching Spirit
+3x Blood Rush
+1x Downwell
+2x Ezreal, Prodigy
+3x Falling Star
+2x Fizz - Trickster
+1x Hard Bargain
+1x Kha'Zix - Mutating Horror
+3x Noxus Hopeful
+3x Pack of Wonders
+1x Piercing Light
+3x Stacked Deck
+1x Star-Crossed
+1x Tail-Cloaked Matriarch
+2x The List
+3x Traveling Merchant
+3x Treasure Hunter
+3x Treasure Trove
+Battlefields:
+1x Forbidding Waste
+1x Frozen Fortress
+1x Ripper's Bay
+Runes:
+5x Chaos Rune
+7x Fury Rune
+Sideboard:
+1x Angler Beast
+1x Baron Nashor
+1x Brittle Steel
+1x Downwell
+1x Star-Crossed
+2x Switcheroo
+2x Thermo Beam
+1x Vex - Apathetic

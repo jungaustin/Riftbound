@@ -1,0 +1,39 @@
+# Singapore Regional Qualifier -- #17 Blank
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: LeBlanc - Deceiver
+Champion: LeBlanc - Fragmented
+Main Deck:
+1x B.F. Sword
+1x Black Rose Dignitary
+1x Chakram Dancer
+3x Cull the Weak
+3x Deathgrip
+3x Glasc Mixologist
+3x Hidden Blade
+2x Honest Broker
+3x Karthus - Eternal
+1x Kennen, Keeper of Balance
+1x Ki Barrier
+3x Mirror Image
+3x Ruined Rex
+1x Sacrifice
+3x Soaring Scout
+1x Stupefy
+2x Thousand-Tailed Watcher
+1x Vi - Peacekeeper
+3x Watchful Sentry
+Battlefields:
+1x Dusk Rose Lab
+1x Star Spring
+1x Windswept Hillock
+Runes:
+4x Mind Rune
+8x Order Rune
+Sideboard:
+1x Black Rose Dignitary
+2x Decree of Insight
+3x Decree of Unity
+1x LeBlanc - Everywhere At Once
+2x Salvage
+1x Time Warp

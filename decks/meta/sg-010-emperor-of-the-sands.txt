@@ -1,0 +1,35 @@
+# Singapore Regional Qualifier -- #10 MICE Squirtle
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Azir - Emperor of the Sands
+Champion: Azir - Sovereign
+Main Deck:
+3x Arise!
+3x B.F. Sword
+3x Back Off
+3x Brutalizer
+2x Deathgrip
+3x Defy
+3x Discipline
+3x Doran's Shield
+2x En Garde
+3x Eye of the Herald
+3x Guards!
+1x Hand Hammer
+3x Hidden Blade
+3x Soul Sword
+1x Vi - Peacekeeper
+Battlefields:
+1x Hall of Legends
+1x Seat of Power
+1x Trifarian War Camp
+Runes:
+7x Calm Rune
+5x Order Rune
+Sideboard:
+1x Ashe - Focused
+2x Decree of Focus
+3x Decree of Unity
+1x Ornn - Blacksmith
+2x Salvage
+1x Tomb-Raider Barbara

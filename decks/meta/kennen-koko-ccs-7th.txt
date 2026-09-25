@@ -1,0 +1,41 @@
+# Koko Lopez -- 7th, CCS $25,000 Showdown Series Invitational Qualifier
+# post-banlist Kennen -- added 2026-09-25 from lists supplied by the project owner
+Legend: Yordle, Kennen - Heart of the Tempest
+Champion: Kennen, Storm of Shuriken
+Main Deck:
+1x Baron Nashor
+2x Ezreal, Prodigy
+2x Fizz - Trickster
+1x Flash
+1x Gust
+2x Last Rites
+3x Lightning Rush
+3x Rhasa the Sunderer
+1x Ride The Wind
+1x Salvage
+3x Seal of Discord
+3x Shadow Order Disciple
+1x Shadows of the Past
+2x Star-Crossed
+2x Switcheroo
+3x Tail-Cloaked Matriarch
+1x The Harrowing
+1x Tideturner
+2x Tornado Warrior
+3x Traveling Merchant
+1x Treasure Hunter
+Battlefields:
+1x Minefield
+1x Shadow Temple
+1x Zaun Warrens
+Runes:
+9x Chaos Rune
+3x Order Rune
+Sideboard:
+1x Angler Beast
+2x Decree of Unity
+1x Gust
+1x Hard Bargain
+3x Ravenbloom Prefect
+1x Rebuke
+1x Salvage

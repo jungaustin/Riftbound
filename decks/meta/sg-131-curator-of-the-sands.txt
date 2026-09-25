@@ -1,0 +1,39 @@
+# Singapore Regional Qualifier -- #131 keloy
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Nasus - Curator of the Sands
+Champion: Nasus, Ascended
+Main Deck:
+3x Astral Heron
+1x Back Off
+3x Bellows Breath
+3x Defy
+3x Discipline
+2x Find Your Center
+2x Lecturing Yordle
+2x Premonition
+3x Ravenbloom Student
+2x Retreat
+3x Scuttle Crab
+1x Smoke Screen
+2x Stupefy
+2x Temporal Breach
+3x Thousand-Tailed Watcher
+1x Time Warp
+1x Tomb-Raider Barbara
+2x Zhonya's Hourglass
+Battlefields:
+1x Rockfall Path
+1x Sigil of the Storm
+1x Vilemaw's Lair
+Runes:
+5x Calm Rune
+7x Mind Rune
+Sideboard:
+2x Decree of Focus
+2x Decree of Insight
+1x Lecturing Yordle
+2x Not So Fast
+1x Pickpocket
+1x Singularity
+1x Tomb-Raider Barbara

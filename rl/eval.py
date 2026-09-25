@@ -12,6 +12,8 @@ directly comparable to the ones the engine was validated with.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import torch
 
@@ -104,6 +106,114 @@ def duel(net, opponent_factory, table, cfg, deal_fn, n: int = 200,
                 wins += int(w == net_seat)
             games += 1
     return wins / games
+
+
+def per_deck(net, table, cfg, pool, opponent_factory=None, n: int = 20,
+             device: str = "cpu", seed0: int = 500_000) -> list[dict]:
+    """Win rate broken down by the deck the LEARNER piloted.
+
+    **`report()` cannot answer the question this does.** It returns one
+    aggregate over every matchup, which cannot tell "decent at all 30 decks"
+    from "strong at 27 and hopeless at 3" -- and that difference is exactly the
+    specialist-versus-generalist decision. A generalist whose per-deck rates are
+    flat needs no specialists; one with three bad decks needs three fine-tunes,
+    not thirty agents.
+
+    The learner pilots `d` from BOTH seats against a sampled opponent deck, for
+    the reason `duel` does: at victory 3 the first-player edge is ~64%, so an
+    unpaired per-deck number is dominated by which seat it happened to sit in.
+
+    `n` is deals per deck, so the cost is `2 * n * len(pool)` games. The
+    confidence interval is reported because with n=20 a 10-point gap between two
+    decks is not yet a finding.
+    """
+    from rl.decks import matchup
+    if opponent_factory is None:
+        opponent_factory = greedy_agent
+    enc = Encoder(table, cfg)
+    gen = torch.Generator(device="cpu").manual_seed(seed0)
+    rows = []
+    for d in pool:
+        wins = games = 0
+        for i in range(n):
+            for net_seat in (0, 1):
+                rng = np.random.default_rng(seed0 + i)
+                foe = pool[int(rng.integers(len(pool)))]
+                a, b = (d, foe) if net_seat == 0 else (foe, d)
+                picks = (int(rng.integers(3)), int(rng.integers(3)))
+                deal = (lambda _s, a=a, b=b, pk=picks:
+                        matchup(a, b, picks=pk))
+                w = play_one(net, opponent_factory(rng), table, cfg, enc,
+                             seed0 + i, net_seat, deal, device, False, gen)
+                if w >= 0:
+                    wins += int(w == net_seat)
+                games += 1
+        wr = wins / max(1, games)
+        ci = 1.96 * math.sqrt(max(wr * (1 - wr), 1e-9) / max(1, games))
+        rows.append({"deck": d.name, "win_rate": wr, "ci": ci, "games": games})
+    rows.sort(key=lambda r: r["win_rate"])
+    return rows
+
+
+def print_per_deck(rows: list[dict]) -> None:
+    """The table, worst deck first -- that is the one that would need help."""
+    if not rows:
+        return
+    lo, hi = rows[0], rows[-1]
+    print(f"  {'deck':<34} {'win rate':>9}  {'+/-':>6}  games")
+    print("  " + "-" * 62)
+    for r in rows:
+        print(f"  {r['deck']:<34} {r['win_rate']:>8.1%}  "
+              f"{r['ci']:>5.1%}  {r['games']:>5d}")
+    spread = hi["win_rate"] - lo["win_rate"]
+    # Is the spread bigger than the noise? If not, per-deck differences are not
+    # yet measurable and specialists cannot be justified from this data.
+    noise = lo["ci"] + hi["ci"]
+    verdict = ("REAL -- the worst decks are genuinely worse served"
+               if spread > noise else
+               "within noise -- no per-deck weakness is measurable yet")
+    print(f"\n  spread {spread:.1%} (worst {lo['deck']} -> best {hi['deck']}), "
+          f"noise +/-{noise:.1%}\n  -> {verdict}")
+
+
+def per_deck_baseline(table, cfg, pool, n: int = 30, seed0: int = 700_000) -> list[dict]:
+    """Deck strength with the POLICY TAKEN OUT: greedy pilots both sides.
+
+    **This is what makes `per_deck` interpretable.** That function reports the
+    learner's win rate per deck, which conflates two different things -- "the
+    agent is bad with this deck" and "this deck is bad against the field". A
+    4% deck could be either. Running the same measurement with a fixed heuristic
+    on both sides isolates the second, so the difference is the first.
+
+    No network, so this is cheap and -- unlike anything measured on a checkpoint
+    -- it does not go stale when the policy or the observation changes. It is a
+    property of the decks and the engine.
+    """
+    from rl.decks import matchup
+    rows = []
+    for d in pool:
+        wins = games = 0
+        for i in range(n):
+            for seat in (0, 1):
+                rng = np.random.default_rng(seed0 + i)
+                foe = pool[int(rng.integers(len(pool)))]
+                a, b = (d, foe) if seat == 0 else (foe, d)
+                picks = (int(rng.integers(3)), int(rng.integers(3)))
+                decks, runes, bfs, legends, champs = matchup(a, b, picks=picks)
+                st = game.new_game(table, cfg, decks, runes, bfs, seed=seed0 + i,
+                                   legends=legends, champions=champs)
+                agents = [greedy_agent(np.random.default_rng(seed0 + i + 7 * k))
+                          for k in range(2)]
+                out = game.play_game(table, cfg, st, agents)
+                w = int(out.get("winner", -1))
+                if w >= 0:
+                    wins += int(w == seat)
+                games += 1
+        wr = wins / max(1, games)
+        ci = 1.96 * math.sqrt(max(wr * (1 - wr), 1e-9) / max(1, games))
+        rows.append({"deck": d.name, "win_rate": wr, "ci": ci, "games": games})
+    rows.sort(key=lambda r: r["win_rate"])
+    return rows
 
 
 def report(net, table, cfg, deal_fn, n: int = 200, device: str = "cpu") -> dict:

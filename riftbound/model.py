@@ -204,7 +204,7 @@ def render_pool(cards: list[Card], header: str = "") -> str:
 # Kennen, Poppy, Rumble, Teemo and Vex. Only one Legend of 49 prints it
 # (Yordle, Kennen - Heart of the Tempest), which is why the bug hid for so long.
 #
-# Re-derive after any new set: python3 tools/derive_champion_tags.py
+# Re-derive after any new set: python3 riftbound/tools/derive_champion_tags.py
 NON_CHAMPION_TAGS = frozenset({"Yordle"})
 
 

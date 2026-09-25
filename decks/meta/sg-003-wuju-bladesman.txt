@@ -1,0 +1,37 @@
+# Singapore Regional Qualifier -- #3 Ekpilot
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Master Yi - Wuju Bladesman
+Champion: Master Yi - Tempered
+Main Deck:
+1x Alpha Strike
+3x Charm
+3x Defy
+3x Discipline
+2x En Garde
+3x First Mate
+3x Lonely Poro
+1x Not So Fast
+1x Onslaught
+3x Pit Rookie
+3x Punch First
+2x Rampage
+3x Rengar, Trophy Hunter
+2x Ruin Runner
+1x Sabotage
+3x Scuttle Crab
+2x Zhonya's Hourglass
+Battlefields:
+1x Emperor's Dais
+1x Grove of the God-Willow
+1x Star Spring
+Runes:
+7x Body Rune
+5x Calm Rune
+Sideboard:
+2x Decree of Focus
+3x Disarming Rake
+2x Fiora - Peerless
+1x Not So Fast
+1x Ruin Runner
+1x Sabotage

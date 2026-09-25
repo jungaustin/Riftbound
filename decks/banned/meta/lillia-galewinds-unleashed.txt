@@ -1,0 +1,29 @@
+# MOVED 2026-09-25: contains banned card(s) -- The Arena's Greatest
+Legend: Lillia - Bashful Bloom
+Champion: Lillia - Fae Fawn
+Main Deck:
+1x Disarming Rake
+2x Smoke and Mirrors
+3x Sprite Fountain
+3x Sprite Burst
+1x Janna - Savior
+2x Heart of Dark Ice
+1x Charm
+1x Unchecked Power
+1x Thousand-Tailed Watcher
+3x Ravenbloom Student
+3x Stupefy
+2x Smoke Screen
+2x Riptide Rex
+3x Mask of Foresight
+3x Discipline
+2x Stalwart Poro
+3x En Garde
+3x Defy
+Battlefields:
+1x Dusk Rose Lab
+1x Seat of Power
+1x The Arena's Greatest
+Runes:
+6x Calm Rune
+6x Mind Rune

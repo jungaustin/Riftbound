@@ -1,0 +1,111 @@
+=== NOT FOR DECKBUILDING ===
+This file lived in a folder literally named "Do not use for deck building".
+Moved here 2026-09-25 and the warning put where it cannot be lost: it is
+opponent-awareness notes (tricks to play AROUND), not a card pool to build
+from. Never feed it to the deckbuilder as a source of legal cards -- use
+`cli.py pool` for that (see the riftbound-use-legal-pool-not-cards-json rule).
+=============================
+
+This file is for Austin to remember which cards are likely in certain players decks. This is not to be used for the Deck building.
+The thing that actually matters: Reactions resolve first
+
+This is the single rule that gets people killed. Reactions resolve BEFORE whatever they're reacting to. If you attack with a 3-Might unit and pump it to 6, your opponent's Gust — which only hits units with 3 Might or less — resolves first, checks the unit at 3, bounces it, and your buff spell does nothing. Sequence your pumps knowing the answer resolves on top of them. 
+Riftbound
+
+Two hidden-information systems
+
+Hidden (face-down cards). You pay one power on your turn to place a Hidden card face-down at a battlefield you control. Beginning next turn it gains Reaction and can be played for zero. Only one face-down card per battlefield per player. Targets are restricted to that battlefield. The face-down card's presence is public — so if you see one sitting on a battlefield and it's not the turn it was placed, assume it's live. The common ones: Tideturner, Zhonya's Hourglass, Fight or Flight, Switcheroo. 
+Rift Watcher + 2
+
+Ambush (Unleashed). Units with Ambush can be played at Reaction speed to a battlefield where you already have units, so Might totals can jump mid-showdown from an empty-looking board. Inferna (Ambush plus Assault 2 — +2 Might while attacking) is the most common. Count their open energy, not just their board. 
+aol
+Riftdecks
+
+The universal trick suite by domain
+
+These are format staples that appear in nearly every deck of that color — assume them by default.
+
+Calm (green)
+
+Defy (1E + 1 power) — Reaction; counters a spell costing no more than 4 energy and 1 power. The most-played spells all fall under its threshold, so it's live roughly 90% of the time. The most important card in the format to play around. 
+riftdecks
+Mobalytics
+Discipline (2) — Reaction; +2 Might and draw a card. Replaces itself, so they'll fire it liberally. 
+Riftdecks
+En Garde (1) — a cheap Reaction pump that rewards targeting lone units; 1 energy for 2 Might. 
+Mobalytics
+Not So Fast (2) — Reaction; counters an enemy spell or ability that chooses a friendly unit or gear. Your removal gets blanked. 
+Riftdecks
+Charm (1E/1P) — moves an enemy unit; pulls a weak unit into a bad showdown, reduces total Might at a battlefield, or denies a hold/score. 
+Mobalytics
+Wind Wall (3E/2P) — the unconditional counterspell; hits any spell with no restrictions. Less common but it's how they answer your expensive bombs. 
+Mobalytics
+Zhonya's Hourglass — Hidden gear; the next time a friendly unit would die, it dies instead and recalls that unit exhausted to base. Only one applies per unit death, and errata now also heals the saved unit. 
+Riftdecks
+Riftjudge
+
+Chaos (purple)
+
+Gust (1) — Reaction; return a unit at a battlefield with 3 Might or less to hand. The tempo killer discussed above. 
+Riftdecks
+Star-Crossed (3E/1P) — Reaction; return a friendly unit and an enemy unit to their owners' hands. Often used to rescue their guy and blow out yours simultaneously. 
+Riftdecks
+Rebuke (2E/2P) — returns a sizable unit; incredibly punishing against decks that go big. 
+Mobalytics
+Ride the Wind (2E/1P) — movement on the opponent's turn, which can be game-breaking. This is how a "safe" battlefield stops being safe. 
+Mobalytics
+Fight or Flight — 2 energy or 1 power; removes the biggest threat from a battlefield, or at worst saves one of their own units. Frequently played from Hidden. 
+Mobalytics
+
+Body (orange)
+
+Punch First (1E/2P) — Action speed, +5 Might. The biggest single swing at the cheapest rate; a 2-Might unit beating your 6 is entirely normal.
+Challenge (2E/1P) — a pull effect; drags a unit into a fight it didn't choose.
+Sabotage (1E/1P) — choose an opponent, they reveal their hand, choose a non-unit card from it. This is the anti-trick card — it strips your Defy/Discipline before the fight. 
+Rift Mana
+
+Mind (blue) — Stupefy, Smoke Screen, Singularity, Turn to Dust (gear removal), Bellows Breath.
+
+Order (yellow) — Hidden Blade, Cull the Weak (instructs all players to choose and kill a unit, so it has no targets and dodges targeting-based counters), Vengeance, Salvage, Sacrifice. 
+Riftbound
+
+Per-legend threat lists
+
+Diana, Scorn of the Moon (Mind/Chaos) — Five finals out of eight regionals plus two semifinals; the most consistent legend of the format. Runs the deepest interaction package in the game: 3 Gust, 3 Stupefy, 3 Ride the Wind, 3 Tideturner, 2 Star-Crossed, 2 Moonfall, 2 Fizz. Her Legend ability gains extra energy from showdowns, so she pays for tricks you didn't count. Moonfall forces an unfavorable combat and can generate multiple kills; Fizz, Trickster replays a spell — usually Moonfall or Star-Crossed, so a countered trick isn't dead. Don't commit into an open Diana board. 
+riftbound + 3
+
+Irelia, Blade Dancer (Calm/Chaos) — the densest defensive suite in the format: 3 Defy, 3 Discipline, 2 En Garde, 3 Tideturner, 2 Charm, 2 Star-Crossed, plus Guardian Angel and Not So Fast from the board. Irelia, Fervent gains +1 Might whenever you choose her, and with a deck full of low-cost spells she becomes extremely difficult to remove. Her Ready ability lets her move key units more than once per turn, contest multiple battlefields, and retreat to safety after scoring. Hidden shows up on Tideturner, Zhonya's, Fight or Flight, and Switcheroo — played face-down for a rune, flipped for zero later. Aim removal at her before she starts chaining choose-effects. 
+Rift Mana + 2
+
+Master Yi, Wuju Bladesman (Calm/Body) — Thrives holding battlefields with a single unit thanks to the Legend's +2 Might boost, backed by defensive tricks like Discipline. Zhonya's Hourglass keeps the win condition in play. The list: 3 Charm, 3 Defy, 3 Discipline, 3 Punch First, 2 En Garde, 2 Zhonya's, plus Challenge, Sabotage and Primal Strength. Two En Garde and three Punch First on a lone unit that's already +2 means a 2-drop can realistically represent 9+ Might. This is the deck where you must overkill. 
+Rift Mana
+
+Azir, Emperor of the Sands (Calm/Order) — 3 Defy, 3 Discipline, 3 Hidden Blade, plus Charm/En Garde. The deck is equipment-driven; 2-Might Sand Soldiers with Weaponmaster become real threats once equipped, and Azir can move all token units alongside him for a huge offensive turn. Watch for Arise! as the late-game payoff and prioritize gear removal. 
+Rift Mana
+
+Viktor, Herald of the Arcane (Mind/Order) — less "combat trick," more "your unit just dies." 3 Cull the Weak, 3 Hidden Blade, 3 Stupefy, 3 Bellows Breath, 3 Wages of Pain, 2 Vengeance, 3 Singularity. Note that Cull the Weak sidesteps counterspells that require targeting. Fewer showdown pumps here — the pressure is removal density.
+
+Annie, Dark Child (Fury/Chaos) — She gains 2 extra energy at end of turn, so Annie players can fully commit their board development and still have energy to act on your turn. Inferna, Grim Apothecary and Rengar can all be played during the opponent's turn, so she isn't limited to spells — she can develop units mid-showdown. Star-Crossed, Gust, Flash, and Switcheroo round it out. Assume she has 2 energy up at all times. 
+Rift Mana
+Rift Mana
+
+Rengar, Pridestalker (Fury/Body) — the Ambush deck. Ambush keeps the opponent guessing about the real Might available and the number of units actually defending a battlefield. 3 Punch First, 3 Inferna, 3 Thrill of the Hunt, 2 Challenge, 2 Sabotage. Never assume a battlefield's Might total is what you can see. 
+Riftbound
+
+Vex, Gloomist (Calm/Chaos) — Vex conquers early and defends; her hidden cards make it very hard to push through, and holding the battlefield draws her cards. Runs Defy, Discipline, Gust, Back Off, Switcheroo, Star-Crossed, Existential Dread, Boots of Swiftness and Edge of Night. A face-down card on a Vex battlefield is the most reliable "don't attack here" signal in the format. 
+Rift Mana
+
+Sivir / Miss Fortune (Aurora shells) (Body/Chaos) — ramp decks. The plan is to ramp early, land Dazzling Aurora, then let Mindsplitter and Elder Dragon carry; Elder Dragon acts as the control piece preventing you from taking the board. Interaction is Gust, Sabotage, Flurry of Blades, Challenge, Fading Memories (one of Chaos's few permanent answers, and it kills pesky gear like Dazzling Aurora). Note also: you can respond to Elder Dragon's play-effect with a Hidden Tideturner as a Reaction, and targets must be declared when the card is played. 
+Rift Mana + 2
+
+Kai'Sa, Daughter of the Void (Fury/Mind) — burn-and-removal rather than pumps: 3 Hextech Ray, 3 Stupefy, 3 Falling Star, 2 Singularity, Eclipse. Falling Star's targets are chosen on play but damage is allocated on resolution, which means the opponent can see which units are targeted before deciding whether to use En Garde. Useful both ways. 
+Riftjudge
+
+LeBlanc, Deceiver (Mind/Order) — no traditional trick suite; the trap is value. Reflections carry Temporary, so the deck loads up on Deathknell units — killing Glasc Mixologist, Ruined Rex, or Rift Herald just hands LeBlanc more value, and an unanswered early Karthus snowballs. Killing things here is often the mistake. 
+Rift Mana
+
+Vendetta newcomers worth pre-scouting — Kennen was the most-represented legend in the top 32 with three distinct builds reaching top 16, though Nasus posted the best finish with a semifinal run. Akali, Zed, and Jayce all went out early. Treat all of these as unsettled.
+
+Practical checklist
+
+Before you commit to a showdown, count their untapped runes, note any face-down cards (and whether they're live yet), and ask whether the fight still wins through the single most likely trick in their colors — Punch First for Body, Gust for Chaos, Defy or En Garde for Calm. If you're playing a slow deck, Sabotage is your best sideboard card: stripping the Defy is often worth more than a whole extra threat.

@@ -3,20 +3,17 @@
     python3 rl/play.py advise --ckpt rl/runs/v1s/best.pt [--seed 0]
     python3 rl/play.py vs     --ckpt rl/runs/v1s/best.pt [--seed 0] [--seat 0]
 
-**Which head is allowed to answer matters.** The value head is an *asymmetric
-critic*: during training it is fed the opponent's hand and every facedown card
-(PLAN.md §6.4), because it is discarded at play time. So ranking moves by the
-value head would be ranking them with information a player does not have -- the
-advice would be excellent and useless, and worse, it would look right.
+**Which head is allowed to answer matters.** This used to be a warning about an
+asymmetric critic fed the opponent's hand. That is no longer the default: since
+the two-critic change, `value_sym` sees exactly what the policy sees and drives
+learning, and `net.win_prob()` returns it specifically so a number shown to a
+person is one a person could have worked out. `value_priv` still exists as a
+diagnostic and is never consulted here.
 
-So **advice comes from the policy head**, which sees only what
-`viewer.view(state, table, cfg, seat)` shows. The critic's number is displayed
-separately and labelled, because it is genuinely interesting (it is the
-win-probability estimate of §1.2) but it is an oracle's opinion, not a player's.
-
-The 1-ply value column has the same problem and is handled the same way: it
-re-evaluates each candidate position with the privileged input withheld, which
-is what a player could actually compute.
+So everything on screen is legitimate: advice comes from the policy head, and
+both value columns come from `win_prob`. Nothing displayed depends on the
+opponent's hand, which is what makes it usable for studying a position rather
+than just admiring it.
 """
 
 from __future__ import annotations
@@ -37,7 +34,7 @@ from rl.engine.cardtable import full_table
 from rl.env import RiftboundEnv
 from rl.nets import RiftboundNet, to_torch
 from rl.obs import Encoder
-from rl.ppo import v1_deal
+from rl.ppo import deck_pool_deal, select_decks, v1_deal
 from rl.vec import batch
 from rl.viewer import describe, view
 
@@ -66,7 +63,7 @@ def rank(net, env: RiftboundEnv, obs, top: int = 6) -> list[tuple]:
     a player could work out rather than what the training critic knows.
     """
     t = to_torch(batch([obs]), "cpu")
-    logits, _ = net(t)
+    logits, _, _ = net(t)   # (logits, value, value_aux)
     probs = F.softmax(logits, -1)[0, :obs.n_legal].numpy()
 
     seat = obs.to_move
@@ -88,7 +85,10 @@ def rank(net, env: RiftboundEnv, obs, top: int = 6) -> list[tuple]:
                     o2 = env.enc.encode(s2, nxt, legal2)
                     t2 = to_torch(batch([o2]), "cpu", privileged=False)
                     h = net.encode(t2["zones"], t2["zone_mask"], t2["globals"])
-                    v = float(net.value_of(h, None).item())
+                    # the HONEST head -- `value_of` went away with the
+                    # single critic, and `value_priv` would need the
+                    # opponent's hand, which a player does not have.
+                    v = float(net.value_sym(h).item())
                     if nxt != seat:
                         v = -v          # value is always "good for whoever moves"
         else:
@@ -108,9 +108,8 @@ def show_advice(net, env, obs, table, cfg) -> None:
         print(f"  {'':>4} {describe(act, env.state, table, seat).strip():<44}"
               f"{p:>7.1%}{vs:>13}")
     with torch.no_grad():
-        t = to_torch(batch([obs]), "cpu")
-        _, val = net(t)
-    print(f"\n  critic (ORACLE -- sees the opponent's hand, training-only): "
+        val = net.win_prob(to_torch(batch([obs]), "cpu", privileged=False))
+    print(f"\n  critic (policy-side -- legitimate information only): "
           f"{float(val.item()):+.3f}")
     print("  value is in [-1, +1] and is a win-probability estimate for the "
           "side to move (gamma=1.0, §1.2).")
@@ -124,7 +123,7 @@ def cmd_advise(a) -> int:
         cfg = replace(cfg, units_only=False)
     net, enc = load(a.ckpt, table, cfg)
     env = RiftboundEnv(table, cfg, encoder=enc)
-    obs = env.reset(a.seed, *v1_deal(table)(a.seed))
+    obs = env.reset(a.seed, *_deal_for(a, table)(a.seed))
     rng = np.random.default_rng(a.seed)
     for _ in range(a.ply):                    # fast-forward to a live position
         if obs is None:
@@ -137,6 +136,20 @@ def cmd_advise(a) -> int:
     return 0
 
 
+def _deal_for(a, table):
+    """The deal to play out. Real decklists unless asked otherwise.
+
+    `v1_deal`'s procedural decks are 6-domain soup with an unrelated rune deck --
+    fine as a training curriculum, no fun at all to sit across from, and not a
+    fair test of the agent either. `--decks` narrows to one list by substring,
+    so a specific matchup can be replayed.
+    """
+    if a.procedural:
+        return v1_deal(table)
+    pool = select_decks(table, a.decks)
+    return deck_pool_deal(table, 0.0, seed_decks=pool)
+
+
 def cmd_vs(a) -> int:
     """Play a game against the agent from the terminal."""
     table = full_table()
@@ -146,7 +159,7 @@ def cmd_vs(a) -> int:
         cfg = replace(cfg, units_only=False)
     net, enc = load(a.ckpt, table, cfg)
     env = RiftboundEnv(table, cfg, encoder=enc)
-    obs = env.reset(a.seed, *v1_deal(table)(a.seed))
+    obs = env.reset(a.seed, *_deal_for(a, table)(a.seed))
     you = a.seat
 
     while obs is not None:
@@ -186,7 +199,15 @@ def main(argv=None) -> int:
     p.add_argument("--seat", type=int, default=0)
     p.add_argument("--ply", type=int, default=6)
     p.add_argument("--spells", action="store_true", default=True)
-    p.add_argument("--deterministic", action="store_true")
+    p.add_argument("--deterministic", action="store_true",
+                   help="always take the agent's top move. Off by default: the "
+                        "policy is stochastic on purpose, and sampling is what "
+                        "keeps it from playing the same game every time.")
+    p.add_argument("--procedural", action="store_true",
+                   help="deal v1_deal's random-pool decks instead of the real "
+                        "decklists (training curriculum, not a real game)")
+    p.add_argument("--decks", default=None,
+                   help="narrow the decklist pool by substring, e.g. 'lillia'")
     a = p.parse_args(argv)
     return cmd_advise(a) if a.mode == "advise" else cmd_vs(a)
 

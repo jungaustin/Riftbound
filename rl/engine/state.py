@@ -559,6 +559,7 @@ class GameState:
     __slots__ = (
         "perms", "n_perms",
         "hand", "n_hand", "deck", "deck_ptr", "n_deck", "trash", "n_trash",
+        "decklist", "n_decklist", "deck_known",
         "runes_ready", "runes_spent", "rune_deck", "rune_head", "rune_left",
         "pool_energy", "pool_power",
         "bf_card", "bf_ctrl", "bf_contested", "bf_contester",
@@ -666,6 +667,27 @@ class GameState:
         self.deck = np.full((N_SEATS, MAX_DECK), -1, np.int16)
         self.deck_ptr = np.zeros(N_SEATS, np.int16)   # next card to draw
         self.n_deck = np.zeros(N_SEATS, np.int16)     # cards originally dealt
+        # The deck as **registered**, in the order it was submitted, never
+        # shuffled and never mutated by play. `deck` cannot stand in for it:
+        # the drawn prefix is dead space that `recycle` compacts away (see
+        # `put_on_bottom`), so by mid-game the original 40 are unrecoverable.
+        #
+        # This is a decklist, not a library. Reading it as a MULTISET is
+        # legitimate information whenever the list is known -- a registered
+        # decklist is public in a match after game 1, and at top level a
+        # Legend already implies most of it. Reading it in ORDER would be a
+        # leak, because that is the draw order nobody may see. `obs.py`
+        # therefore encodes counts per distinct card and never a position,
+        # which is also what keeps `test_env`'s deck-order perturbation
+        # invisible.
+        self.decklist = np.full((N_SEATS, MAX_DECK), -1, np.int16)
+        self.n_decklist = np.zeros(N_SEATS, np.int16)
+        # Is THIS seat's decklist known to its opponent? Set per episode, not
+        # by play. 1 for the Bo3 games 2-3 case where the list has been seen,
+        # 0 for game 1 against a stranger. Randomized during training so the
+        # policy develops both the explicit path and the read-it-from-play
+        # path -- see `config.deck_known_prob`.
+        self.deck_known = np.zeros(N_SEATS, np.int8)
         self.trash = np.full((N_SEATS, MAX_TRASH), -1, np.int16)
         self.n_trash = np.zeros(N_SEATS, np.int16)
         # 108.6 -- Banishment. A separate zone from the trash and NOT a

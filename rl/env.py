@@ -106,9 +106,15 @@ class RiftboundEnv:
     # -- lifecycle -------------------------------------------------------
 
     def reset(self, seed: int, decks, rune_decks, battlefields,
-              legends=None) -> Obs:
+              legends=None, champions=None) -> Obs:
+        # `champions` is 5th and optional so `reset(seed, *deal_fn(seed))` takes
+        # a dealer that supplies one (`decks.matchup`) and one that cannot
+        # (`v1_deal` has no decklist, so no Chosen Champion) without either
+        # knowing about the other.
+        known = game.deck_knowledge(self.cfg, seed)
         self.state = game.new_game(self.table, self.cfg, decks, rune_decks,
-                                   battlefields, seed=seed, legends=legends)
+                                   battlefields, seed=seed, legends=legends,
+                                   champions=champions, deck_known=known)
         self.steps = 0
         self.auto_passes = 0
         self._advance()
@@ -229,9 +235,9 @@ def policy_from_agent(agent):
 
 
 def play(env: RiftboundEnv, policies, seed: int, decks, rune_decks,
-         battlefields, legends=None) -> dict:
+         battlefields, legends=None, champions=None) -> dict:
     """Run one episode with per-seat index policies `policies[seat](obs)`."""
-    obs = env.reset(seed, decks, rune_decks, battlefields, legends)
+    obs = env.reset(seed, decks, rune_decks, battlefields, legends, champions)
     while obs is not None:
         r = env.step(policies[obs.to_move](obs))
         obs = r.obs
