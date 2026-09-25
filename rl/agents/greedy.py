@@ -218,8 +218,13 @@ def greedy_agent(rng: np.random.Generator):
         # Develop: play a card if we have one. The destination choice above
         # then decides between reinforcing and staying home.
         if A.A_PLAY in kinds:
+            # `A.played_card`, not `state.hand`: 108.3.d makes the Chosen
+            # Champion playable from its own zone, and its arg is deliberately
+            # out of range for the hand. Reading the hand raised IndexError on
+            # every real-deck game the moment the champion became playable.
             return max(kinds[A.A_PLAY],
-                       key=lambda a: int(table.might[int(state.hand[seat, a.arg])]))
+                       key=lambda a: int(table.might[
+                           A.played_card(state, seat, int(a.arg))]))
 
         # 2. Attack only where we can wipe them, preferring a battlefield not
         # yet Scored this turn -- see the Final Point note above.

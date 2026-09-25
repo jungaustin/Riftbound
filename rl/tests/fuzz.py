@@ -177,6 +177,12 @@ def cards_owned(state, table, seat: int) -> int:
     if int(state.pend_look) == seat:
         n += live(state.look_cards[:int(state.n_look)])
     n += live(state.banished[seat, :int(state.n_banished[seat])])
+    # 108.3 -- the Champion Zone. 103.2 counts the Chosen Champion inside the
+    # 40-card Main Deck, so it is a conserved card like any other, and since
+    # 108.3.d it can LEAVE this zone. While it could not, omitting it here was
+    # self-consistent (the count was simply 39 all game); the moment it became
+    # playable the gate started reading the play as a card being created.
+    n += live([state.champion[seat]])
     # **P_OWNER, not P_CTRL.** A card is conserved against the player who OWNS
     # it, and the two come apart the moment one is played out of someone else's
     # zone -- Kharox digs a unit from the opponent's trash and plays it under

@@ -169,6 +169,8 @@ def describe(act, state: GameState, table: CardTable, seat: int) -> str:
     if k == A.A_END_TURN:
         return "end turn"
     if k == A.A_PLAY:
+        if arg == A.CHAMPION_SRC:      # 108.3.d, from the Champion Zone
+            return f"play {table.names[int(state.champion[seat])]} (champion)"
         return f"play {table.names[int(state.hand[seat, arg])]}"
     if k == A.A_PLAY_AT:
         return f"  ...to {_loc_name(arg, seat)}"

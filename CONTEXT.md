@@ -12,43 +12,41 @@ rewritten and pruned freely, so treat it as *state*, not a log.
 
 | | |
 |---|---|
-| **Running** | Nothing. `rl/runs/v6-overnight` **completed all 1500 iters cleanly** (4.19M steps, ~6h, no crash) |
-| **Uncommitted** | A lot. ~20 files. Nothing has been committed all session |
+| **Running** | Nothing |
+| **Committed** | `d149bc1` session work, `3cd3c2a` D1. Tree clean |
 | **Branch** | `rl/card-scripting` |
-| **Best checkpoint** | `rl/runs/v6-overnight/best.pt` — 58% vs greedy, 84% vs random |
+| **Queue** | D1 done -> **Chosen Champion (108.3.d), in progress** -> victory 8 |
+
+**Checkpoints before `3cd3c2a` will not load**: D1 added 4 globals,
+`GLOBAL_DIM` 135 -> 139. That is fine — v6 plateaued at greedy level and was
+trained against a wrong combat model, so victory 8 should start fresh.
 
 ---
 
-## The two results from v6
+## The two results from v6 (`rl/runs/v6-overnight`, 1500 iters, 4.19M steps)
 
-**1. The generalization gap closed.** This is what the run was built to test.
+**1. The generalization gap closed.**
 
-| | train decks | held-out decks | gap |
+| | train decks | held-out | gap |
 |---|---|---|---|
 | v5 (30 decks) | 54.5% | 48.0% | −6.5 |
 | **v6 (40 train / 7 held out)** | **58.4%** | **54.8%** | **−3.7 ± 12.7** |
 
-Not statistically significant (7 decks × 24 games is noisy), but the point
-estimate halved while absolute strength rose. Training on more decks works;
-"the agent does not generalize" is no longer the headline problem.
+Not significant (7 decks x 24 games), but the point estimate halved while
+absolute strength rose. Training on more decks works.
 
-**2. The run plateaued at iteration ~300 of 1500.** Everything flat after that —
-`len` 32, `turns` 5.15, `ev` +0.74 — while throughput *halved* (417 → 199 st/s,
-the PFSP pool growing). 1000 iterations and ~4 hours bought about +2 points vs
-greedy, and the 65% exit criterion was never reached.
+**2. It plateaued at iteration ~300 of 1500.** `len`, `turns`, `ev` all flat
+after that while throughput halved (417 -> 199 st/s, the PFSP pool growing).
+1000 iterations bought ~2 points; the 65% exit criterion was never reached.
+**So compute is not the bottleneck.**
 
-**So compute is not the bottleneck.** Running longer at victory 5 is close to
-worthless; the next gain has to come from changing what the agent can learn.
+Prime suspect: **victory 5 is too short to be the real game** (`turns=5.14`).
+Attrition and battlefield contention barely exist in five turns, and tempo
+parity *inverts* at odd victory scores — victory 5 teaches the wrong tempo.
 
-**Prime suspect: victory 5 is too short to be the real game.** `turns=5.14` means
-games end in five turns. Attrition, board development and battlefield contention
-barely exist in five turns. And per `BACKLOG.md`, tempo parity *inverts* at odd
-victory scores — so victory 5 is actively teaching the wrong tempo for victory 8.
-
-Per-deck spread is now 100% (0% on 4 decks, 100% on one). All four near-0% decks
-load at `coverage=1.000`, so they are not broken at the card level — consistent
-with the earlier finding that the spread is **deck strength in this engine**
-(greedy-vs-greedy spread was 85.8%).
+Per-deck spread is 100%, but all four near-0% decks load at `coverage=1.000`,
+so it is deck strength in this engine, not broken cards (greedy-vs-greedy
+spread was 85.8%).
 
 ---
 
@@ -69,15 +67,17 @@ with the earlier finding that the spread is **deck strength in this engine**
 
 Full list with effort estimates in **`rl/docs/BACKLOG.md`**. The ones that bite:
 
-1. **Damage assignment is made by the engine, not the player** (`D1`). Max-Might
-   proxy, no ability awareness. Measured: the policy sequences multiple combats in
-   10% of combat-turns vs random's 12% — it has **not** learned to swing
-   separately, and cannot, because the engine's defender never punishes batching.
-   Owner: "this changes things drastically, and that's why Backline and Tank exist."
+1. **`acting_seat` can name a seat with no legal actions.** Reproduces at
+   `make_v1_game` seed **859**; pre-existing (fails at `d149bc1` too), found by
+   raising the v1 spell fuzz from 300 to 2000 games. `play_game` raises whether
+   or not invariants are on, so it is a crash, not a stall. The real-deck path
+   is clean, which is why v6 never hit it.
 2. **Truncation pays 0, losing pays −1** → a losing player is rewarded for
    stalling. Latent (`trunc=0.0%`) but bites at victory 8. Prerequisite for it.
-3. **Chosen Champion cannot be played from the Champion Zone** (108.3.d). Every
-   deck understated by one guaranteed threat.
+3. **Chosen Champion cannot be played from the Champion Zone** (108.3.d).
+   Every deck understated by one guaranteed threat. **Being fixed now** —
+   owner's call to bump it ahead of victory 8: it matters less for
+   generalization and a great deal for individual deck strength.
 4. **Bo3 battlefield choice and sideboarding do not exist.** Bo1's random pick is
    correct (485.5); Bo3's *choice* (486.5) has no action kind at all.
 5. **"Name a tag" is restricted to tags already on the board.** The List fizzles

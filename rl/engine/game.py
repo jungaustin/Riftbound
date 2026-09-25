@@ -131,7 +131,10 @@ def new_game(table: CardTable, cfg: Config, decks: list[list[int]],
     # with these cards' text. What is missing is a zone.
     for seat in range(N_SEATS):
         if champions is not None and seat < len(champions):
+            # Zone occupancy and registered identity start equal; 108.3.d lets
+            # the first be spent while the second is a fact about the deck.
             s.champion[seat] = int(champions[seat])
+            s.champion_reg[seat] = int(champions[seat])
 
     # 103.1.b.2 -- a Legend fixes the deck's Domain Identity, and the Legend
     # Zone is Public (355.10.a.1), so *some* knowledge of the opponent's deck

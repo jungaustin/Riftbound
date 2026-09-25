@@ -619,7 +619,8 @@ class GameState:
         "next_discount",
         "victory_score",
         "kw_grant", "kw_grant_turn",
-        "legend", "champion", "legend_ready", "legend_emp", "legend_once",
+        "legend", "champion", "champion_reg", "legend_ready", "legend_emp",
+        "legend_once",
         "equip_played_ply",
         "pending_ready_runes",
         "pending_add_any",
@@ -1248,7 +1249,21 @@ class GameState:
         # So it gets fields of its own rather than a `perms` row, which would
         # make it answer to "kill a unit" and every board sweep in the pool.
         self.legend = np.full(N_SEATS, -1, np.int16)
+        # **Zone occupancy**, cleared when the champion is played (108.3.d).
         self.champion = np.full(N_SEATS, -1, np.int16)
+        # **Registered identity**, never cleared. 108.3.e makes the Chosen
+        # Champion public, and it STAYS public once played -- it is then on the
+        # board or in a trash, both public zones, and it was on the registered
+        # decklist either way. So "which champion did this player choose" is a
+        # standing fact about the deck, while `champion` above is only "is it
+        # still in the zone".
+        #
+        # The two were one field until 108.3.d made the card playable, and
+        # conflating them silently undid the deck-conditioning work: the moment
+        # a player cast their champion, the archetype signature the encoder
+        # reads went blank and the policy lost half of what told it which deck
+        # it was piloting. See [[rl-deck-conditioning-and-public-archetype]].
+        self.champion_reg = np.full(N_SEATS, -1, np.int16)
         # A legend CAN be exhausted, which is the cost most of them charge
         # ("Exhaust: [Add] {1 energy}"), and 315.1.b readies "all Game Objects
         # they control that are able to be readied" -- so the Awaken Phase

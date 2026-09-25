@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 
 from rl.engine.effects import play_from_look_cost
-from rl.engine.state import (N_BF, N_SEATS, P_ALIVE, P_ATTACHED_TO,
+from rl.engine.state import (MAX_HAND, N_BF, N_SEATS, P_ALIVE, P_ATTACHED_TO,
                              P_CTRL, P_DMG, P_LOC,
                              P_READY, GameState, bf_index, fd_slots,
                              is_battlefield)
@@ -200,7 +200,13 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
         # turn (822.1.b), and the two hands are different lengths.
         if state.pend_play_seat < 0:
             _fail("pending play with no announcing seat recorded")
-        if state.pend_play >= state.n_hand[state.pend_play_seat]:
+        # 108.3.d -- `CHAMPION_SRC` is a deliberate out-of-range index meaning
+        # "from the Champion Zone", so it is exempt from the hand bound. The
+        # card must actually be there, which is the real check.
+        if state.pend_play == MAX_HAND:      # actions.CHAMPION_SRC
+            if int(state.champion[int(state.pend_play_seat)]) < 0:
+                _fail("pending champion play with an empty Champion Zone")
+        elif state.pend_play >= state.n_hand[state.pend_play_seat]:
             _fail("pending play points past the end of the hand")
         if state.declaring:
             _fail("a play and a move declaration are open at the same time")
@@ -259,7 +265,9 @@ def check_actions(state: GameState, table, cfg, seat: int, actions) -> None:
     for a in actions:
         if a.kind != A.A_PLAY or state.pend_look >= 0:
             continue
-        card = int(state.hand[seat, a.arg])
+        # ...and 108.3.d lets the arg be `CHAMPION_SRC` instead of a hand
+        # index, which is out of range by design.
+        card = A.played_card(state, seat, int(a.arg))
         # 337.2 resolves Units and Gear immediately, without a Chain, so
         # neither has a *speed* to check -- both are Main-phase permanents.
         # Gear reached here as soon as it became playable and tripped a check
@@ -308,7 +316,8 @@ def check_actions(state: GameState, table, cfg, seat: int, actions) -> None:
             if n < 0 or A.plan_wild_power(state, seat, n) is None:
                 _fail(f"unpayable look-buffer play offered at slot {a.arg}")
         else:
-            card = int(state.hand[seat, a.arg])
+            card = A.played_card(state, seat, int(a.arg))
             if A.plan_payment(state, table, seat, card) is None:
-                _fail(f"unaffordable card offered from hand index {a.arg} "
+                _fail(f"unaffordable card offered from "
+                      f"{'the Champion Zone' if a.arg == A.CHAMPION_SRC else f'hand index {a.arg}'} "
                       f"({table.names[card]})")

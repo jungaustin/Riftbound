@@ -156,7 +156,9 @@ ZONES = ("hand", "board", "battlefields", "facedown", "legends", "chain",
 # decide the game and the encoder never touched, `victory_bonus` among them.
 # The +4 after it is the suspended damage assignment -- who is assigning, the
 # budget left, and how many kills are committed. See `_standing`'s tail.
-GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2 + 7 + 4 + 51 + 4
+# The +2 is 108.3.d: whether each player's Chosen Champion is still in its
+# zone, which its `_champions` row no longer says now that it can be played.
+GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2 + 7 + 4 + 51 + 4 + 2
 
 # ---------------------------------------------------------------------------
 # Every GameState field is either READ here or listed below with a reason.
@@ -610,7 +612,15 @@ class Encoder:
         z = np.zeros((CHAMP_SLOTS, self.row_dim), np.float32)
         m = np.zeros(CHAMP_SLOTS, bool)
         for k, owner in enumerate((seat, 1 - seat)):     # canonical: mine first
-            card = int(state.champion[owner])
+            # **`champion_reg`, not `champion`.** 108.3.d lets the card be
+            # played out of the zone, and reading occupancy here made the
+            # archetype signature vanish the moment it was cast -- the policy
+            # would lose half of what tells it which deck it is piloting,
+            # exactly when the board is most committed. Identity is public and
+            # permanent (108.3.e, and once played it is on the board or in a
+            # trash); whether it is still AVAILABLE is two globals in
+            # `_standing`.
+            card = int(state.champion_reg[owner])
             if card < 0:
                 continue          # a random-pool deal has no decklist (112)
             r = self._row(card, CX_ZONE_CHAMP)
@@ -814,6 +824,15 @@ class Encoder:
         # leaking). Encoding it properly means a per-row "doomed by my pending
         # assignment" flag, which widens `row_dim` for every zone; the two
         # numbers here are the first-order part of the decision.
+        # 108.3.d -- is each player's Chosen Champion still available? The
+        # ROW in `_champions` names which champion it is either way, because
+        # that identity is public and permanent; what changes is whether it is
+        # still a threat to come. Not inferable from the action rows: a
+        # champion that is merely unaffordable this turn is equally absent from
+        # them, and "they still have their champion" is exactly the standing
+        # fact that changes what a position is worth.
+        g += [float(int(state.champion[seat]) >= 0),
+              float(int(state.champion[foe]) >= 0)]
         asg = int(state.pend_dmg)
         g += [float(asg == seat),
               float(asg == foe),
@@ -960,8 +979,11 @@ class Encoder:
             # would have named some unrelated card, so the policy would have
             # been choosing "play Nocturne" off a feature describing whatever
             # happened to sit at that hand slot.
+            # ...and 108.3.d adds a THIRD meaning: `CHAMPION_SRC` names the
+            # Chosen Champion in the Champion Zone rather than any hand slot.
+            # `played_card` is the one place that mapping lives.
             card = (int(state.look_cards[act.arg]) if state.pend_look >= 0
-                    else int(state.hand[seat, act.arg]))
+                    else A.played_card(state, seat, int(act.arg)))
         elif k in (A.A_PLAY_AT, A.A_PLAY_AT_FAST):
             loc = act.arg
             if state.rp_seat >= 0:
@@ -971,7 +993,10 @@ class Encoder:
             elif state.pend_play_look >= 0:
                 card = int(state.look_cards[state.pend_play_look])
             elif state.pend_play >= 0:
-                card = int(state.hand[seat, state.pend_play])
+                # `played_card` because 108.3.d makes the Champion Zone a
+                # second source: `pend_play` may be `CHAMPION_SRC`, which is
+                # deliberately out of range for the hand.
+                card = A.played_card(state, seat, int(state.pend_play))
         elif k == A.A_DECLARE:
             loc = act.arg
         elif k == A.A_ACTIVATE:

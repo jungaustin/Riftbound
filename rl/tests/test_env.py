@@ -580,6 +580,129 @@ ok("a random-pool deal leaves the zone empty, not fabricated")
 
 
 # ---------------------------------------------------------------------------
+print("\n[4f] 108.3.d -- the Chosen Champion can be PLAYED from its zone")
+
+# Before this, the champion sat in its zone all game and every deck in the pool
+# was understated by one guaranteed threat -- the one card you always have.
+# 108.3.d: "can be played from here as normal, following the rules of Playing a
+# Card", so it flows through the ordinary unit-play path, cost and all.
+from rl.engine.state import P_ALIVE, P_CARD, P_CTRL                # noqa: E402
+from rl.engine import invariants as _inv                           # noqa: E402
+
+# The cheapest champions the corpus registers cost 3 energy and no Power, so
+# the fixture grants runes rather than relying on a turn count. Picked from the corpus rather than invented: the test then
+# exercises a card some deck in `decks/` actually registers.
+_cheap = None
+for _d in _pool:
+    if _d.champion < 0:
+        continue
+    if int(T.energy[_d.champion]) <= 3 and int(T.power[_d.champion]) == 0:
+        _cheap = _d
+        break
+if _cheap is None:
+    die("champion-play", "no corpus champion costs <= 3 energy; pick another fixture")
+
+_sp = game.new_game(T, CFG, *matchup(_cheap, _cheap)[:3], seed=11,
+                    legends=[_cheap.legend, _cheap.legend],
+                    champions=[_cheap.champion, _cheap.champion])
+
+
+def _past_mulligan(st):
+    """117 -- the Mulligan is the game's first decision, so skip it to reach MAIN."""
+    g = 0
+    while int(st.pend_mull) >= 0:
+        g += 1
+        assert g < 8, "the mulligan did not terminate"
+        A.apply(st, T, CFG, A.Action(A.A_MULLIGAN_DONE))
+    return st
+
+
+_past_mulligan(_sp)
+_seat = int(_sp.active)
+# Give the seat enough runes that affordability is not what is being tested.
+_sp.runes_ready[_seat] = 4
+_legal = A.legal_actions(_sp, T, CFG, _seat)
+_champ_offers = [a for a in _legal
+                 if a.kind == A.A_PLAY and a.arg == A.CHAMPION_SRC]
+if len(_champ_offers) != 1:
+    die("champion-play",
+        f"expected exactly one Champion Zone play offer, got {len(_champ_offers)}")
+# The sentinel must not collide with a real hand index.
+if any(a.kind == A.A_PLAY and a.arg == A.CHAMPION_SRC
+       for a in _legal if a is not _champ_offers[0]):
+    die("champion-play", "CHAMPION_SRC collided with a hand index")
+if A.played_card(_sp, _seat, A.CHAMPION_SRC) != _cheap.champion:
+    die("champion-play", "the offer does not name the champion card")
+ok(f"the champion is offered as a play ({T.names[_cheap.champion]!r})")
+
+# The ACTION ROW must describe the champion, not whatever sits at hand slot 60.
+# This is the exact class of bug the `A_TARGET` and `A_PICK` overloads caused:
+# a valid index into the wrong array gives meaningless features on the decision
+# that needs them most.
+_row_e = Encoder(T, CFG)
+_ob = _row_e.encode(_sp, _seat, _legal)
+_ci = _legal.index(_champ_offers[0])
+_nk = len(A.KIND_NAMES)
+if _ob.legal_actions[_ci][_nk] != 1.0:
+    die("champion-play", "the champion's action row carries no card at all")
+# Encode a lone champion offer and a lone hand play of a DIFFERENT card; the
+# rows must differ, or the policy cannot tell the two apart.
+_hand_plays = [a for a in _legal if a.kind == A.A_PLAY and a.arg != A.CHAMPION_SRC
+               and A.played_card(_sp, _seat, a.arg) != _cheap.champion]
+if _hand_plays:
+    _o2 = _row_e.encode(_sp, _seat, [_champ_offers[0], _hand_plays[0]])
+    if np.array_equal(_o2.legal_actions[0], _o2.legal_actions[1]):
+        die("champion-play",
+            "the champion's row is identical to a different card's hand row")
+    ok("the action row names the champion, not hand slot CHAMPION_SRC")
+else:
+    ok("the action row carries the champion's card (no hand play to contrast)")
+
+# Playing it: onto the board, and OUT of the zone. 108.3.c is why the zone must
+# empty -- the champion "cannot be returned to this zone by normal means", so a
+# zone that still held it would make the card playable twice.
+_before = int(_sp.n_perms)
+A.apply(_sp, T, CFG, _champ_offers[0])
+# A unit play opens a destination choice (`pend_play`); answer it.
+_guard = 0
+while int(_sp.pend_play) >= 0:
+    _guard += 1
+    assert _guard < 8, "the champion's destination choice did not terminate"
+    _nxt = A.legal_actions(_sp, T, CFG, int(_sp.pend_play_seat))
+    A.apply(_sp, T, CFG, next(a for a in _nxt
+                              if a.kind in (A.A_PLAY_AT, A.A_PLAY_AT_FAST)))
+_inv.check(_sp)
+if int(_sp.champion[_seat]) >= 0:
+    die("champion-play", "108.3.c -- the Champion Zone still holds the card")
+_on_board = [i for i in range(int(_sp.n_perms))
+             if _sp.perms[i, P_ALIVE] == 1
+             and int(_sp.perms[i, P_CARD]) == _cheap.champion
+             and int(_sp.perms[i, P_CTRL]) == _seat]
+if not _on_board:
+    die("champion-play", "the champion was not put onto the board")
+ok("playing it empties the zone and puts the champion on the board")
+
+# ...and it is not offered a second time.
+if any(a.kind == A.A_PLAY and a.arg == A.CHAMPION_SRC
+       for a in A.legal_actions(_sp, T, CFG, _seat)):
+    die("champion-play", "the champion is still offered after being played")
+ok("...and an empty Champion Zone offers nothing")
+
+# It costs its printed cost: an unaffordable champion is not offered. 108.3.d
+# says "as normal", and 811.1.b's cost waiver is specific to the Facedown Zone.
+_su = game.new_game(T, CFG, *matchup(_cheap, _cheap)[:3], seed=11,
+                    legends=[_cheap.legend, _cheap.legend],
+                    champions=[_cheap.champion, _cheap.champion])
+_past_mulligan(_su)
+_su.runes_ready[int(_su.active)] = 0
+_su.pool_energy[int(_su.active)] = 0
+if any(a.kind == A.A_PLAY and a.arg == A.CHAMPION_SRC
+       for a in A.legal_actions(_su, T, CFG, int(_su.active))):
+    die("champion-play", "a champion with no runes was offered for free")
+ok("with no resources it is not offered -- the cost is real")
+
+
+# ---------------------------------------------------------------------------
 print("\n[4e] every engine field is read by the encoder, or classified")
 import re as _re
 from rl.obs import OBS_UNREAD

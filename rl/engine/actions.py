@@ -96,7 +96,7 @@ from rl.engine.state import (F_BUFFED, C_UID, C_PLAY_SPELL, C_SPENT_E, C_ABIL, C
                              C_REPEAT, DEST_TOP, LOOK_TYPE_BIT,
                              DEST_RECYCLE, DEST_TRASH,
                              C_SRC, MAIN, ENDING,
-                             MAX_CHAIN, MAX_PERMS, MAX_TRIGGERS, N_BF,
+                             MAX_CHAIN, MAX_HAND, MAX_PERMS, MAX_TRIGGERS, N_BF,
                              N_DOMAINS, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
                              P_LOC, P_READY, GameState, base_loc, bf_loc,
                              legend_src, legend_src_seat, is_legend_src,
@@ -702,8 +702,10 @@ def fast_permanents_playable(state: GameState, table: CardTable, cfg: Config,
     if cfg.units_only or state.no_cards[seat]:
         return []
     out = []
-    for i in _hand_choices(state, seat):
-        card = int(state.hand[seat, i])
+    # 3 champion cards print [Reaction]; 108.3.d plays them "as normal", so the
+    # keyword still decides when and the Champion Zone only decides from where.
+    for i in _hand_choices(state, seat) + champion_source(state, table, cfg, seat):
+        card = played_card(state, seat, i)
         if not (table.is_type(card, "Unit") or table.is_type(card, "Gear")):
             continue
         speed = printed_permanent_speed(table, card)
@@ -731,8 +733,10 @@ def ambush_playable(state: GameState, table: CardTable, cfg: Config,
     if cfg.units_only:
         return []
     out = []
-    for i in _hand_choices(state, seat):
-        card = int(state.hand[seat, i])
+    # 7 of the champion cards print [Ambush], and 822.1.b's permission is about
+    # the card being played, not about where it is played FROM.
+    for i in _hand_choices(state, seat) + champion_source(state, table, cfg, seat):
+        card = played_card(state, seat, i)
         if not table.has(card, "Ambush") or not table.is_type(card, "Unit"):
             continue
         spec = spec_for(table, card)
@@ -957,6 +961,66 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
                 continue
             out.append(pack_legend_activate(k))
     return out
+
+
+# 108.3.d -- "The Chosen Champion can be played from here as normal, following
+# the rules of Playing a Card." A second SOURCE ZONE for a play, not a second
+# kind of play: the cost, the timing, the destination choice, [Accelerate] and
+# every trigger behave exactly as they do from hand.
+#
+# Modelled as an out-of-range hand index rather than a new action kind, because
+# "as normal" means it must flow through the SAME code -- `_resolve_play`,
+# `play_destinations`, `plan_payment`, `permanent_play_allowed`. A separate
+# action kind would have meant a parallel play path, and the way those drift is
+# exactly what `_resolve_play_from_hidden` had to be written around.
+#
+# `MAX_HAND` is safe as the sentinel: a real index is always < `n_hand`, and
+# `n_hand` can never exceed `MAX_HAND`.
+CHAMPION_SRC = MAX_HAND
+
+
+def played_card(state: GameState, seat: int, idx: int) -> int:
+    """The card a play index names, in hand or in the Champion Zone."""
+    if idx == CHAMPION_SRC:
+        return int(state.champion[seat])
+    return int(state.hand[seat, idx])
+
+
+def _take_played_card(state: GameState, seat: int, idx: int) -> None:
+    """Remove a card that is being played from whichever zone it came from.
+
+    108.3.c keeps it from coming back: the Champion Zone is emptied and only
+    108.3.c.1 (an explicit instruction, into an empty zone) can refill it.
+    """
+    if idx == CHAMPION_SRC:
+        state.champion[seat] = -1
+        return
+    n = int(state.n_hand[seat])
+    state.hand[seat, idx:n - 1] = state.hand[seat, idx + 1:n]
+    state.hand[seat, n - 1] = -1
+    state.n_hand[seat] = n - 1
+
+
+def champion_source(state: GameState, table: CardTable, cfg: Config,
+                    seat: int) -> list[int]:
+    """`[CHAMPION_SRC]` when this seat has a Chosen Champion still in its zone.
+
+    Every Chosen Champion in the pool is a Unit (161 champion cards; the nine
+    that also report "Legend" are Legend cards, which 103.2 keeps out of the
+    Main Deck and so out of this slot). So the champion only ever needs the
+    unit/gear play paths, never the spell Chain -- which is why this returns an
+    index list to fold into those loops rather than duplicating them.
+    """
+    card = int(state.champion[seat])
+    # **Not gated on `cfg.units_only`.** The two reaction-speed callers below
+    # bail on that flag before they ever reach here, because Reaction windows
+    # are a v1 thing -- but a champion is a UNIT, and units are precisely what
+    # `units_only` allows. Copying that guard in here made the champion
+    # unplayable in the v0 curriculum, and the corpus decks it matters for are
+    # exactly the ones a v0 run trains on.
+    if card < 0 or state.no_cards[seat]:
+        return []
+    return [CHAMPION_SRC]
 
 
 def _hand_choices(state: GameState, seat: int) -> list[int]:
@@ -1397,7 +1461,7 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         # the placer is whoever holds priority for that play.
         if seat != int(state.pend_play_seat):
             return []
-        card = int(state.hand[seat, state.pend_play])
+        card = played_card(state, seat, int(state.pend_play))
         fast = printed_permanent_speed(table, card) >= 0 and chain.speed_ok(
             state, cfg, seat, printed_permanent_speed(table, card))
         dsts = play_destinations(state, table, cfg, seat, card,
@@ -1510,8 +1574,12 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     # so the wider lock has to be stated here too or a unit would walk straight
     # past it. `no_spells` deliberately does NOT appear here: Lilting Lullaby
     # stops spells and says nothing about units.
-    for i in ([] if state.no_cards[seat] else _hand_choices(state, seat)):
-        card = int(state.hand[seat, i])
+    # 108.3.d folds the Champion Zone in as one more source for this same loop,
+    # so the champion is gated by exactly the checks a unit in hand is.
+    for i in ([] if state.no_cards[seat]
+              else _hand_choices(state, seat)
+              + champion_source(state, table, cfg, seat)):
+        card = played_card(state, seat, i)
         # Gear is a permanent like a unit: it is played, it goes on the board,
         # and 337.2 resolves it immediately with no Chain. The only differences
         # are where it lands (base, 149.2) and that it enters READY (359.2.d).
@@ -1848,7 +1916,8 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
             state.pend_play_look = int(action.arg)
             return {}
         seat = int(state.priority)        # not `active`: responses happen on
-        card = int(state.hand[seat, action.arg])  # the opponent's turn too
+        # `played_card`, because 108.3.d lets `arg` be `CHAMPION_SRC`.
+        card = played_card(state, seat, int(action.arg))  # opponent's turn too
         if table.is_type(card, "Unit") or table.is_type(card, "Gear"):
             # 820 -- Cruel Patron prints "kill a [...] as an additional cost
             # to play me". Chosen (and paid) before `pend_play` opens, since a
@@ -2313,7 +2382,10 @@ def _choose_unit_cost_kill_target(state: GameState, table: CardTable,
     choice that follows every unit/gear play.
     """
     idx, seat = int(state.pend_kill_play), int(state.pend_kill_play_seat)
-    spec = spec_for(table, int(state.hand[seat, idx]))
+    # No champion prints a kill-cost today, so `CHAMPION_SRC` cannot reach
+    # here -- but the index is the same one `A_PLAY` carried, so it is read
+    # the same way rather than left as a trap for the first one that does.
+    spec = spec_for(table, played_card(state, seat, idx))
     assert perm >= 0 or spec.cost_kill_optional, \
         "cost_kill is a REQUIRED cost; there is no decline"
     if spec.cost_kill_discount and perm >= 0:
@@ -2328,7 +2400,7 @@ def _choose_unit_cost_kill_target(state: GameState, table: CardTable,
             chain.spend_buff(state, table, seat, perm)   # Kraken Hunter
         else:
             combat.destroy(state, table, perm)
-        card = int(state.hand[seat, idx])
+        card = played_card(state, seat, idx)
         if (spec.cost_kill_discount == KD_POWER_EACH
                 and _kill_discount_options(state, table, seat, card, spec)):
             return {"cost_kill": perm}           # "any number": keep choosing
@@ -3189,7 +3261,7 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
     Battlefield is a different decision from moving onto one.
     """
     idx = state.pend_play
-    card = int(state.hand[seat, idx])
+    card = played_card(state, seat, idx)
     extra = optional_add_cost(table, card) if fast else None
     assert not fast or extra is not None, \
         "paid an optional additional cost on a card that prints none"
@@ -3224,10 +3296,7 @@ def _resolve_play(state: GameState, table: CardTable, cfg: Config,
         assert int(state.xp[seat]) >= xp_cost, "XP additional cost underflow"
         state.xp[seat] -= xp_cost
 
-    n = int(state.n_hand[seat])
-    state.hand[seat, idx:n - 1] = state.hand[seat, idx + 1:n]
-    state.hand[seat, n - 1] = -1
-    state.n_hand[seat] = n - 1
+    _take_played_card(state, seat, idx)
     state.pend_play = -1
     state.pend_play_seat = -1
     if fast and table.names[card] in PLAY_COSTS_DISCARD:
