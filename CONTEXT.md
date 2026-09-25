@@ -4,7 +4,7 @@
 to pick up without asking for a summary. Claude keeps this current; it is
 rewritten and pruned freely, so treat it as *state*, not a log.
 
-**Last updated:** 2026-09-25 (v6 overnight run finished; maintenance rule in `CLAUDE.md`)
+**Last updated:** 2026-09-25 (D1 and the Chosen Champion landed; victory 8 is next)
 
 ---
 
@@ -13,42 +13,50 @@ rewritten and pruned freely, so treat it as *state*, not a log.
 | | |
 |---|---|
 | **Running** | Nothing |
-| **Committed** | `d149bc1` session work, `3cd3c2a` D1. Tree clean |
+| **Committed** | `d149bc1` session work, `3cd3c2a` D1, `d29e1a4` champion. Tree clean |
 | **Branch** | `rl/card-scripting` |
-| **Queue** | D1 done -> **Chosen Champion (108.3.d), in progress** -> victory 8 |
+| **Queue** | D1 done, Chosen Champion done -> **victory 8 curriculum is next**, after backlog 1-2 (truncation + sterile loop, S each) |
 
-**Checkpoints before `3cd3c2a` will not load**: D1 added 4 globals,
-`GLOBAL_DIM` 135 -> 139. That is fine — v6 plateaued at greedy level and was
-trained against a wrong combat model, so victory 8 should start fresh.
+**All older checkpoints are dead**: `GLOBAL_DIM` 135 -> 141 across the two
+fixes. That is fine — v6 plateaued at greedy level and was trained against a
+wrong combat model *and* a champion it could never play, so a fresh victory-8
+run is the right next move rather than `--init`.
+
+The two engine fixes, both measured on real decks:
+
+- **D1, damage assignment (`3cd3c2a`).** 465.2.c.2 gives the choice to the
+  player dealing the damage; the engine was deciding, which made `[Tank]` and
+  `[Backline]` inert and left no gradient toward sequencing attacks. Offered
+  only when `assignment_is_a_choice` (the pool cannot cover every target):
+  176 offers in 300 games, 114 with more than one candidate. Greedy answers via
+  `combat.dmg_solver_choice`, so the baseline did not weaken.
+- **108.3.d, the Chosen Champion (`d29e1a4`).** Playable from its zone as one
+  more source for the ordinary unit path (`A_PLAY` arg `CHAMPION_SRC`). Offered
+  at 2022 decision points in 200 games, taken 294 times; mean game length
+  7.4 -> 7.0 turns. `state.champion` is now occupancy and `champion_reg` the
+  permanent public identity — conflating them blanked the archetype signature
+  the moment the champion was cast.
 
 ---
 
-## The two results from v6 (`rl/runs/v6-overnight`, 1500 iters, 4.19M steps)
-
-**1. The generalization gap closed.**
+## What v6 settled (`rl/runs/v6-overnight`, 1500 iters, 4.19M steps)
 
 | | train decks | held-out | gap |
 |---|---|---|---|
 | v5 (30 decks) | 54.5% | 48.0% | −6.5 |
 | **v6 (40 train / 7 held out)** | **58.4%** | **54.8%** | **−3.7 ± 12.7** |
 
-Not significant (7 decks x 24 games), but the point estimate halved while
-absolute strength rose. Training on more decks works.
+**The generalization gap closed** — not significant at 7 decks x 24 games, but
+the point estimate halved while absolute strength rose. More decks works.
 
-**2. It plateaued at iteration ~300 of 1500.** `len`, `turns`, `ev` all flat
-after that while throughput halved (417 -> 199 st/s, the PFSP pool growing).
-1000 iterations bought ~2 points; the 65% exit criterion was never reached.
-**So compute is not the bottleneck.**
+**It plateaued at iteration ~300 of 1500** (everything flat after; throughput
+halved as the PFSP pool grew). 1000 iterations bought ~2 points and the 65%
+exit criterion was never reached, so **compute is not the bottleneck**. Prime
+suspect: victory 5 is too short to be the real game (`turns=5.14`), and tempo
+parity *inverts* at odd victory scores, so it teaches the wrong tempo.
 
-Prime suspect: **victory 5 is too short to be the real game** (`turns=5.14`).
-Attrition and battlefield contention barely exist in five turns, and tempo
-parity *inverts* at odd victory scores — victory 5 teaches the wrong tempo.
-
-Per-deck spread is 100%, but all four near-0% decks load at `coverage=1.000`,
-so it is deck strength in this engine, not broken cards (greedy-vs-greedy
-spread was 85.8%).
-
----
+Per-deck spread is 100%, but the near-0% decks all load at `coverage=1.000` —
+deck strength in this engine, not broken cards (greedy-vs-greedy spread 85.8%).
 
 ## What is true about the project
 
@@ -74,13 +82,10 @@ Full list with effort estimates in **`rl/docs/BACKLOG.md`**. The ones that bite:
    is clean, which is why v6 never hit it.
 2. **Truncation pays 0, losing pays −1** → a losing player is rewarded for
    stalling. Latent (`trunc=0.0%`) but bites at victory 8. Prerequisite for it.
-3. **Chosen Champion cannot be played from the Champion Zone** (108.3.d).
-   Every deck understated by one guaranteed threat. **Being fixed now** —
-   owner's call to bump it ahead of victory 8: it matters less for
-   generalization and a great deal for individual deck strength.
-4. **Bo3 battlefield choice and sideboarding do not exist.** Bo1's random pick is
-   correct (485.5); Bo3's *choice* (486.5) has no action kind at all.
-5. **"Name a tag" is restricted to tags already on the board.** The List fizzles
+3. **Bo3 battlefield choice and sideboarding do not exist.** Bo1's random pick
+   is correct (485.5); Bo3's *choice* (486.5) has no action kind at all, and 27
+   of 47 decklists carry an unparsed `Sideboard:` section.
+4. **"Name a tag" is restricted to tags already on the board.** The List fizzles
    against an empty board — dead exactly when played early.
 
 ---
