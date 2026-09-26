@@ -2603,6 +2603,7 @@ def _decision_pending(state: GameState) -> bool:
         or state.pend_split >= 0 or state.pend_amount >= 0 or state.pend_name >= 0
         or state.pend_ask >= 0 or state.pend_altar >= 0 or state.pend_kill_play >= 0
         or state.pend_dmg >= 0
+        or state.pend_show_off >= 0
         or int(state.pend_double[0]) >= 0 or int(state.pend_reveal[0]) >= 0
         # `resume_kind` is 0 when nothing is suspended, not -1.
         or bool(int(state.resume_kind)))

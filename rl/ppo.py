@@ -408,7 +408,16 @@ def _spell_pool() -> tuple[str, ...]:
     from rl.engine.cardtable import full_table
     from rl.engine.effects import SPECS
     t = full_table()
-    return tuple(sorted(n for n in SPECS if t.is_type(t.id_of(n), "Spell")))
+    # **A spec may name a card the table does not have**, and that is normal
+    # rather than an error: a set under `data/upcoming/` is scripted before it
+    # is released, so its `SPECS` entries exist while its rows do not (and
+    # appear the moment `RIFTBOUND_UPCOMING` is set or the set ships). This
+    # walks SPECS -> table, the one direction that can miss, so it has to skip
+    # rather than raise -- `id_of` used to KeyError and take the whole training
+    # pool down with it the first time a card was scripted early.
+    known = set(t.names)
+    return tuple(sorted(n for n in SPECS
+                        if n in known and t.is_type(t.id_of(n), "Spell")))
 
 
 SPELLS = _spell_pool()

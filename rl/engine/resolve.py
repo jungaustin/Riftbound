@@ -80,6 +80,7 @@ from rl.engine.effects import (COND_ANY_TARGET_TEMPORARY, COND_DIED_ALONE,
                                COND_HAND_AT_MOST, COND_UNITS_AT_CTX,
                                COND_PLAYED_EQUIPMENT, COND_CTX_BF_MINE,
                                COND_CHOSE_ENEMY_TWICE, COND_MIGHTY_AT_CTX,
+                               COND_SHOWED_OFF,
                                COND_HELD_HERE, COND_KILLED_N, COND_TRASH_BELOW,
                                OP_RECYCLE_TRASH_ALL, OP_SPLIT_DAMAGE, OP_DETACH_ONE,
                                OP_ADD_SPELL_ENERGY, COND_CONQUERED_UNCONTROLLED,
@@ -1470,6 +1471,15 @@ def _condition_holds(state: GameState, table: CardTable, op: Op,
                 and int(state.bf_ctrl[bf_index(ctx)]) == seat)
     if op.cond == COND_PLAYED_EQUIPMENT:
         return seat >= 0 and int(state.equip_played_ply[seat]) == int(state.ply)
+    if op.cond == COND_SHOWED_OFF:
+        # [Show Off] was taken up as this card was played. "You may", so the
+        # honest test is whether a unit was actually named -- declining leaves
+        # both slots at -1. Scoped by `show_off_ply`, because the slots are
+        # per-seat standing state and a choice made last turn must not answer
+        # for this one.
+        return (seat >= 0 and int(state.show_off_ply[seat]) == int(state.ply)
+                and (int(state.show_off_perm[seat]) >= 0
+                     or int(state.show_off_card[seat]) >= 0))
     if op.cond == COND_MIGHTY_AT_CTX:
         return (seat >= 0 and ctx >= 0
                 and any(combat.might(state, table, int(u)) >= 5
@@ -1806,6 +1816,32 @@ def _pay_domain_power(state: GameState, seat: int, domain: int, n: int) -> bool:
     for _ in range(n):
         state.recycle_rune(seat, domain)
     return True
+
+
+def show_off_might(state, table, seat: int) -> int:
+    """The Might of the unit `seat` showed off as the current card was played.
+
+    Two sources and they are read differently. A permanent's Might is read
+    LIVE, so a buff it gained between the choice and resolution counts -- the
+    card says "that unit's Might", not "its Might when you chose it". A card
+    revealed from HAND has no row and no buffs, so its printed Might is all
+    there is.
+
+    0 when nothing was shown off, or when the choice belongs to an earlier ply
+    (the slots are standing per-seat state), or when a chosen permanent has
+    since died -- there is no unit left whose Might to read, and unlike
+    `n_from_might`'s kill case this spell did not do the killing, so there is
+    no recorded last-known value to fall back on.
+    """
+    from rl.engine import combat as _c
+    if seat < 0 or int(state.show_off_ply[seat]) != int(state.ply):
+        return 0
+    perm = int(state.show_off_perm[seat])
+    if perm >= 0:
+        return (_c.might(state, table, perm)
+                if state.perms[perm, P_ALIVE] == 1 else 0)
+    card = int(state.show_off_card[seat])
+    return int(table.might[card]) if card >= 0 else 0
 
 
 def _slot(state: GameState, still_legal: list[int], idx: int, source: int,
@@ -2194,6 +2230,8 @@ def _resolve(state: GameState, table: CardTable, cfg: Config, spec: CardSpec,
             amount = op.n * len(present)
         # `!= -1`, not `>= 0`: T_SELF is negative, and "damage equal to MY
         # Might" (Caitlyn - Patrolling) names the source rather than a slot.
+        if op.n_from_show_off:
+            amount = show_off_might(state, table, seat)
         if op.n_from_might != -1:
             ref = _slot(state, still_legal, op.n_from_might, source, ctx, seat,
                         subj)

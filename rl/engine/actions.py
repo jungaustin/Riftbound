@@ -86,7 +86,7 @@ from rl.engine.effects import (TOKEN_DOUBLERS, COND_NONE, PLAY_COST_NEEDS_SPELL,
 _PERM_SLOT_KINDS = frozenset({TK_UNIT})
 from rl.engine.state import (F_BUFFED, C_UID, C_PLAY_SPELL, C_SPENT_E, C_ABIL, C_BOUND_BF, C_CARD, C_CTRL, C_COST, C_CTX2, D_ANY, C_OWNER, P_ATTACHED_TO, P_OWNER,
                              C_COST_KILL, C_SUBJ,
-                             F_EMPOWERED, F_FROM_HIDDEN, F_LEGION,
+                             F_EMPOWERED, F_FROM_HIDDEN, F_LEGION, F_NON_UNIT,
                              P_EMPOWER,
                              F_PAID_ADDITIONAL,
                              P_FLAGS,
@@ -1083,6 +1083,18 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
         out.append(Action(A_MULLIGAN_DONE))
         return out
 
+    # --- mid-play: [Show Off] a unit (RAD) --------------------------------
+    # "You may", so a decline is always offered. Two sources at once, told
+    # apart by the action KIND rather than by packing an arg: `A_PICK` is a
+    # hand index (revealing it), `A_TARGET` a friendly permanent row.
+    if state.pend_show_off >= 0:
+        if seat != int(state.pend_show_off):
+            return []
+        hand, units = show_off_choices(state, table, seat)
+        return ([Action(A_PICK, i) for i in hand]
+                + [Action(A_TARGET, p) for p in units]
+                + [Action(A_PICK_NONE)])
+
     # --- mid-damage: who dies to combat damage (465.2.c.2) ----------------
     # The assigning player chooses, one kill at a time, from the lowest
     # ordering tier that still holds a live target -- which is what makes
@@ -1681,6 +1693,7 @@ def _mid_decision(state: GameState) -> bool:
         or state.steal_seat >= 0 or state.pend_name >= 0
         or state.dj_seat >= 0 or state.pend_altar >= 0
         or state.pend_kill_play >= 0 or state.pend_dmg >= 0
+        or state.pend_show_off >= 0
         or is_terminal(state))
 
 
@@ -1960,6 +1973,16 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
         seat = int(state.priority)
         return _play_spell(state, table, cfg, seat, action.arg, repeat=True,
                            both=True)
+
+    # [Show Off]: `A_PICK` is a hand index, `A_TARGET` a permanent row, and a
+    # decline is `A_PICK_NONE`. First, because a suspended show-off blocks
+    # every other offer anyway.
+    if state.pend_show_off >= 0 and k in (A_PICK, A_PICK_NONE, A_TARGET):
+        if k == A_PICK:
+            return _finish_show_off(state, table, cfg, hand_idx=int(action.arg))
+        if k == A_TARGET:
+            return _finish_show_off(state, table, cfg, perm=int(action.arg))
+        return _finish_show_off(state, table, cfg)
 
     if k == A_TARGET:
         if state.pend_group_loc >= 0:
@@ -2275,9 +2298,78 @@ def _play_spell(state: GameState, table: CardTable, cfg: Config, seat: int,
     if spec.cost_kill is not None and (repeat or not spec.cost_kill_optional):
         state.pend_cost_kill = item
         return {"announced": table.names[card]}
+    # [Show Off] -- "As you play this, you may reveal a unit from your hand or
+    # pick a friendly unit." Answered BEFORE targets, which is the order the
+    # card prints them in, and before the card's own effect can read it back.
+    # Cleared per play, so a previous card's answer can never stand in.
+    if spec.show_off:
+        state.show_off_perm[seat] = -1
+        state.show_off_card[seat] = -1
+        state.show_off_ply[seat] = -1
+        if show_off_choices(state, table, seat):
+            state.pend_show_off = seat
+            return {"announced": table.names[card]}
     if spec.n_targets:
         state.pend_slot = 0
         return {"announced": table.names[card]}
+    return _finalize_pending(state, table, cfg, item)
+
+
+def show_off_choices(state: GameState, table: CardTable,
+                     seat: int) -> tuple[list[int], list[int]]:
+    """([Show Off] hand indices, friendly unit rows) -- the two sources.
+
+    "Reveal a unit from your hand OR pick a friendly unit", so both zones are
+    live at once. Returned separately because the action kinds differ and that
+    is what keeps the arg unambiguous: `A_PICK` carries a HAND INDEX here and
+    `A_TARGET` a PERMANENT ROW, so neither needs packing. (`A_PICK`'s arg
+    already means something different at each of its offer sites; adding a
+    packed sixth meaning is exactly the overload that has caused bugs.)
+
+    Hand indices collapse duplicates the way every other hand offer does --
+    two copies of the same unit are one choice.
+    """
+    hand: list[int] = []
+    seen: set[int] = set()
+    for i in range(int(state.n_hand[seat])):
+        c = int(state.hand[seat, i])
+        if c in seen or not table.is_type(c, "Unit"):
+            continue
+        seen.add(c)
+        hand.append(i)
+    units = [i for i in range(int(state.n_perms))
+             if state.perms[i, P_ALIVE] == 1
+             and int(state.perms[i, P_CTRL]) == seat
+             and not (int(state.perms[i, P_FLAGS]) & F_NON_UNIT)]
+    return hand, units
+
+
+def _finish_show_off(state: GameState, table: CardTable, cfg: Config,
+                     hand_idx: int = -1, perm: int = -1) -> dict:
+    """Record the [Show Off] answer, then carry on playing the card.
+
+    Nothing moves zones: a revealed card STAYS in hand (revealing is not
+    discarding), and a picked friendly unit is not targeted and is not
+    exhausted. The only lasting effect is that the answer is now readable --
+    by the card's own text, and by the opponent, who saw it happen.
+    """
+    seat = int(state.pend_show_off)
+    state.pend_show_off = -1
+    if hand_idx >= 0:
+        state.show_off_card[seat] = int(state.hand[seat, hand_idx])
+        state.show_off_ply[seat] = int(state.ply)
+    elif perm >= 0:
+        state.show_off_perm[seat] = int(perm)
+        state.show_off_ply[seat] = int(state.ply)
+    # else: declined. Both slots stay -1 and COND_SHOWED_OFF is false.
+
+    item = chain.oldest_pending(state)
+    if item < 0:
+        return {}
+    spec = chain.item_spec(state, table, item)
+    if spec is not None and spec.n_targets:
+        state.pend_slot = 0
+        return {"show_off": True}
     return _finalize_pending(state, table, cfg, item)
 
 
@@ -4465,7 +4557,7 @@ def _settle_after_decision(state: GameState, table: CardTable,
             and state.pend_split < 0 and state.pend_amount < 0
             and state.steal_seat < 0 and state.pend_name < 0
             and state.dj_seat < 0 and state.pend_altar < 0
-            and state.pend_dmg < 0
+            and state.pend_dmg < 0 and state.pend_show_off < 0
             and int(state.pend_double[0]) < 0
             and int(state.pend_reveal[0]) < 0
             and not is_terminal(state)):
@@ -4778,6 +4870,8 @@ def acting_seat(state: GameState) -> int:
         return -1
     if state.pend_mull >= 0:
         return int(state.pend_mull)
+    if state.pend_show_off >= 0:
+        return int(state.pend_show_off)
     # Combat damage assignment: the seat DEALING the damage chooses, which is
     # the opposite of Altar of Blood below -- tested first because a suspended
     # assignment happens before any death it goes on to cause.

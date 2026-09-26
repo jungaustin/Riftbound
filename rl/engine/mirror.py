@@ -68,6 +68,10 @@ SEAT_AXIS = (
     # nothing inside it is rewritten. Same shape as `pend_cull_keep`.
     "pend_dmg_pool", "pend_dmg_targets", "pend_dmg_n_tgt",
     "pend_dmg_kills", "pend_dmg_n_kill", "pend_dmg_done",
+    # [Show Off], per seat. `show_off_perm` holds a permanent ROW and
+    # `show_off_card` a CARD id -- mirroring moves neither -- so each seat's
+    # entry swaps wholesale, like `pend_cull_keep`.
+    "show_off_perm", "show_off_card", "show_off_ply",
     # Turn stamps indexed BY the seat that may look, so the permission follows
     # its owner across a swap.
     "saw_hand", "saw_fd",
@@ -99,6 +103,8 @@ SEAT_VALUED_SCALAR = ("pend_cull_first", "pend_cull_skip", "cull_spell_seat",
                       # seat-agnostic (it lists card ids) while this names who
                       # is looking -- the same split as pend_mull.
                       "pend_look", "pend_cull", "pend_discard",
+                      # Which seat is being asked to [Show Off] a unit.
+                      "pend_show_off",
                       # Which seat is assigning combat damage right now. The
                       # battlefield it happens at is `pend_dmg_bf`, which is a
                       # BF slot shared by both players and so does not flip.

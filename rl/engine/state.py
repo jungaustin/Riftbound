@@ -592,6 +592,7 @@ class GameState:
         "victory_bonus", "unit_tax_ply", "free_hide_ply", "pend_altar", "altar_ply",
         "pend_dmg", "pend_dmg_pool", "pend_dmg_bf", "pend_dmg_targets",
         "pend_dmg_n_tgt", "pend_dmg_kills", "pend_dmg_n_kill", "pend_dmg_done",
+        "show_off_perm", "show_off_card", "show_off_ply", "pend_show_off",
         "pool_rstr_e", "pool_rstr_p", "recycled_n", "rune_recycled_n",
         "banished_n", "chose_enemy_n", "legend_pile", "legend_pile_n",
         "pend_amount", "amt_kind",
@@ -1055,6 +1056,37 @@ class GameState:
         # forced (or solved by the engine) is marked done without being asked,
         # so the damage step can tell "nothing to do" from "not asked yet".
         self.pend_dmg_done = np.zeros(N_SEATS, np.int8)
+
+        # --- [Show Off] (RAD) ------------------------------------------------
+        # "[Show Off] a unit. (As you play this, you may reveal a unit from
+        # your hand or pick a friendly unit.)"
+        #
+        # An as-you-play choice whose RESULT later text reads back -- Primordial
+        # Roar's "if you showed off a unit, deal damage equal to that unit's
+        # Might". So unlike [Predict] the answer has to outlive the decision,
+        # and unlike an optional additional cost it is not enough to record
+        # THAT it happened: the card needs to know WHICH unit.
+        #
+        # Two sources, so two slots, and exactly one of them is set:
+        #   `show_off_perm` -- a permanent ROW, for "pick a friendly unit".
+        #                      Its Might is read live at resolution, so a buff
+        #                      gained in between counts.
+        #   `show_off_card` -- a CARD id, for "reveal a unit from your hand".
+        #                      The card stays in hand; only its identity is
+        #                      public, and a card in hand has no buffs, so its
+        #                      Might is the printed one.
+        #
+        # **`show_off_card` is public information and the encoder must show it
+        # to BOTH seats.** Revealing is the price you pay for showing off from
+        # hand, and an opponent who cannot see it is being denied something the
+        # table saw. `saw_hand` is no help: that is a whole-hand reveal, and
+        # this is one card.
+        self.show_off_perm = np.full(N_SEATS, -1, np.int16)
+        self.show_off_card = np.full(N_SEATS, -1, np.int16)
+        self.show_off_ply = np.full(N_SEATS, -1, np.int16)
+        # The seat currently being asked, or -1. Opened while the card is being
+        # played and closed before it resolves.
+        self.pend_show_off = -1
         # Energy that may only pay for spells (Lux, Crownguard); pools empty
         # with the rest.
         # Energy and Power that may only be spent on certain things (135.2.e.4

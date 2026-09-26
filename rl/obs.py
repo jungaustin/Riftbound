@@ -158,7 +158,9 @@ ZONES = ("hand", "board", "battlefields", "facedown", "legends", "chain",
 # budget left, and how many kills are committed. See `_standing`'s tail.
 # The +2 is 108.3.d: whether each player's Chosen Champion is still in its
 # zone, which its `_champions` row no longer says now that it can be played.
-GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2 + 7 + 4 + 51 + 4 + 2
+# The final +4 is [Show Off], per seat: whether one is live this ply and the
+# shown-off unit's Might.
+GLOBAL_DIM = 40 + 5 * N_DOMAINS + 1 + 2 + 7 + 4 + 51 + 4 + 2 + 4
 
 # ---------------------------------------------------------------------------
 # Every GameState field is either READ here or listed below with a reason.
@@ -211,6 +213,12 @@ OBS_UNREAD = frozenset({
     # `pend_dmg_n_kill` ARE read there -- the budget is the decision.
     "pend_dmg_targets", "pend_dmg_n_tgt", "pend_dmg_bf", "pend_dmg_kills",
     "pend_dmg_done",
+    # [Show Off] has no entry here: `pend_show_off` is read to decide what an
+    # action row means, and `show_off_perm` / `show_off_card` / `show_off_ply`
+    # are read in `_standing`. What the policy gets is the shown-off unit's
+    # SIZE, not its identity -- a genuine gap for the hand-revealed case,
+    # where a human would remember the card; closing it means a hand-zone row
+    # for a card the opponent does not hold, which is a shape change.
     "pend_discard_src", "pend_discard_tgt", "pend_double", "pend_grave",
     "pend_grave_dest", "pend_grave_owner", "pend_hide", "pend_kill_play_loc",
     "pend_kill_play_seat", "pend_mull", "pend_order", "pend_phase",
@@ -833,6 +841,32 @@ class Encoder:
         # fact that changes what a position is worth.
         g += [float(int(state.champion[seat]) >= 0),
               float(int(state.champion[foe]) >= 0)]
+        # [Show Off] (RAD). Public both ways: revealing from hand is the price
+        # of showing off, and a picked friendly unit was always visible. What
+        # the policy needs is whether a unit was shown off and how big it is --
+        # Primordial Roar deals damage equal to exactly that Might, so it is
+        # the number that decides what the spell threatens.
+        #
+        # **The card's IDENTITY is not encoded, only its Might**, and that is
+        # a real gap: a revealed hand card is public and a human would
+        # remember which card it was, not just how large. Encoding it properly
+        # means a row in the hand zone for a card the opponent does not hold,
+        # which is a shape change; recorded in OBS_UNREAD.
+        from rl.engine.resolve import show_off_might
+        for sd in (seat, foe):
+            # The two slots are read here rather than left to the helper, so
+            # that "was a unit shown off" is computed from the same pair
+            # `COND_SHOWED_OFF` tests -- and so the coverage gate in test_env,
+            # which scans this file for `state.<field>`, can see that they are
+            # encoded at all. A field read only through a helper in another
+            # module looks unread to that scan, which is the whole point of it.
+            perm = int(state.show_off_perm[sd])
+            shown = int(state.show_off_card[sd])
+            live = (int(state.show_off_ply[sd]) == ply
+                    and (perm >= 0 or shown >= 0))
+            g.append(float(live))
+            g.append(float(show_off_might(state, self.table, sd)) / 8.0
+                     if live else 0.0)
         asg = int(state.pend_dmg)
         g += [float(asg == seat),
               float(asg == foe),
@@ -1036,6 +1070,13 @@ class Encoder:
             # offered this action, and they know what they hid.
             card = int(state.fd_card[act.arg])
             loc = bf_loc(fd_bf(act.arg))          # the arg is a SLOT
+        elif k == A.A_PICK and state.pend_show_off >= 0:
+            # [Show Off]: the arg is a HAND INDEX, and the whole decision is
+            # which unit -- so naming the card is the only thing that tells the
+            # candidates apart. It leaks nothing: only the seat holding the
+            # hand is ever offered this, and choosing it reveals the card
+            # anyway.
+            card = int(state.hand[seat, act.arg])
         elif k == A.A_PICK and state.pend_dmg >= 0:
             # Combat damage assignment: the arg is a PERMANENT ROW, not any
             # buffer index, so `pick_card` would describe the wrong card
@@ -1062,6 +1103,13 @@ class Encoder:
             if state.pend_amount >= 0 or (state.pend_name >= 0
                                           and int(state.name_kind) == 0):
                 mode = int(act.arg)             # the amount / tag IS the choice
+        elif k == A.A_TARGET and state.pend_show_off >= 0:
+            # ...and here the arg is a friendly PERMANENT ROW, chosen rather
+            # than targeted, so there is no chain slot for `_open_slot_kind`
+            # to read. Reading one would describe an unrelated card.
+            card = int(state.perms[act.arg, P_CARD])
+            loc = int(state.perms[act.arg, P_LOC])
+            might = combat.might(state, self.table, act.arg)
         elif k == A.A_TARGET:
             # **`arg` means whatever the open slot's KIND says it means**: a
             # permanent row, a location, or a Chain Item uid. This read

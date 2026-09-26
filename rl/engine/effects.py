@@ -431,7 +431,11 @@ T_LAST_TOKEN = -10
  COND_TRASH_BELOW, COND_CONQUERED_UNCONTROLLED, COND_BURNED_UNIT,
  COND_KILLED_MIGHT_AT_MOST, COND_HAND_AT_MOST,
  COND_UNITS_AT_CTX, COND_PLAYED_EQUIPMENT, COND_CTX_BF_MINE,
- COND_CHOSE_ENEMY_TWICE, COND_MIGHTY_AT_CTX) = range(94)
+ COND_CHOSE_ENEMY_TWICE, COND_MIGHTY_AT_CTX,
+ COND_SHOWED_OFF) = range(95)
+# COND_SHOWED_OFF -- [Show Off] was taken up as this card was played
+# ("If you showed off a unit, ...", Primordial Roar). It is a CHOICE, not a
+# cost, so this is not COND_PAID_ADDITIONAL: nothing was paid.
 # COND_MIGHTY_AT_CTX -- you have a [Mighty] unit (5+ Might) at the location the
 # trigger captured (Sunken Temple's "when you conquer here with one or more
 # [Mighty] units").
@@ -830,6 +834,11 @@ class Op(NamedTuple):
     # -- so the number is whatever that unit is worth at resolution, statics
     # and buffs included, which is why it cannot be baked into `n`.
     n_from_might: int = -1
+    # [Show Off] -- N is the Might of the unit shown off as this card was
+    # played. A board unit's Might is read LIVE at resolution, so a buff gained
+    # in between counts; a card revealed from hand has no buffs and no row, so
+    # its printed Might is all there is.
+    n_from_show_off: bool = False
     # "draw 1 FOR EACH battlefield you control" / "for each of your Mighty
     # units" -- the amount is a board count rather than a printed number.
     # -1 is none; otherwise one of the CT_* kinds, and the amount is
@@ -1078,6 +1087,14 @@ class CardSpec(NamedTuple):
     # The cost RETURNS the chosen permanent to its owner's hand instead of
     # killing it (Legion Quartermaster).
     cost_return: bool = False
+    # [Show Off] (RAD) -- "As you play this, you may reveal a unit from your
+    # hand or pick a friendly unit." An as-you-play CHOICE, not a cost: nothing
+    # is paid and nothing leaves a zone. It is separate from `targets` because
+    # it is answered before them and is not a target at all -- it cannot be
+    # responded to, and a friendly unit chosen this way is not "targeted" for
+    # anything that cares. The answer lands in `state.show_off_*` and is read
+    # back by `Op(n_from_show_off=True)` and `COND_SHOWED_OFF`.
+    show_off: bool = False
     # The chosen permanent is EXHAUSTED (Meditation) or its buff SPENT (Call
     # to Glory, Wallop) instead of killed.
     cost_exhaust_unit: bool = False
@@ -2844,6 +2861,23 @@ SPECS: dict[str, CardSpec] = {
     # a friendly unit and an enemy unit. If you paid the additional cost, give
     # the friendly unit +2 Might this turn. They deal damage equal to their
     # Mights to each other.
+    # [Show Off] a unit. (As you play this, you may reveal a unit from your
+    # hand or pick a friendly unit.) If you showed off a unit, deal damage
+    # equal to that unit's Might to a unit.
+    #
+    # The target is NOT conditional on having shown off -- "deal damage ... to
+    # a unit" still names a target even when the damage would be 0, and 355.8
+    # means a spell with no legal target cannot be played at all. Declining
+    # [Show Off] therefore plays a spell that does nothing, which is legal and
+    # occasionally right (there may be nothing worth revealing).
+    "Primordial Roar": CardSpec(
+        speed=SPEED_MAIN,
+        show_off=True,
+        targets=(TargetSpec(who=W_ANY),),
+        ops=(Op(OP_DAMAGE, target=0, n_from_show_off=True,
+                cond=COND_SHOWED_OFF),),
+    ),
+
     "Rampage": CardSpec(
         speed=SPEED_MAIN,
         targets=(TargetSpec(who=W_FRIENDLY), TargetSpec(who=W_ENEMY)),
