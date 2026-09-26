@@ -27,6 +27,11 @@ ALL_KEYWORDS = (
     # 819 -- appended rather than slotted in alphabetically, because the index
     # into this tuple IS the `kw_mask` bit and the feature-matrix column.
     "Quick-Draw",
+    # The RAD set (spoiler season). Appended for the same reason, and note
+    # that appending here WIDENS the card feature matrix, so it invalidates
+    # older checkpoints. "Show Off" is the first two-word keyword; the
+    # bracket parser already allows spaces, so nothing there needed changing.
+    "Deploy", "Show Off", "Disarm",
 )
 
 # The v1 SCOPE TARGET -- keywords v1 intends to reach. This is an aspiration
@@ -87,6 +92,14 @@ ENGINE_KEYWORDS = {
     "Weaponmaster": "effects._weaponmaster_abilities for 821.1.c's optional "
                     "play trigger; OP_WEAPONMASTER pays the Equip cost less "
                     "[A] (only when it has one, 821.1.c.3) and attaches",
+    "Deploy":    "actions.play_destinations for 'play this only to a "
+                 "battlefield' (it REPLACES 149.2's base-only set for gear), "
+                 "and effects._deploy_abilities + phases' Hold step for 'when "
+                 "an opponent holds here, kill this' (TR_ENEMY_HOLDS_HERE)",
+    "Disarm":    "effects._disarm_abilities -- 'When I attack, give an enemy "
+                 "unit here -1 Might this turn', synthesised from the keyword "
+                 "like [Hunt] because the effect is fixed by the keyword "
+                 "rather than written on the card",
 }
 
 # **Reading a keyword is not the same as playing the card as printed.** These

@@ -199,7 +199,27 @@ def play_destinations(state: GameState, table: CardTable, cfg: Config,
     None of those permissions are implemented yet, so this is deliberately the
     unmodified default. Gear is base-only (149.2) unless played from Hidden
     (811.1.d.1.a), which v0 does not reach.
+
+    **[Deploy] replaces this set outright** -- see below.
     """
+    # [Deploy] -- "Play this only to a battlefield." (RAD) Replaces the default
+    # destination set the way `PLAY_ONLY_CONQUERED` does below, and for gear
+    # that means replacing 149.2's base-only rule rather than adding to it: a
+    # [Deploy] gear may not be played to base at all.
+    #
+    # **Restricted to a battlefield you CONTROL, which is an approximation.**
+    # The card says only "a battlefield". 806.3 imposes control for units and
+    # 149.2 says nothing about battlefields for gear, so the keyword's own
+    # scope is genuinely ambiguous from the card alone. The conservative
+    # reading is at least coherent with the keyword's other half -- you deploy
+    # onto ground you hold and lose it when an opponent takes over. Recorded
+    # in `decks.PARTIAL_TRANSCRIPTIONS`; confirm against the gallery.
+    if table.has(card, "Deploy"):
+        if ambush_only:
+            return []
+        return [bf_loc(b) for b in state.live_bfs()
+                if int(state.bf_ctrl[b]) == seat
+                and not combat.bf_forbids_play(state, table, bf_loc(b))]
     if not table.is_type(card, "Unit"):
         return [base_loc(seat)]
     # Mageseeker Warden: "opponents can only play units to their base".

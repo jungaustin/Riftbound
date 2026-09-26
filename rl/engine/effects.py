@@ -1172,7 +1172,11 @@ def single_execution(spec: "CardSpec") -> "CardSpec":
  TR_KILL_FROM_TRASH, TR_MAIN_START, TR_SECOND_DRAW,
  TR_MARKED_CONQUERS, TR_RECYCLED, TR_TEMPORARY,
  TR_RUNE_RECYCLED, TR_BANISHED, TR_PLAY_NONHAND,
- TR_SHOWDOWN_HERE) = range(55)
+ TR_SHOWDOWN_HERE, TR_ENEMY_HOLDS_HERE) = range(56)
+# TR_ENEMY_HOLDS_HERE -- [Deploy]'s "When an opponent holds here, kill this"
+# (RAD). Not TR_HOLD with a condition: TR_HOLD is queued for the units of the
+# seat that is SCORING, and this fires for a permanent belonging to the seat
+# that just LOST the ground, which that loop never looks at.
 # TR_SHOWDOWN_HERE -- "When a showdown begins here" (Diana - Lunari). Any
 # Showdown, Non-Combat included, which is why it is not TR_ATTACK_OR_DEFEND:
 # no one is designated when a unit walks onto open ground (RiftJudge #11567).
@@ -11215,6 +11219,48 @@ def _hunt_abilities(table, card: int) -> tuple[Ability, ...]:
             Ability(TR_HOLD, ops=(Op(OP_GAIN_XP, n=n),)))
 
 
+def _deploy_abilities(table, card: int) -> tuple[Ability, ...]:
+    """[Deploy]'s second half -- "When an opponent holds here, kill this."
+
+    The first half ("Play this only to a battlefield") is a play restriction,
+    not an ability, and lives in `actions.play_destinations` beside 806.3's.
+
+    Synthesised like [Temporary]'s self-kill (816), which is the closest
+    analogue in the pool: a keyword whose entire effect is "kill me at this
+    specific moment", fixed by the keyword rather than written on the card.
+    Going through the Chain rather than sweeping the board directly is what
+    makes it a real triggered ability -- it can be responded to, and it lands
+    in the Scoring Step where 315.2's ordering already applies.
+    """
+    if not table.has(card, "Deploy"):
+        return ()
+    return (Ability(TR_ENEMY_HOLDS_HERE, ops=(Op(OP_KILL, target=T_SELF),)),)
+
+
+def _disarm_abilities(table, card: int) -> tuple[Ability, ...]:
+    """[Disarm] -- "When I attack, give an enemy unit here -1 Might this turn."
+
+    Synthesised from the keyword rather than transcribed per card, for the same
+    reason [Hunt] and [Vision] are: the effect is fixed by the keyword, not
+    written on the card, so transcribing it on each printing would be one more
+    chance to write it differently.
+
+    `subject_role=ROLE_ATTACK` because the reminder says "when I ATTACK" and
+    not "attack or defend" -- Ahri, Inquisitive prints the two-sided version and
+    leaves `subject_role` off, which is the contrast worth noticing.
+
+    **No Might floor**, deliberately. Ahri's card prints "to a minimum of 1
+    Might" and passes `floor=1`; [Disarm]'s reminder prints no minimum, so
+    143.2.b's general floor of 0 applies instead. Copying Ahri's floor here
+    would be inventing text the keyword does not have.
+    """
+    if not table.has(card, "Disarm"):
+        return ()
+    return (Ability(TR_ATTACK_OR_DEFEND, subject_role=ROLE_ATTACK,
+                    targets=(TargetSpec(who=W_ENEMY, same_loc_as_source=True),),
+                    ops=(Op(OP_MODIFY_MIGHT, target=0, n=-1),)),)
+
+
 def _vision_abilities(table, card: int) -> tuple[Ability, ...]:
     """[Vision] (817) -- "functionally short for 'When this is played, predict'".
 
@@ -11414,6 +11460,8 @@ def abilities_for(table, card: int) -> tuple[Ability, ...]:
     """
     return (ABILITIES.get(table.names[card], ())
             + _hunt_abilities(table, card)
+            + _disarm_abilities(table, card)
+            + _deploy_abilities(table, card)
             + _vision_abilities(table, card)
             + _equip_abilities(table, card)
             + _quick_draw_abilities(table, card)

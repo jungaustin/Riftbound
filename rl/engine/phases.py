@@ -303,6 +303,18 @@ def score_holds(state: GameState, cfg: Config, table: CardTable | None = None) -
                 from rl.engine.chain import fire_legend
                 for _ in range(times):
                     fire_legend(state, table, int(seat), TR_HOLD, bf_loc(i))
+                # [Deploy] -- "When an opponent holds here, kill this." Fires
+                # for the permanents of the seat that just LOST this ground,
+                # which is why it cannot ride TR_HOLD: every queue above is
+                # for the SCORING seat's own cards.
+                from rl.engine.effects import TR_ENEMY_HOLDS_HERE
+                for g in range(int(state.n_perms)):
+                    if (state.perms[g, P_ALIVE] == 1
+                            and int(state.perms[g, P_LOC]) == bf_loc(i)
+                            and int(state.perms[g, P_CTRL]) != seat
+                            and any(a.trigger == TR_ENEMY_HOLDS_HERE
+                                    for a in row_abilities(state, table, int(g)))):
+                        chain_queue(state, TR_ENEMY_HOLDS_HERE, int(g), bf_loc(i))
     if gained and table is not None and combat.points_blocked(state, table, int(seat)):
         gained = 0                                  # Tianna Crownguard
     if gained:
