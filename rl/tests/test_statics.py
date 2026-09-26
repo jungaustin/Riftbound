@@ -3939,3 +3939,56 @@ ok("...and an enemy standing there closes the battlefield to it")
 
 
 print("\n\033[32mall static tests passed\033[0m")
+
+
+# ---------------------------------------------------------------------------
+# 135.2.e.6.b -- a card with NO Domain pays its printed Power cost with a rune
+# of any Domain ("[C] on a card with no Domain is processed as [A] instead").
+#
+# Untested for the whole build because no such card existed: every domainless
+# card in the released pool has no Power cost at all. `plan_payment` refused it
+# outright while `pay` had always allowed it (`card_domains(...) or every
+# domain`), so the affordability check and the payment disagreed and nothing
+# could tell. The first Colorless card with a Power cost would have been
+# uncastable in every deck -- the exact opposite of what Colorless is for.
+#
+# Written against whatever domainless card the corpus happens to hold, so the
+# suite does not depend on `data/upcoming/` being present or on a set shipping.
+print("\n[domainless power] 135.2.e.6.b -- payable in any domain")
+
+from rl.config import DOMAINS as _DOMS                            # noqa: E402
+from rl.engine.cost import plan_payment as _plan                  # noqa: E402
+
+_colorless = [i for i in range(len(T.names))
+              if int(T.domain_mask[i]) == 0 and int(T.power[i]) > 0
+              and int(T.energy[i]) <= 6]
+if _colorless:
+    _cl = _colorless[0]
+    for _di, _d in enumerate(_DOMS):
+        _s = fresh()
+        _s.runes_ready[0, _di] = 8
+        if _plan(_s, T, 0, _cl) is None:
+            die("domainless-power",
+                f"{T.names[_cl]!r} (no domain, {int(T.power[_cl])} power) is "
+                f"unaffordable from a mono-{_d} pool")
+    ok(f"{T.names[_cl]!r} is payable from every mono-domain pool")
+else:
+    ok("no domainless card with a Power cost in this corpus -- nothing to check")
+
+# ...and the rule must not leak: a card WITH a domain still needs that domain.
+_locked = next(i for i in range(len(T.names))
+               if int(T.power[i]) > 0 and int(T.energy[i]) <= 4
+               and bin(int(T.domain_mask[i])).count("1") == 1)
+_own = next(d for d in range(len(_DOMS)) if int(T.domain_mask[_locked]) >> d & 1)
+_other = (_own + 1) % len(_DOMS)
+_s = fresh()
+_s.runes_ready[0, _other] = 10
+if _plan(_s, T, 0, _locked) is not None:
+    die("domainless-power",
+        f"{T.names[_locked]!r} needs {_DOMS[_own]} Power but was payable "
+        f"entirely from {_DOMS[_other]} -- 163.2 has stopped binding")
+_s = fresh()
+_s.runes_ready[0, _own] = 10
+if _plan(_s, T, 0, _locked) is None:
+    die("domainless-power", f"{T.names[_locked]!r} is unaffordable in its own domain")
+ok(f"...and {T.names[_locked]!r} still needs {_DOMS[_own]} specifically (163.2)")

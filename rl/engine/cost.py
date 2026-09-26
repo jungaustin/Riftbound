@@ -633,13 +633,19 @@ def plan_payment(state: GameState, table: CardTable, seat: int, card: int,
     need_p = effective_power(state, table, seat, card) + extra_power
     if need_p <= 0:
         return []
-    doms = card_domains(table, card)
-    if not doms:
-        # 805.1.a.2 -- a domainless unit may pay Accelerate's Power with a rune
-        # of ANY domain. A *printed* Power cost with no domain stays unpayable.
-        if int(table.power[card]) > 0 or extra_power <= 0:
-            return None
-        doms = list(range(N_DOMAINS))
+    # 135.2.e.6.b -- "A [C] shorthand on a card with no Domain is processed as
+    # [A] instead", so a domainless card's own printed Power cost is payable by
+    # a rune of ANY domain. 805.1.a.2 says the same thing for a domainless unit
+    # paying [Accelerate]'s Power, so the two collapse into one line.
+    #
+    # **This used to refuse a printed Power cost outright**, on the reasoning
+    # that a domainless card could name no domain to pay in. Nothing caught it
+    # because no such card existed -- Neeko, Blending In is the first Colorless
+    # card in the pool with a Power cost, and she was unaffordable in every
+    # deck, which is the opposite of what being Colorless is for. `pay` below
+    # had always done it the right way (`card_domains(...) or every domain`),
+    # so the affordability check and the payment disagreed.
+    doms = card_domains(table, card) or list(range(N_DOMAINS))
 
     floating = (sum(int(state.pool_power[seat, d]) for d in doms)
                 + wild(state, seat) + rstr_p)
