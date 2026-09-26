@@ -4,7 +4,7 @@
 to pick up without asking for a summary. Claude keeps this current; it is
 rewritten and pruned freely, so treat it as *state*, not a log.
 
-**Last updated:** 2026-09-25 (D1 and the Chosen Champion landed; victory 8 is next)
+**Last updated:** 2026-09-25 (D1, the Chosen Champion, and the RAD keywords)
 
 ---
 
@@ -15,10 +15,10 @@ rewritten and pruned freely, so treat it as *state*, not a log.
 | **Running** | Nothing |
 | **Committed** | `d149bc1` session work, `3cd3c2a` D1, `d29e1a4` champion. Tree clean |
 | **Branch** | `rl/card-scripting` |
-| **Queue** | D1 done, Chosen Champion done -> **victory 8 curriculum is next**, after backlog 1-2 (truncation + sterile loop, S each) |
+| **Queue** | D1, Chosen Champion, and the 3 RAD keywords done -> **victory 8**, after backlog 1-2 (truncation + sterile loop, S each) |
 
-**All older checkpoints are dead**: `GLOBAL_DIM` 135 -> 141 across the two
-fixes. That is fine — v6 plateaued at greedy level and was trained against a
+**All older checkpoints are dead**: `GLOBAL_DIM` 135 -> 145, and
+`ALL_KEYWORDS` gained three entries (its index IS a card-feature column). That is fine — v6 plateaued at greedy level and was trained against a
 wrong combat model *and* a champion it could never play, so a fresh victory-8
 run is the right next move rather than `--init`.
 
@@ -41,19 +41,15 @@ The two engine fixes, both measured on real decks:
 
 ## What v6 settled (`rl/runs/v6-overnight`, 1500 iters, 4.19M steps)
 
-| | train decks | held-out | gap |
-|---|---|---|---|
-| v5 (30 decks) | 54.5% | 48.0% | −6.5 |
-| **v6 (40 train / 7 held out)** | **58.4%** | **54.8%** | **−3.7 ± 12.7** |
+**The generalization gap closed** — train 58.4% vs held-out 54.8% (−3.7 ±
+12.7), against v5's −6.5. Not significant at 7 decks x 24 games, but the point
+estimate halved while absolute strength rose. More decks works.
 
-**The generalization gap closed** — not significant at 7 decks x 24 games, but
-the point estimate halved while absolute strength rose. More decks works.
-
-**It plateaued at iteration ~300 of 1500** (everything flat after; throughput
-halved as the PFSP pool grew). 1000 iterations bought ~2 points and the 65%
-exit criterion was never reached, so **compute is not the bottleneck**. Prime
-suspect: victory 5 is too short to be the real game (`turns=5.14`), and tempo
-parity *inverts* at odd victory scores, so it teaches the wrong tempo.
+**It plateaued at iteration ~300 of 1500**, so **compute is not the
+bottleneck**: 1000 further iterations bought ~2 points and the 65% exit
+criterion was never reached. Prime suspect is that victory 5 is too short to
+be the real game (`turns=5.14`), and tempo parity *inverts* at odd victory
+scores, so it teaches the wrong tempo.
 
 Per-deck spread is 100%, but the near-0% decks all load at `coverage=1.000` —
 deck strength in this engine, not broken cards (greedy-vs-greedy spread 85.8%).
@@ -70,6 +66,31 @@ deck strength in this engine, not broken cards (greedy-vs-greedy spread 85.8%).
   `decks/banned/`, excluded inside `decklist_files` itself.
 - Docs live in **`rl/docs/`** (`PLAN`, `LEARNING`, `PLAYING`, `RUNS`, `BACKLOG`),
   indexed by `rl/README.md`.
+
+## Unreleased sets
+
+`data/upcoming/<SET_ID>.json` holds cards that are not out yet. Nothing there
+reaches deckbuilding, ratings or training until its `released_on` passes or
+`RIFTBOUND_UPCOMING=1` is set. `python cli.py upcoming` shows the status;
+`rl/tests/test_upcoming.py` enumerates every corpus reader and fails by name
+if a new one appears ungated.
+
+**RAD is loaded: 14 cards, `released_on` a placeholder of 2099-01-01.** Nine
+came from card scans, four from a paraphrase, plus a reconstructed Bomb token.
+The file's `verification` block lists what still needs checking against the
+official gallery -- every domain and power cost is read off card art.
+
+Scripted so far: **[Disarm]**, **[Deploy]**, **[Show Off]** and Primordial
+Roar. Work on this with the flag on:
+
+```
+RIFTBOUND_UPCOMING=1 python -m rl.tests.test_new_keywords
+```
+
+One approximation to confirm: [Deploy] is restricted to a battlefield you
+**control**; the card says only "a battlefield".
+
+---
 
 ## Known-bad, in priority order
 
