@@ -150,22 +150,30 @@ else:
     dep = NAMES.index("Pillaged Armory") if have("Pillaged Armory") else _dep[0]
 
     # -- half one: the play restriction ------------------------------------
+    # "Play this only to a battlefield" means ANY battlefield, confirmed by the
+    # project owner. 806.3's control requirement is written for UNITS and
+    # nothing extends it to gear -- and it is the permissive reading that makes
+    # the keyword's other half worth printing, since "when an opponent holds
+    # here, kill this" is the price of deploying onto ground you do not hold.
+    _bf_card = next(c for c in range(len(NAMES)) if T.is_type(c, "Battlefield"))
     s = fresh()
     s.active = 0
     s.runes_ready[0, 0] = 6
+    for _b in range(3):
+        s.bf_card[_b] = _bf_card
     s.bf_ctrl[0] = 0                                   # we control bf 0
     s.bf_ctrl[1] = 1                                   # they control bf 1
+    s.bf_ctrl[2] = -1                                  # nobody controls bf 2
     dsts = A.play_destinations(s, T, CFG, 0, dep)
     if base_loc(0) in dsts:
         die("deploy", "a [Deploy] card was offered its base -- 149.2's "
                       "base-only rule is REPLACED, not added to")
-    if bf_loc(0) not in dsts:
-        die("deploy", "a [Deploy] card was not offered a battlefield we control")
-    if bf_loc(1) in dsts:
-        die("deploy", "a [Deploy] card was offered a battlefield the opponent "
-                      "controls (see the approximation note in "
-                      "actions.play_destinations)")
-    ok(f"{NAMES[dep]!r} may be played only to a battlefield we control")
+    for _b, _what in ((0, "one we control"), (1, "one the OPPONENT controls"),
+                      (2, "an uncontrolled one")):
+        if bf_loc(_b) not in dsts:
+            die("deploy", f"a [Deploy] card was not offered {_what} -- the "
+                          f"card says 'a battlefield', with no control clause")
+    ok(f"{NAMES[dep]!r} may be played to ANY battlefield, never to base")
 
     # -- half two: the death trigger ---------------------------------------
     def hold_with(owner: int) -> int:
@@ -186,6 +194,29 @@ else:
         die("deploy", "holding your OWN battlefield killed your own [Deploy] "
                       "card -- the trigger is 'an opponent holds', not 'anyone'")
     ok("...and holding it yourself does not -- only an OPPONENT's hold")
+
+    # -- and 149.3's sweep must not undo it --------------------------------
+    # "If an unattached non-Unit Gear is at a Battlefield for any reason during
+    # a cleanup, it is recalled to its controller's Base." That is the
+    # corrective half of 149.2's "unless an effect specifies otherwise", and a
+    # [Deploy] card IS that effect. Without the exemption the keyword was
+    # silently dead: the gear went home on the next Cleanup, so it was never
+    # standing there when an opponent held and the death clause never fired.
+    s = fresh()
+    g = s.add_permanent(dep, 0, bf_loc(0), True)
+    ordinary = next(i for i in range(len(NAMES))
+                    if T.is_type(i, "Gear") and not T.is_type(i, "Unit")
+                    and not T.has(i, "Deploy"))
+    o = s.add_permanent(ordinary, 0, bf_loc(0), True)
+    combat.recall_stray_gear(s, T)
+    from rl.engine.state import P_LOC                              # noqa: E402
+    if int(s.perms[g, P_LOC]) != bf_loc(0):
+        die("deploy", "149.3's sweep recalled the [Deploy] gear to base -- it "
+                      "belongs at a battlefield, so the keyword is undone")
+    if int(s.perms[o, P_LOC]) != base_loc(0):
+        die("deploy", f"the exemption leaked: ordinary gear {NAMES[ordinary]!r} "
+                      f"was left standing at a battlefield")
+    ok("149.3's stray-gear sweep spares it, and only it")
 
 
 # ---------------------------------------------------------------------------

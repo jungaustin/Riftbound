@@ -28,6 +28,9 @@
   ],
   "reconstructed": {
    "Bomb": "Not a scanned card. Its stats and text are reconstructed from Ziggs's reminder text, which states its whole rules box. Collector number and domain are invented."
+  },
+  "resolved": {
+   "[Deploy] scope": "CONFIRMED 2026-09-26 by the project owner and by the rules: ANY battlefield. 806.3's control clause is written for Units; 149.2 allows gear elsewhere 'unless an effect specifies otherwise'."
   }
  },
  "cards": [

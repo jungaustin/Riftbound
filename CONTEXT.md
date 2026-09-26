@@ -79,8 +79,10 @@ Roar. Work on this with the flag on:
 RIFTBOUND_UPCOMING=1 python -m rl.tests.test_new_keywords
 ```
 
-One approximation to confirm: [Deploy] is restricted to a battlefield you
-**control**; the card says only "a battlefield".
+[Deploy] takes **any** battlefield, not only yours — 806.3's control clause is
+unit-only and 149.2 says "unless an effect specifies otherwise". It also had to
+be exempted from 149.3's stray-gear sweep, which was recalling it home on the
+next Cleanup and made the whole keyword silently dead.
 
 ---
 

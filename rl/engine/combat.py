@@ -2618,12 +2618,24 @@ def recall_stray_gear(state: GameState, table: CardTable) -> list[int]:
     dropped by a Temporal Breach stood at the battlefield for the rest of the
     game (RiftJudge #12217). Unlike most of a Cleanup this step is not gated
     on an Open State, and a Recall is not a Move (456.1), so nothing triggers.
+
+    **[Deploy] gear is exempt.** 149.3's sweep is the corrective half of
+    149.2's "Gear can only be played to a player's Base **unless an effect
+    specifies otherwise**" -- it exists to clean up gear that has no business
+    standing on ground. A [Deploy] card is the effect that specifies
+    otherwise, so a battlefield is exactly where it belongs and sweeping it
+    home would undo the keyword on the very next Cleanup. Without this the
+    whole keyword was silently dead: the gear never stayed where it was
+    played, and "when an opponent holds here, kill this" could never fire
+    because it was never there when they held.
     """
     moved = []
     for i in range(state.n_perms):
         if (state.perms[i, P_ALIVE] == 1 and not state.is_attached(i)
                 and is_battlefield(int(state.perms[i, P_LOC]))):
             card = int(state.perms[i, P_CARD])
+            if table.has(card, "Deploy"):
+                continue
             if table.is_type(card, "Gear") and not table.is_type(card, "Unit"):
                 state.set_location(i, base_loc(int(state.perms[i, P_CTRL])))
                 moved.append(i)

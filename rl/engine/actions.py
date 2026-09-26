@@ -207,19 +207,20 @@ def play_destinations(state: GameState, table: CardTable, cfg: Config,
     # that means replacing 149.2's base-only rule rather than adding to it: a
     # [Deploy] gear may not be played to base at all.
     #
-    # **Restricted to a battlefield you CONTROL, which is an approximation.**
-    # The card says only "a battlefield". 806.3 imposes control for units and
-    # 149.2 says nothing about battlefields for gear, so the keyword's own
-    # scope is genuinely ambiguous from the card alone. The conservative
-    # reading is at least coherent with the keyword's other half -- you deploy
-    # onto ground you hold and lose it when an opponent takes over. Recorded
-    # in `decks.PARTIAL_TRANSCRIPTIONS`; confirm against the gallery.
+    # **ANY battlefield, not only one you control** -- confirmed by the project
+    # owner. The card says "a battlefield" and means it: 806.3's control
+    # requirement is written for UNITS, and nothing extends it to gear. I first
+    # read the control restriction in by analogy and that was wrong, in a way
+    # that mattered -- it is the permissive reading that makes the keyword's
+    # other half worth printing. "When an opponent holds here, kill this" is
+    # the PRICE of being able to deploy onto contested ground; restricted to
+    # your own battlefields the clause would almost never fire, and a downside
+    # that cannot happen is not a downside.
     if table.has(card, "Deploy"):
         if ambush_only:
             return []
         return [bf_loc(b) for b in state.live_bfs()
-                if int(state.bf_ctrl[b]) == seat
-                and not combat.bf_forbids_play(state, table, bf_loc(b))]
+                if not combat.bf_forbids_play(state, table, bf_loc(b))]
     if not table.is_type(card, "Unit"):
         return [base_loc(seat)]
     # Mageseeker Warden: "opponents can only play units to their base".
