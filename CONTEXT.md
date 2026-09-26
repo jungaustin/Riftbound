@@ -13,29 +13,21 @@ rewritten and pruned freely, so treat it as *state*, not a log.
 | | |
 |---|---|
 | **Running** | Nothing |
-| **Committed** | `d149bc1` session work, `3cd3c2a` D1, `d29e1a4` champion. Tree clean |
+| **Committed** | Through `0947b4c`. Tree clean |
 | **Branch** | `rl/card-scripting` |
 | **Queue** | D1, Chosen Champion, and the 3 RAD keywords done -> **victory 8**, after backlog 1-2 (truncation + sterile loop, S each) |
 
 **All older checkpoints are dead**: `GLOBAL_DIM` 135 -> 145, and
-`ALL_KEYWORDS` gained three entries (its index IS a card-feature column). That is fine — v6 plateaued at greedy level and was trained against a
-wrong combat model *and* a champion it could never play, so a fresh victory-8
-run is the right next move rather than `--init`.
+`ALL_KEYWORDS` gained three entries (its index IS a card-feature column).
+Fine — v6 plateaued at greedy level and was trained against a wrong combat
+model *and* a champion it could never play, so victory 8 should start fresh
+rather than `--init`.
 
-The two engine fixes, both measured on real decks:
-
-- **D1, damage assignment (`3cd3c2a`).** 465.2.c.2 gives the choice to the
-  player dealing the damage; the engine was deciding, which made `[Tank]` and
-  `[Backline]` inert and left no gradient toward sequencing attacks. Offered
-  only when `assignment_is_a_choice` (the pool cannot cover every target):
-  176 offers in 300 games, 114 with more than one candidate. Greedy answers via
-  `combat.dmg_solver_choice`, so the baseline did not weaken.
-- **108.3.d, the Chosen Champion (`d29e1a4`).** Playable from its zone as one
-  more source for the ordinary unit path (`A_PLAY` arg `CHAMPION_SRC`). Offered
-  at 2022 decision points in 200 games, taken 294 times; mean game length
-  7.4 -> 7.0 turns. `state.champion` is now occupancy and `champion_reg` the
-  permanent public identity — conflating them blanked the archetype signature
-  the moment the champion was cast.
+Landed today, each with tests and a commit message that carries the detail:
+**D1** damage assignment is the player's (`3cd3c2a`), **108.3.d** the Chosen
+Champion is playable (`d29e1a4`), **135.2.e.6.b** a domainless card pays Power
+in any domain (`bb0114b`), the **unreleased-set gate** (`aa193d6`), and the
+three **RAD keywords** (`fc10df7`, `6bf616a`).
 
 ---
 
