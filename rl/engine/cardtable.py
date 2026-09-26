@@ -55,6 +55,16 @@ def _raw_cards() -> list[dict]:
     # this module read past it, so the two halves of the repo disagreed about
     # what 40 cards say.
     from riftbound.db import _apply_overlay
+    from riftbound import upcoming
+    # Sets that are not out yet. Merged before the overlay for the same reason
+    # `db.py` does it there -- preview text is the likeliest thing to need an
+    # errata correction -- and empty unless a release date has passed or
+    # `RIFTBOUND_UPCOMING` is set. **This is the gate that keeps an unreleased
+    # card out of TRAINING**: the engine compiles its rows from this list, so a
+    # card absent here cannot be dealt, played, or learned about.
+    _extra_sets = upcoming.extra_cards()
+    if _extra_sets:
+        raw = {**raw, "cards": [*raw["cards"], *_extra_sets]}
     out = list(_apply_overlay(raw, ROOT / "data" / "errata.json")["cards"])
     extra = ROOT / "data" / "tokens.json"
     if extra.exists():

@@ -136,9 +136,22 @@ def _to_card(raw: dict) -> Card:
 
 @lru_cache(maxsize=1)
 def card_index() -> dict[str, Card]:
+    """Every card by loose name.
+
+    **Gated on `riftbound.upcoming` like the other two corpus readers.** This
+    one is easy to miss: `find()` below is what `rl/decks.py` resolves every
+    decklist name through, so leaving it ungated would let a list naming an
+    unreleased card resolve cleanly and only fail later, in `pool_table`, as a
+    missing row. The errata overlay is deliberately NOT applied here -- this
+    index predates it and `rl/engine/cardtable` stopped using it for exactly
+    that reason -- so this adds the upcoming cards and nothing else.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from riftbound import upcoming
     data = json.loads((ROOT / "data" / "cards.json").read_text())
     index: dict[str, Card] = {}
-    for raw in data["cards"]:
+    for raw in [*data["cards"], *upcoming.extra_cards()]:
         index.setdefault(loose_key(raw["name"]), _to_card(raw))
     return index
 

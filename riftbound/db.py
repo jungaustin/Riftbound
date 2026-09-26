@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import upcoming
 from .model import Card, canonical_name, champion_tags, loose_key
 
 
@@ -118,6 +119,14 @@ class CardDB:
                 f"{path} not found. Run `python cli.py sync` first."
             )
         raw = json.loads(path.read_text())
+        # Sets that are not out yet (`data/upcoming/`). Merged BEFORE the errata
+        # overlay, so a preview card can be corrected by `errata.json` exactly
+        # like a released one -- spoiler text is the most likely thing in the
+        # corpus to need a correction. Empty unless a set's release date has
+        # passed or `RIFTBOUND_UPCOMING` is set; see `riftbound/upcoming.py`.
+        extra = upcoming.extra_cards()
+        if extra:
+            raw = {**raw, "cards": [*raw["cards"], *extra]}
         return cls(_apply_overlay(raw, data_dir / "errata.json"))
 
     # ---------- lookup ----------

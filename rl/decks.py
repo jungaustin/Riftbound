@@ -602,10 +602,15 @@ def decklist_files(root: Path | None = None,
     root = Path(root or (ROOT / "decks"))
     # `decks/banned/` holds real tournament lists that are ILLEGAL under the
     # current banlist -- kept for reference and meta analysis, never trained on.
+    # `decks/upcoming/` holds lists for a set that is not out yet.
     # Excluded here rather than at the call sites: `rglob` would otherwise sweep
     # them in silently, and a policy trained against a banned card is learning a
     # game nobody is allowed to play. `cli.py check` is the other half of this.
-    EXCLUDE = {"banned"}
+    # `decks/upcoming/` is the same idea one set earlier: lists built from cards
+    # that are not legal yet. A deck there must never be trained on even while
+    # `RIFTBOUND_UPCOMING` is set, because the flag exists to let the ENGINE see
+    # the cards for scripting, not to let the agent practise an illegal format.
+    EXCLUDE = {"banned", "upcoming"}
     def _keep(f: Path) -> bool:
         return not (set(f.relative_to(root).parts[:-1]) & EXCLUDE)
     meta = sorted(f for f in (root / "meta").glob("*.txt") if _keep(f))
