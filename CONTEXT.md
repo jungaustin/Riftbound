@@ -77,15 +77,13 @@ this engine, not broken cards.
 
 ## What is true about the project
 
-- **PPO**, on-policy actor-critic policy gradient. No Q, nothing takes a `max`.
-  Terminal-only ±1 reward, `gamma=1.0`, so the critic *is* a win probability.
+- **PPO**, on-policy actor-critic. No Q, nothing takes a `max`. Terminal-only ±1
+  reward, `gamma=1.0`, so the critic *is* a win probability.
 - **Engine is solid**: 2017 community judge calls pass, 62 engine bugs found and
-  fixed, 13 test suites green, all three fuzz modes clean at victory 3 and 8.
-- **Deck pool: 47 decks, 29 legends.** 25 Singapore Regional lists + 4 post-ban
-  Kennen lists added 2026-09-25.
-- **13 decks with banned cards** are in `decks/banned/`, excluded inside
-  `decklist_files` itself.
-- Docs live in **`rl/docs/`** (`PLAN`, `LEARNING`, `PLAYING`, `RUNS`, `BACKLOG`,
+  fixed, 13 suites green, all three fuzz modes clean at victory 3 *and* 8.
+- **Deck pool: 47 decks, 29 legends.** 13 decks with banned cards live in
+  `decks/banned/`, excluded inside `decklist_files` itself.
+- Docs in **`rl/docs/`** (`PLAN`, `LEARNING`, `PLAYING`, `RUNS`, `BACKLOG`,
   `V8_SETUP`), indexed by `rl/README.md`.
 
 ## Unreleased sets
@@ -124,20 +122,14 @@ Full list with effort estimates in **`rl/docs/BACKLOG.md`**. The ones that bite:
 
 ## Working agreements
 
-- **Never wrap `python3` in `timeout`** — breaks numpy here. Use the Bash tool's
-  own timeout.
-- A ruling that contradicts `data/rules.txt` goes in `rl/tests/judge/rejected.json`
-  with the rule number. `data/tournament_rules.txt` is the authority for
-  sideboarding, competition rules and **how a game out of clock is decided
-  (408.2.b)** — the Core Rules mention none of them.
-- Commit messages end with:
-  `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
-- **Measure, don't assume.** It paid four times this session alone: the seed-859
-  crash was not in `acting_seat` at all, `loop_watch_after` had to be raised once
-  victory 8 was measured, `--rollout` needed 6x, and the final-point gate was
-  confirmed live only by counting denials in play.
-- Austin corrects rules from play experience; those corrections have been right
-  every time. Verify, then save to memory.
+`CLAUDE.md` has the standing ones. Added here:
+
+- `data/tournament_rules.txt` is the authority for sideboarding, competition rules
+  and **how a game out of clock is decided (408.2.b)** — Core mentions none.
+- **Measure, don't assume** paid four times this session: the seed-859 crash was
+  not in `acting_seat` at all, `loop_watch_after` had to be raised once victory 8
+  was measured, `--rollout` needed 6x, and the final-point gate was confirmed live
+  only by counting denials in play.
 
 ## Open questions for Austin
 
