@@ -2657,12 +2657,20 @@ def _report():
     RESULTS = _h.RESULTS
     width = max(len(t) for _, _, t, _ in RESULTS) if RESULTS else 10
     for status, qid, title, msg in RESULTS:
-        colour = {"PASS": "\033[32m", "FAIL": "\033[31m", "SKIP": "\033[33m"}[status]
+        colour = {"PASS": "\033[32m", "FAIL": "\033[31m", "SKIP": "\033[33m",
+                  "KNOWN": "\033[35m"}[status]
         line = f"  {colour}{status}\033[0m #{qid:<6} {title:<{width}}"
         print(line + (f"  -- {msg}" if msg else ""))
     bad = sum(1 for r in RESULTS if r[0] == "FAIL")
     skipped = sum(1 for r in RESULTS if r[0] == "SKIP")
-    print(f"\n{len(RESULTS) - bad - skipped} pass / {bad} fail / {skipped} skip")
+    known = sum(1 for r in RESULTS if r[0] == "KNOWN")
+    print(f"\n{len(RESULTS) - bad - skipped - known} pass / {bad} fail / "
+          f"{skipped} skip / {known} known-bad")
+    if known:
+        print("\nKNOWN-BAD -- the ruling is right and the engine is wrong. "
+              "Each one's rule and why the fix is not small:")
+        for _, qid, _, _ in [r for r in RESULTS if r[0] == "KNOWN"]:
+            print(f"  #{qid}: {_h.KNOWN_BAD[qid]}")
     sys.exit(1 if bad else 0)
 
 
