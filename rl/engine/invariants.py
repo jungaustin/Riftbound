@@ -317,7 +317,48 @@ def check_actions(state: GameState, table, cfg, seat: int, actions) -> None:
                 _fail(f"unpayable look-buffer play offered at slot {a.arg}")
         else:
             card = A.played_card(state, seat, int(a.arg))
-            if A.plan_payment(state, table, seat, card) is None:
+            if (A.plan_payment(state, table, seat, card) is None
+                    and not _affordable_by_discount(state, table, seat, card)):
                 _fail(f"unaffordable card offered from "
                       f"{'the Champion Zone' if a.arg == A.CHAMPION_SRC else f'hand index {a.arg}'} "
                       f"({table.names[card]})")
+
+
+def _affordable_by_discount(state: GameState, table, seat: int,
+                            card: int) -> bool:
+    """Is this card payable only once a cost REDUCTION the play itself provides
+    is counted? The printed cost being out of reach is then not a bug.
+
+    The three offer sites all allow one, and this check knew about none of them,
+    so it read a legal play as an illegal one:
+
+      - **A trash-tag discount** (Undying Loyalty, "{2 energy} less if you
+        choose a Bird, Cat, Dog or Poro"). `chain.tag_discount_targets` offers
+        the play when the *discounted* cost is affordable and then narrows the
+        target slot to the qualifying trash cards, so it can never finalize
+        unpayable. Caught by the v1 spell fuzz at **victory 8, seed 661**: zero
+        ready runes, so 2 Energy was unreachable, but the discount took it to 0
+        and the remaining 1 Power is paid by RECYCLING a rune, which needs no
+        ready one. Pre-existing, and only reachable in a long game.
+      - **`paid_ignores_cost` with a payable kill cost** -- the card is free
+        once the cost is paid, so the printed cost is never owed.
+      - **`cost_kill_discount`** (Cruel Patron and the rest): the discount is
+        the kill, which happens before the cost is planned.
+
+    Kept as a predicate on the invariant side rather than by calling the offer
+    functions, which would make the check vacuous -- it re-derives the
+    exemption from the card's own spec.
+    """
+    from rl.engine import actions as A
+    from rl.engine import chain
+    from rl.engine import resolve as rsv
+    spec = A.spec_for(table, card)
+    if spec is None:
+        return False
+    if chain.tag_discount_targets(state, table, seat, card, spec):
+        return True
+    if (spec.paid_ignores_cost and spec.cost_kill is not None
+            and rsv.cost_kill_targets(state, table, spec, seat)):
+        return True
+    return bool(spec.cost_kill_discount
+                and A._kill_discount_options(state, table, seat, card, spec))

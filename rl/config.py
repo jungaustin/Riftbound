@@ -158,7 +158,16 @@ class Config:
     # victory 8 but only 77.3% at victory 3, because the restriction dominates
     # there rather than gating the finish.
     victory_score: int = 5            # anneal 5 -> 8
-    turn_cap: int = 30                # truncate -> reward 0
+    turn_cap: int = 30
+    # **408.2.b -- how a game that runs out of clock is actually decided.** It
+    # is NOT a draw by default: "a player is declared the winner of the game if
+    # they have a point lead of two or more. If no player has a point lead of
+    # two or more, the game is a draw." Paying a flat 0 on truncation instead
+    # rewarded a LOSING player for stalling, since 0 beats the -1 they were
+    # heading for. Latent at victory 5 (`trunc=0.0%`), and the reason this had
+    # to be fixed before the victory-8 curriculum, which gives a stall far more
+    # room to pay off. `actions.outcome` reads this.
+    truncation_lead_to_win: int = 2
     # **A turn cap cannot catch a loop INSIDE one turn.** A livelocked priority
     # window never advances the turn, so `turn_cap` never fires and the episode
     # runs forever -- which is what dragged a mirror-match run's mean episode
@@ -169,6 +178,24 @@ class Config:
     # 8 stayed under it. 1500 is >4x that ceiling, so a game reaching it is not
     # a long game.
     decision_cap: int = 1500
+    # **Sterile-loop detection.** An exact `state_hash` repeat with the same
+    # seat to move is a position the game has already been in, so nothing in
+    # between made progress -- provable, because the digest covers every slot.
+    # Ending there instead of grinding to `decision_cap` saves ~1100 wasted
+    # decisions AND lets the loss be attributed: a seat that had another legal
+    # action and chose the loop anyway loses it. A seat with exactly one legal
+    # action was forced, so that case falls back to 408.2.b on points -- a
+    # forced loop is not the looper's fault and scoring it as one would teach a
+    # lie.
+    #
+    # Hashing costs 67us, which is ~13% of a decision, so it does not run on
+    # every one. It starts only once an episode is longer than any legal game
+    # measured -- and the number to measure against is **victory 8**, not the
+    # victory-3 curriculum: 1,000 real-deck games at victory 8 ran to a mean of
+    # 235 decisions and a max of 529, against 352 at victory 3. 700 is past that
+    # ceiling, so no healthy game pays for the hash, and it still ends a
+    # livelock 800 decisions before `decision_cap` would.
+    loop_watch_after: int = 700
 
     # --- action space ------------------------------------------------------
     max_actions: int = 64             # assert on overflow, log the distribution

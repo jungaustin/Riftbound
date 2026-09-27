@@ -1674,7 +1674,29 @@ def apply(state: GameState, table: CardTable, cfg: Config,
     """Mutate `state` by `action`. Returns a small log dict for replays."""
     log = _apply_one(state, table, cfg, action)
     log.update(_settle(state, table, cfg))
+    _normalize_priority(state)
     return log
+
+
+def _normalize_priority(state: GameState) -> None:
+    """340.2 / 335 -- once the Chain is empty outside a Showdown, the turn
+    player is the one acting, so priority belongs to them.
+
+    `chain.after_resolution` says this, but it only runs on the path where an
+    item RESOLVED. An item can also leave the Chain by being **countered**
+    (`chain.counter` pops it, 319.5), and no caller of that hands priority
+    back -- so a Hard Bargain tax declined on the opponent's last item drained
+    the Chain to nothing with `priority` still pointing at whoever last held
+    it. Stale priority then lied in three places at once: `obs` feeds
+    `priority == seat` to the policy, `invariants.check_actions` reads it, and
+    `_apply_one` took it as the seat announcing a play -- which is the crash,
+    because the announcer indexes a hand. Found at `make_v1_game` seed 859.
+
+    Stated as the rule rather than as a repair, so a future path that empties
+    the Chain some third way is covered without knowing about it.
+    """
+    if state.n_chain == 0 and state.showdown_bf < 0 and state.priority >= 0:
+        state.priority = int(state.active)
 
 
 def _mid_decision(state: GameState) -> bool:
@@ -2920,7 +2942,15 @@ def _activate(state: GameState, table: CardTable, cfg: Config, seat: int,
         # and the assert in `pack_activate` is where that starts being wrong.
         idx = next(j for j, ab in enumerate(abilities_for(table, card))
                    if ab.trigger == TR_ACTIVATED and ab.cost_exhaust)
-    _own = abilities_for(table, card)
+    # 721.2 -- an Attached card's own abilities are Inactive, so they are not
+    # part of the row's ability list and do not occupy an index in it. This
+    # guard is `activatable`'s, and it was missing here: the offer numbered a
+    # Shepherd's Heirloom's appended Exhaust ability as k=0 (its own [Play]
+    # trigger being suppressed), while this read index 0 of the card's OWN two
+    # abilities and landed on the [Play] trigger. Any attached Equipment
+    # carrying a granted ability crashed on activation -- real-deck fuzz seed
+    # 95, pre-existing.
+    _own = abilities_for(table, card) if not state.is_attached(perm) else ()
     if donor == perm and idx >= len(_own):
         # An appended ability (Dominus's grant): its own card and index.
         card, idx = (int(x) for x in
@@ -3574,13 +3604,34 @@ def is_terminal(state: GameState) -> bool:
     return state.winner >= 0 or state.truncated
 
 
-def outcome(state: GameState) -> tuple[float, float]:
+def outcome(state: GameState, cfg: Config | None = None) -> tuple[float, float]:
     """Per-seat reward, +1 / -1 / 0. Terminal-only, so with gamma=1.0 the critic
-    learns a literal win probability (PLAN.md §1.2)."""
+    learns a literal win probability (PLAN.md §1.2).
+
+    **A truncated game is decided on points, not called a draw** -- 408.2.b:
+    the player with a point lead of two or more wins, and only a lead of 0 or 1
+    is a draw. Paying (0, 0) unconditionally made stalling *profitable*: a
+    player heading for -1 could take 0 instead by running the clock out, and the
+    turn cap is a house limit they can always reach. It cost nothing while
+    `trunc` sat at 0.0%, but the incentive was there the whole time and victory
+    8 is a much longer game to hide a stall in.
+
+    Still ±1 rather than something fractional: the reward has to stay in
+    {-1, 0, +1} for the critic to remain a literal win probability, and 408.2.b
+    *is* a win, not a partial credit. `cfg` is optional only so the many call
+    sites that pass a bare state keep working -- the default matches `Config`.
+    """
     if state.winner == 0:
         return (1.0, -1.0)
     if state.winner == 1:
         return (-1.0, 1.0)
+    if state.truncated:
+        need = 2 if cfg is None else int(cfg.truncation_lead_to_win)
+        lead = int(state.points[0]) - int(state.points[1])
+        if lead >= need:
+            return (1.0, -1.0)
+        if -lead >= need:
+            return (-1.0, 1.0)
     return (0.0, 0.0)
 
 
@@ -4920,6 +4971,16 @@ def acting_seat(state: GameState) -> int:
         return int(state.chain[int(state.pend_cost_kill), C_CTRL])
     if state.pend_kill_play >= 0:
         return int(state.pend_kill_play_seat)
+    # A play awaiting its destination belongs to whoever ANNOUNCED it, which is
+    # not always the turn player: an [Ambush] unit (822.1.b) is announced in a
+    # response window on the opponent's turn. Units never reach the Chain
+    # (337.2), so by the time the destination is asked the Chain can be empty
+    # and the `n_chain > 0 or showdown_bf >= 0` priority branch below does not
+    # fire -- it fell through to `state.active` and named the wrong seat, whose
+    # `legal_actions` is empty by the guard in the `pend_play` branch. Found at
+    # `make_v1_game` seed 859 by raising the v1 spell fuzz to 2000 games.
+    if state.pend_play >= 0:
+        return int(state.pend_play_seat)
     if state.pend_slot >= 0:
         item = chain.oldest_pending(state)
         if item >= 0:

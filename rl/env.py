@@ -87,6 +87,10 @@ class RiftboundEnv:
         self.steps = 0            # decisions the policy was asked for
         self.auto_passes = 0      # windows collapsed without asking
         self.n_legal_hist: Counter = Counter()
+        # Sterile-loop detection. Positions already offered to a policy this
+        # episode, as (state_hash, seat to move) -- see `cfg.loop_watch_after`.
+        self._seen: set[tuple[int, int]] = set()
+        self.loop_loser = -1      # >= 0 once a seat is caught looping
 
     # -- properties ------------------------------------------------------
 
@@ -115,8 +119,7 @@ class RiftboundEnv:
         self.state = game.new_game(self.table, self.cfg, decks, rune_decks,
                                    battlefields, seed=seed, legends=legends,
                                    champions=champions, deck_known=known)
-        self.steps = 0
-        self.auto_passes = 0
+        self._new_episode()
         self._advance()
         assert self._obs is not None, "game was terminal before the first move"
         return self._obs
@@ -124,10 +127,15 @@ class RiftboundEnv:
     def reset_from(self, state: GameState) -> Obs | None:
         """Attach to an existing position -- for tests, replays and search."""
         self.state = state
-        self.steps = 0
-        self.auto_passes = 0
+        self._new_episode()
         self._advance()
         return self._obs
+
+    def _new_episode(self) -> None:
+        self.steps = 0
+        self.auto_passes = 0
+        self._seen.clear()
+        self.loop_loser = -1
 
     def step(self, action_index: int) -> StepResult:
         assert self.state is not None, "step before reset"
@@ -147,14 +155,60 @@ class RiftboundEnv:
         # an entire run, and marks it the same way a too-long game is marked.
         if self.steps > self.cfg.decision_cap and not A.is_terminal(s):
             s.truncated = True
+        self._check_sterile_loop()
         done = A.is_terminal(s) or bool(s.truncated)
         return StepResult(
             obs=self._obs,
-            rewards=A.outcome(s) if done else (0.0, 0.0),
+            rewards=self.final_rewards() if done else (0.0, 0.0),
             done=done,
             truncated=bool(s.truncated),
             info={"action": act, "log": log},
         )
+
+    def _check_sterile_loop(self) -> None:
+        """End the episode if the position the policy is being offered is one it
+        has already been offered (`cfg.loop_watch_after`).
+
+        `state_hash` digests every slot, so an exact repeat with the same seat
+        to move means the game returned to a position it has already been in --
+        nothing in between made progress. That is the livelock signature, and
+        catching it here rather than at `decision_cap` both saves the wasted
+        decisions and says WHO was looping.
+
+        **Attribution is only claimed where it is honest.** A seat with more
+        than one legal action chose the loop over an alternative, so it takes
+        the loss. A seat with exactly one legal action was forced into it, and
+        blaming it would train against a decision it never made -- that case is
+        left as an ordinary truncation and decided on points by 408.2.b.
+
+        `ply` and `turn` are part of the digest and only ever increase, so this
+        can only ever catch a loop INSIDE one turn. That is deliberate and it is
+        the whole gap: a stall that does advance turns is what `turn_cap` is for.
+        """
+        s = self.state
+        if (self._obs is None or s.truncated or A.is_terminal(s)
+                or self.steps <= self.cfg.loop_watch_after):
+            return
+        key = (s.state_hash(), int(self._obs.to_move))
+        if key not in self._seen:
+            self._seen.add(key)
+            return
+        s.truncated = True
+        if len(self._legal) > 1:
+            self.loop_loser = int(self._obs.to_move)
+        self._legal, self._obs = [], None
+
+    def final_rewards(self) -> tuple[float, float]:
+        """Per-seat terminal reward, including a sterile-loop loss.
+
+        `A.outcome` is the rules answer (a win, or 408.2.b on a truncation); the
+        loop loss is a house rule about a position the rules have nothing to say
+        about, so it lives here rather than in the engine.
+        """
+        assert self.state is not None
+        if self.loop_loser >= 0:
+            return (-1.0, 1.0) if self.loop_loser == 0 else (1.0, -1.0)
+        return A.outcome(self.state, self.cfg)
 
     # -- the driver ------------------------------------------------------
 
@@ -209,6 +263,7 @@ class RiftboundEnv:
             "steps": self.steps,
             "points": s.points.tolist(),
             "hash": s.state_hash(),
+            "loop_loser": self.loop_loser,
         }
 
 
@@ -240,8 +295,13 @@ def play(env: RiftboundEnv, policies, seed: int, decks, rune_decks,
     obs = env.reset(seed, decks, rune_decks, battlefields, legends, champions)
     while obs is not None:
         r = env.step(policies[obs.to_move](obs))
-        obs = r.obs
+        # **`r.done`, not `r.obs is not None`.** A truncation leaves the next
+        # observation in place (the position is legal, the episode is simply
+        # over), so looping on the observation alone spun forever the moment
+        # `decision_cap` or a sterile loop fired. Latent while `trunc` sat at
+        # 0.0%; `vec.step` has always keyed off `done`.
+        obs = None if r.done else r.obs
     out = env.summary()
-    out["rewards"] = A.outcome(env.state)
+    out["rewards"] = env.final_rewards()
     out["auto_passes"] = env.auto_passes
     return out

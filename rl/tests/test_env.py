@@ -951,3 +951,113 @@ if A.acting_seat(_s) != 0 or not A.legal_actions(_s, T, CFG, 0):
     die("mulligan", "the game should be underway with real actions available")
 ok("declining is legal, and the First Player's turn begins after both (118)")
 
+
+
+# ---------------------------------------------------------------------------
+print("\n[truncation] 408.2.b -- a game out of clock is decided on points")
+
+# `outcome` used to pay (0, 0) on every truncation, which made stalling
+# PROFITABLE: a player heading for -1 could take 0 instead by running the turn
+# cap out. 408.2.b is the real rule -- a point lead of two or more wins, and
+# only a lead of 0 or 1 is a draw.
+_s = new_game(T, CFG, _decks, _runes, _bfs, seed=11)
+_s.truncated = True
+for _lead, _want, _why in (
+        ((0, 0), (0.0, 0.0), "level is a draw"),
+        ((3, 3), (0.0, 0.0), "level at any score is a draw"),
+        ((1, 0), (0.0, 0.0), "a lead of one is still a draw"),
+        ((0, 1), (0.0, 0.0), "...from either side"),
+        ((2, 0), (1.0, -1.0), "a lead of two wins"),
+        ((0, 2), (-1.0, 1.0), "...from either side"),
+        ((5, 1), (1.0, -1.0), "and more than two, obviously"),
+):
+    _s.points[0], _s.points[1] = _lead
+    got = A.outcome(_s, CFG)
+    if got != _want:
+        die("truncation", f"points {_lead}: expected {_want}, got {got} -- {_why}")
+ok("a point lead of two or more wins a truncated game; less is a draw")
+
+# The stalling incentive specifically: behind by two, a truncation must not be
+# better than losing. It used to be worth a whole point of reward.
+_s.points[0], _s.points[1] = (0, 2)
+if A.outcome(_s, CFG)[0] >= 0.0:
+    die("truncation", "a player two points behind must not profit from stalling")
+ok("...so a losing player can no longer buy 0 by running the clock out")
+
+# A decided game ignores all of it -- `winner` wins outright even if the points
+# say otherwise, which is what an OP_WIN card does.
+_s.winner = 1
+_s.points[0], _s.points[1] = (7, 0)
+if A.outcome(_s, CFG) != (-1.0, 1.0):
+    die("truncation", "a real winner outranks the point count")
+ok("a game with a winner is unaffected -- 408.2.b is only for the clock")
+
+
+# ---------------------------------------------------------------------------
+print("\n[loop] sterile-loop detection: a repeated position ends the episode")
+
+# Built rather than found: a livelock is by definition hard to reach on purpose,
+# so the position is repeated by REWINDING the env to a state it has already
+# been offered. That is exactly what a loop does, and it exercises the same code.
+_env = RiftboundEnv(T, CFG, auto_pass=False)
+_obs = _env.reset(*((7,) + deal(7)))
+_env.steps = CFG.loop_watch_after + 1        # past the watch threshold
+_seen_key = (_env.state.state_hash(), int(_obs.to_move))
+_env._seen.add(_seen_key)                    # "we have been here before"
+_env._check_sterile_loop()
+if not _env.state.truncated:
+    die("loop", "a repeated (state_hash, seat to move) must end the episode")
+if _env.loop_loser != int(_obs.to_move) or len(_env.legal) != 0:
+    die("loop", f"the seat to move had {len(_obs.mask)} options and chose the "
+                f"loop, so it takes the loss")
+if _env.final_rewards() != ((-1.0, 1.0) if _env.loop_loser == 0 else (1.0, -1.0)):
+    die("loop", "the looper's reward must be -1 and the opponent's +1")
+ok("a repeat with an alternative available is a loss for the looper")
+
+# **Forced is not blamed.** With exactly one legal action the seat never made a
+# choice, so attributing the loop to it would train against a decision it did
+# not make. That case falls back to 408.2.b on points.
+_env2 = RiftboundEnv(T, CFG, auto_pass=False)
+_obs2 = _env2.reset(*((7,) + deal(7)))
+_env2.steps = CFG.loop_watch_after + 1
+_env2._legal = _env2._legal[:1]              # a window with no alternative
+_env2._seen.add((_env2.state.state_hash(), int(_obs2.to_move)))
+_env2._check_sterile_loop()
+if not _env2.state.truncated:
+    die("loop", "a forced loop still ends the episode")
+if _env2.loop_loser != -1:
+    die("loop", "a seat with one legal action was forced -- do not blame it")
+if _env2.final_rewards() != A.outcome(_env2.state, CFG):
+    die("loop", "a forced loop is decided by 408.2.b, like any truncation")
+ok("...and a forced repeat is an ordinary truncation, decided on points")
+
+# Nothing fires before the watch threshold, and a healthy game never reaches it
+# -- that is the whole reason the 67us hash is affordable.
+_env3 = RiftboundEnv(T, CFG, auto_pass=False)
+_obs3 = _env3.reset(*((7,) + deal(7)))
+_env3._seen.add((_env3.state.state_hash(), int(_obs3.to_move)))
+_env3._check_sterile_loop()
+if _env3.state.truncated or _env3.loop_loser >= 0:
+    die("loop", f"nothing may be checked before step "
+                f"{CFG.loop_watch_after}, or every game pays for the hash")
+ok(f"the check is dormant for the first {CFG.loop_watch_after} decisions")
+
+# A fresh episode must forget the old one's positions, or the second game in a
+# reused env inherits a poisoned seen-set.
+_env3.reset(*((8,) + deal(8)))
+if _env3._seen or _env3.loop_loser >= 0:
+    die("loop", "reset must clear the per-episode position set")
+ok("reset clears the seen-set, so a reused env does not poison its next game")
+
+# `play` stops on `done`, not on "the observation is None". A truncation leaves
+# the next observation in place, so the old loop spun forever once one fired.
+_env4 = RiftboundEnv(T, CFG)
+_env4.cfg = _replace(CFG, decision_cap=3)
+_out = play(_env4, [random_policy(np.random.default_rng(1))] * 2,
+            *((9,) + deal(9)))
+if not _out["truncated"] or _env4.steps > 4:
+    die("loop", f"`play` must return as soon as the cap fires, got "
+                f"{_env4.steps} steps truncated={_out['truncated']}")
+ok("`play` returns on a truncation instead of spinning on a live observation")
+
+print("\n\033[32mtruncation and loop tests passed\033[0m")

@@ -157,6 +157,11 @@ class Rollout:
     ep_turns: list[int] = field(default_factory=list)
     truncated: int = 0
     seat0_wins: int = 0
+    # Episodes a seat lost by looping (`env._check_sterile_loop`). A detector
+    # nobody can see is a detector nobody trusts, so it is printed every
+    # iteration next to `trunc`: the pair separates "games are running long"
+    # from "a policy found a livelock and is sitting in it".
+    loops: int = 0
 
 
 def finish_episode(pending: list[Step], rewards, hp: HP) -> None:
@@ -287,7 +292,13 @@ class Trainer:
                 out.ep_len.append(len(self.pending[i]))
                 out.ep_turns.append(ep["turns"])
                 out.truncated += int(ep["truncated"])
-                out.seat0_wins += int(ep["winner"] == 0)
+                out.loops += int(ep.get("loop_loser", -1) >= 0)
+                # **From the reward, not from `winner`.** A truncated game is
+                # decided on points by 408.2.b, so `winner` stays -1 on a game
+                # seat 0 genuinely won -- the seat balance diagnostic would have
+                # drifted low exactly when truncations start appearing, which is
+                # at victory 8.
+                out.seat0_wins += int(rewards[i][0] > 0)
                 self.pending[i] = []
         return out
 
@@ -764,7 +775,8 @@ def main(argv=None) -> int:
               f"eps={roll.episodes:>4} len={np.mean(roll.ep_len):5.1f} "
               f"turns={np.mean(roll.ep_turns):4.1f} "
               f"seat0={roll.seat0_wins / max(1, roll.episodes):.0%} "
-              f"trunc={roll.truncated / max(1, roll.episodes):.1%} | "
+              f"trunc={roll.truncated / max(1, roll.episodes):.1%} "
+              f"loop={roll.loops / max(1, roll.episodes):.1%} | "
               f"ent={stats['ent']:.3f} kl={stats['kl']:.4f} "
               f"clip={stats['clipfrac']:.2f} ev={stats['explained_var']:+.2f} "
               f"| {tr.global_step / dt:.0f} st/s", flush=True)

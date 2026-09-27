@@ -96,6 +96,33 @@ def v0_pool(table):
             and not table.has(c, "Temporary")]
 
 
+# Seeds that each caught a specific crash. Kept by name so a fix cannot regress
+# quietly behind a game count -- both of these needed the count raised to be
+# reachable at all, and the count is the kind of thing that gets lowered to make
+# a gate faster.
+#
+#   v1 spell 859 -- `state.priority` went stale when a Hard Bargain tax
+#     COUNTERED the Chain's last item, so a unit played on the turn player's own
+#     turn was announced under the opponent's seat and indexed their hand.
+#     `actions._normalize_priority` states 340.2 instead.
+#   real-deck 95 -- an attached Shepherd's Heirloom carrying a granted Exhaust
+#     ability: `activatable` numbered abilities with the card's own suppressed
+#     (721.2) and `_activate` numbered them with its own included, so the two
+#     disagreed and it activated a [Play] trigger.
+#   v1 spell 661 AT VICTORY 8 -- `invariants.check_actions` read Undying
+#     Loyalty's printed cost and called a legal play illegal: with zero ready
+#     runes the 2 Energy is unreachable, but its trash-tag discount takes that
+#     to 0 and the remaining 1 Power is paid by RECYCLING a rune, which needs no
+#     ready one. Keyed on victory 8 because it is a long-game state -- which is
+#     the argument for fuzzing the curriculum's DESTINATION and not only its
+#     current rung.
+REGRESSIONS = {
+    ("v1 spell", 3): (859,),
+    ("real-deck", 3): (95,),
+    ("v1 spell", 8): (661,),
+}
+
+
 def make_game(table, cfg, seed):
     rng = np.random.default_rng(seed)
     pool = v0_pool(table)
@@ -223,6 +250,18 @@ def main(n_games=2000, victory=3, check=True, spells=False,
     build = (make_deck_game if decks else
              make_v1_game if spells else make_game)
     mode = "real-deck" if decks else "v1 spell" if spells else "v0"
+    # Named seeds, run first so a regression is the first thing printed rather
+    # than something to wait 50 seconds for. Both were found only by raising the
+    # game counts, which is the argument for naming them: at 300 v1 games and
+    # 50 real-deck games neither is reachable.
+    regressions = REGRESSIONS.get((mode, victory), ())
+    for seed in regressions:
+        game.play_game(table, cfg, build(table, cfg, seed),
+                       [game.random_agent(np.random.default_rng(seed))] * 2,
+                       check=True)
+    if regressions:
+        print(f"  regressions: {mode} seeds "
+              f"{', '.join(str(s) for s in regressions)} clean", flush=True)
     print(f"fuzzing {n_games} {mode} games at "
           f"victory_score={victory}, invariants={'on' if check else 'off'}",
           flush=True)
