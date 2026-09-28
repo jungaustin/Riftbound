@@ -4,7 +4,7 @@
 to pick up without asking for a summary. Claude keeps this current; it is
 rewritten and pruned freely, so treat it as *state*, not a log.
 
-**Last updated:** 2026-09-27 (critical path cleared; victory 8 set up, not launched)
+**Last updated:** 2026-09-28 (v8 run at iter 140, vs_greedy 59.5%; 372+373 both ask)
 
 ---
 
@@ -13,29 +13,34 @@ rewritten and pruned freely, so treat it as *state*, not a log.
 | | |
 |---|---|
 | **Running** | **`rl/runs/v7-victory8`** — 500 iters at victory 8 on `0ed3cf7`, ~7h. FOURTH attempt; the first three died at iterations 19, 8 and 8. Watch `ovf=` (board-row overflow) and `loop=` |
-| **Committed** | Through `0ed3cf7`. Uncommitted: `decks/renata-gutter-palace/`, `decks/seraphine-not-alone/` (untracked) |
+| **Committed** | Through `cc8dc44`. Uncommitted: `decks/renata-gutter-palace/`, `decks/seraphine-not-alone/` (untracked) |
 | **Branch** | `rl/card-scripting` |
-| **Next** | Austin's judge list, batch 2. Scraped batch 84 is in (2159 rulings, corpus caught up to 12724) and found no new bugs |
+| **Next** | Austin's judge list, batch 2. Judge corpus is caught up (2159 rulings, to 12724) and the last README gap (#7059) is closed |
 
-**The engine is green on everything**: 13/13 suites, five fuzz modes at victory 3
-*and* 8, five named regression seeds, 2023 judge calls, 0 known-bad.
+**Nothing is known-broken.** 13/13 suites, five fuzz modes at victory 3 *and* 8,
+five named regression seeds, 2032 judge calls, 0 known-bad.
 
-### Austin's judge list, batch 1 — 3 interactions, 2 were engine bugs
+### Austin's judge list, batch 1 — 6/6 green
 
-`rl/tests/judge/cases_austin_01.py`, ids `AJ-NN` so they cannot be mistaken for
-scraped RiftJudge numbers.
+`rl/tests/judge/cases_austin_01.py`, ids `AJ-NN`. AJ-03 (simultaneous triggers,
+three directions) passed as-is. **AJ-01** and **AJ-02** were real bugs, now
+fixed: 466.5 -> 466.6 -> 466.7 ran backwards, and 372 was a fixed ladder.
 
-- **AJ-03 passed as-is** (three cases). Simultaneous triggers: your own two are
-  offered as an order choice and LIFO is right (Yasuo reads 9 Might, not 6);
-  opposing triggers are placed in turn order with no choice, so Vex denies
-  Tideturner's move on your turn and allows it on theirs.
-- **AJ-01 was wrong: 466.5 → 466.6 → 466.7 ran backwards.** Control was settled
-  *after* the Showdown was torn down, so every Conquer trigger resolved in a
-  world where the Combat had already ended. Now it suspends at a new
-  `SD_CONQUER` step with the designations still on. Rengar reaches 8 Might.
-- **AJ-02 was wrong: 372 was a fixed ladder.** Smite's banish sat ahead of
-  Zhonya's, so the save was unreachable. Now `pend_repl` asks the dying
-  permanent's controller. Both directions are real and both are tested.
+### Replacement effects now ask, on both axes
+
+- **372 — which replacement applies to ONE death** (`pend_repl`). Smite's banish
+  used to sit ahead of Zhonya's in a fixed ladder, so the save was unreachable.
+- **373 — which of several SIMULTANEOUS deaths the one replacement applies to**
+  (`pend_guard`). Was decided by row order; 373's worked example is literally
+  Zhonya's. Closed 2026-09-27, RiftJudge #7059.
+
+Both suspend the way `pend_altar` does: `_destroy` returns without killing. A
+single candidate asks nothing, so nothing gained a decision point it did not
+need. Neither widened the observation — the options ride the action rows.
+
+**A trap worth remembering:** 373's candidates must come from the death BATCH,
+not recomputed from marked damage. `destroy()` (428, kill outright) marks none,
+so a recompute misses the unit that is actually dying and counts unrelated ones.
 
 ### Four crashes fixed, all the same species
 
