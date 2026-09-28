@@ -201,7 +201,8 @@ OBS_UNREAD = frozenset({
     "look_min_energy", "look_multi", "look_optional", "look_pick_dest",
     "look_rest_dest", "look_reveal", "look_type_mask", "move_from",
     "move_to", "n_attached", "n_group_loc", "n_name_opts", "n_sarc",
-    "name_opts", "name_src", "pend_altar", "pend_ask_caster", "pend_ask_no",
+    "name_opts", "name_src", "pend_altar", "pend_repl", "pend_ask_caster",
+    "pend_ask_no",
     "pend_ask_yes", "pend_cost_recycle", "pend_cost_recycle_n", "pend_cull",
     "pend_cull_dest", "pend_cull_first", "pend_cull_keep", "pend_cull_mode",
     "pend_cull_skip", "pend_cull_type", "pend_discard", "pend_discard_ops",
@@ -238,7 +239,8 @@ OBS_UNREAD = frozenset({
     # PER-PERMANENT DETAIL -- reflected in the board row's True Might / flags, or
     # in whether the action is offered at all. A spent once-per-turn ability
     # is visible as an A_ACTIVATE that is simply not there.
-    "altar_ply", "armory_ply", "banish_death_ply", "base_might_ply",
+    "altar_ply", "repl_pick", "repl_ply",
+    "armory_ply", "banish_death_ply", "base_might_ply",
     "base_might_val", "block_next_ply", "combat_might_ply",
     "combat_might_val", "conquer_ply", "copy_of", "copy_via", "ctrl_link",
     "death_shield_ply", "desig", "desig_seat", "double_dmg_ply", "eot_kind",

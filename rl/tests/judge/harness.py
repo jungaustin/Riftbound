@@ -70,14 +70,11 @@ RESULTS = []
 # FAILURE telling you to delete the entry, so a fix cannot quietly leave a stale
 # exemption behind. The suite exits 0 while they fail and 1 the moment one is
 # fixed without being removed from here.
-KNOWN_BAD = {
-    "AJ-02": "372 -- when two Replacement Effects apply to one death, the "
-             "controller of the object being acted on picks the order. "
-             "`combat._destroy` hard-codes Smite's banish ahead of Zhonya's "
-             "guard, so the choice is never offered and the save is "
-             "unreachable. Needs a real decision point (backlog D6), which "
-             "widens the action space.",
-}
+# Empty as of 2026-09-27: batch 1's two failures (AJ-01 466.6/466.7 and AJ-02
+# 372) are both fixed. Kept because the mechanism is the useful part -- a
+# known-bad that starts passing is reported as a FAILURE telling you to delete
+# its entry, so an exemption cannot outlive the bug it excused.
+KNOWN_BAD: dict[object, str] = {}
 
 
 def case(qid, title):

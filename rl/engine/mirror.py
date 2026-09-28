@@ -185,13 +185,14 @@ UNCHANGED = (
     # rows in place so the total cannot change.
     "n_attached",
     # A permanent ROW: the row does not move when the seats swap.
-    "pend_altar",
+    "pend_altar", "pend_repl",
     # A BATTLEFIELD slot (0..N_BF-1), not a location and not a seat: both
     # players share the same three battlefields, so the index is already
     # canonical. `bf_loc` turns it into a location where one is needed.
     "pend_dmg_bf",
     # Parallel to `perms` by ROW, which mirroring leaves in place.
-    "once_used", "desig", "altar_ply", "death_shield_ply", "guillotine_ply",
+    "once_used", "desig", "altar_ply", "repl_pick", "repl_ply",
+    "death_shield_ply", "guillotine_ply",
     "mark_ply", "mark_slot", "move_ply", "move_count",
     "mode_used_ply", "mode_used_mask", "eot_ply", "eot_kind",
     "base_might_ply", "base_might_val", "shield_ply", "shield_amt",

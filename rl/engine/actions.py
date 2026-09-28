@@ -954,6 +954,15 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
             for ab in row_abilities(state, table, d):
                 if ab.trigger != TR_ACTIVATED or not ab.cost_exhaust:
                     continue
+                # **The FIRST Exhaust ability, and only it.** `_activate`
+                # selects a borrowed ability by its Exhaust cost, so it always
+                # takes the donor's first one -- and if this loop went on to
+                # offer a later one the two would name different abilities, the
+                # same offer-vs-apply disagreement that crashed on an attached
+                # Shepherd's Heirloom. Every `continue` below is therefore a
+                # `break`: an unusable first ability means this donor lends
+                # nothing, not that the next one is tried.
+                _ok = True
                 # "Use my abilities only while I'm at a battlefield" is a
                 # SEPARATE clause of the donor's text, not part of the ability
                 # he has (FAQ 650/9851, RiftJudge #12424) -- so it travels with
@@ -962,23 +971,49 @@ def activatable(state: GameState, table: CardTable, cfg: Config,
                 # to be re-read as "while I'M at a battlefield", which made the
                 # borrowed copy unusable exactly where the card is played.
                 if not chain.speed_ok(state, cfg, seat, ab.speed):
-                    continue
-                if ab.cost_xp and int(state.xp[seat]) < ab.cost_xp:
-                    continue
+                    _ok = False
+                elif ab.cost_xp and int(state.xp[seat]) < ab.cost_xp:
+                    _ok = False
                 # A borrowed [Empower] would Empower HEIMERDINGER, so the
                 # once-only check reads his status, not the donor's.
-                if (any(op.op == OP_EMPOWER for op in ab.ops)
+                elif (any(op.op == OP_EMPOWER for op in ab.ops)
                         and state.has_flag(i, F_EMPOWERED)):
-                    continue
-                if plan_ability_cost(state, table, seat, dcard,
-                                     ability_energy(state, table, seat, dcard,
-                                                    ab.cost_energy, ab),
-                                     ab.cost_power) is None:
-                    continue
-                if ab.n_targets and not rsv.can_be_cast(state, table, ab, seat,
-                                                        -1, i, dcard):
-                    continue
-                out.append(pack_activate(i, d))
+                    _ok = False
+                # 820 -- every REQUIRED cost of the borrowed ability, checked
+                # the way the permanent loop above checks its own. This loop had
+                # none of them, and an unpayable required cost does not fail
+                # politely: it reaches the Chain and then asserts as it is paid
+                # at finalization. Real-deck fuzz seed 55 at victory 8 was a
+                # borrowed Gutter Palace ability with a Discard cost, activated
+                # with an empty hand.
+                #
+                # **The costs that spend a STATUS read the borrower's**, not the
+                # donor's, for the same reason the [Empower] check does: he has
+                # the ability, so it is his status being spent.
+                elif ab.cost_discard and _discard_cost_rows(
+                        state, table, seat, ab) is None:
+                    _ok = False
+                elif ab.cost_recycle_trash and not _recycle_affordable(
+                        state, table, seat, ab.cost_recycle_trash,
+                        ab.cost_recycle_type):
+                    _ok = False
+                elif (ab.cost_kill is not None
+                      and not rsv.cost_kill_targets(state, table, ab, seat, -1)):
+                    _ok = False
+                elif ab.cost_disempower_self and not state.empower_count(i):
+                    _ok = False
+                elif ab.cost_spend_buff_self and not state.has_flag(i, F_BUFFED):
+                    _ok = False
+                elif plan_ability_cost(state, table, seat, dcard,
+                                       ability_energy(state, table, seat, dcard,
+                                                      ab.cost_energy, ab),
+                                       ab.cost_power) is None:
+                    _ok = False
+                elif ab.n_targets and not rsv.can_be_cast(state, table, ab, seat,
+                                                          -1, i, dcard):
+                    _ok = False
+                if _ok:
+                    out.append(pack_activate(i, d))
                 break
 
     # The Champion Legend. Every ability is offered by INDEX rather than
@@ -1164,6 +1199,16 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     # asked before the unit dies and not after. The sweep that was killing it
     # is stopped (`combat.enforce_lethal`, `combat.advance_combat`), which is
     # what makes "would die" answerable at all.
+    # 372 -- more than one Replacement Effect applies to this death, so its
+    # controller says which one applies first. `A_PICK`'s arg is a
+    # `combat.RK_*` kind, which is what this offer site says an arg means.
+    if state.pend_repl >= 0:
+        if seat != int(state.perms[int(state.pend_repl), P_CTRL]):
+            return []
+        opts = combat.replacement_options(state, table, int(state.pend_repl))
+        assert len(opts) > 1, "a single replacement should never have asked"
+        return [Action(A_PICK, k) for k in opts]
+
     if state.pend_altar >= 0:
         if seat != int(state.perms[int(state.pend_altar), P_CTRL]):
             return []
@@ -1757,7 +1802,7 @@ def _mid_decision(state: GameState) -> bool:
         or state.pend_hand_play >= 0 or state.rp_seat >= 0
         or state.pend_split >= 0 or state.pend_amount >= 0
         or state.steal_seat >= 0 or state.pend_name >= 0
-        or state.dj_seat >= 0 or state.pend_altar >= 0
+        or state.dj_seat >= 0 or state.pend_altar >= 0 or state.pend_repl >= 0
         or state.pend_kill_play >= 0 or state.pend_dmg >= 0
         or state.pend_show_off >= 0
         or is_terminal(state))
@@ -2074,6 +2119,9 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
         state.pend_order = -1
         chain.place(state, table, cfg, action.arg)
         return {}
+
+    if k == A_PICK and state.pend_repl >= 0:
+        return _finish_replacement(state, table, cfg, int(action.arg))
 
     if k in (A_ACCEPT, A_DECLINE) and state.pend_altar >= 0:
         log = _answer_altar(state, table, cfg, k == A_ACCEPT)
@@ -3435,6 +3483,28 @@ def _resolve_play_from_hidden(state: GameState, table: CardTable, cfg: Config,
     return combat.cleanup(state, table, cfg, mover=seat, dst=loc)
 
 
+def _finish_replacement(state: GameState, table: CardTable, cfg: Config,
+                        kind: int) -> dict:
+    """372 -- record which Replacement Effect the controller applies first, then
+    kill the unit again so `combat._destroy` carries it out.
+
+    The pair `repl_pick`/`repl_ply` is the trick `altar_ply` uses: stamped with
+    the current ply so the answer survives exactly as long as it takes the caller
+    to come back round, and cleared by `_destroy` the moment it is used. A second
+    death later in the same turn therefore asks again, which is right -- the
+    options will have changed, because applying one spent it.
+    """
+    perm = int(state.pend_repl)
+    state.pend_repl = -1
+    if perm < 0 or state.perms[perm, P_ALIVE] != 1:
+        return {}
+    name = table.names[int(state.perms[perm, P_CARD])]
+    state.repl_pick[perm] = int(kind)
+    state.repl_ply[perm] = int(state.ply)
+    combat._destroy(state, table, perm)
+    return {"replacement": combat.RK_NAMES[int(kind)], "on": name}
+
+
 def _answer_altar(state: GameState, table: CardTable, cfg: Config,
                   pay: bool) -> dict:
     """Altar of Blood's replacement, taken or declined.
@@ -4724,6 +4794,7 @@ def _settle_after_decision(state: GameState, table: CardTable,
             and state.pend_split < 0 and state.pend_amount < 0
             and state.steal_seat < 0 and state.pend_name < 0
             and state.dj_seat < 0 and state.pend_altar < 0
+            and state.pend_repl < 0
             and state.pend_dmg < 0 and state.pend_show_off < 0
             and int(state.pend_double[0]) < 0
             and int(state.pend_reveal[0]) < 0
@@ -5044,6 +5115,11 @@ def acting_seat(state: GameState) -> int:
     # assignment happens before any death it goes on to cause.
     if state.pend_dmg >= 0:
         return int(state.pend_dmg)
+    # 372 -- which Replacement Effect applies first, asked of the dying
+    # permanent's controller. Ahead of Altar of Blood for the same reason
+    # `pend_dmg` is: this question is about a death that has not happened yet.
+    if state.pend_repl >= 0:
+        return int(state.perms[int(state.pend_repl), P_CTRL])
     # Altar of Blood asks the dying unit's CONTROLLER, who is not necessarily
     # the player whose combat damage killed it.
     if state.pend_altar >= 0:

@@ -952,6 +952,49 @@ def moved_twice_protected(state: GameState, table: CardTable, perm: int) -> bool
             and int(state.move_count[perm]) >= 2)
 
 
+# 372's options, as one small append-only enum. The order is the FALLBACK order
+# used when only one applies (so a single-replacement death behaves exactly as it
+# always did), and `RK_BANISH` sits where Smite used to sit in the old ladder.
+RK_ANGEL, RK_SHIELD, RK_BANISH, RK_GUARD = range(4)
+
+RK_NAMES = ("attached gear", "shield", "banish", "gear in play")
+
+
+def replacement_options(state: GameState, table: CardTable, perm: int,
+                        batch: tuple[int, ...] = ()) -> list[int]:
+    """Which Replacement Effects could apply to `perm`'s death right now (372).
+
+    Side-effect free, which is the whole reason it is separate from `_destroy`:
+    the Armory branch PAYS when it applies, so the question "could this apply"
+    has to be asked without paying. Returned in the fallback order, so a death
+    with exactly one option resolves identically to the old fixed ladder and
+    nothing is offered.
+
+    Grouped rather than exhaustive: the three one-turn saves on the unit itself
+    are one option, because no card in the pool can carry two at once and
+    offering them separately would widen the choice without changing an outcome.
+    """
+    from rl.engine.resolve import _can_pay_domain_power
+    out: list[int] = []
+    unit = not state.has_flag(perm, F_NON_UNIT)
+    ctrl = int(state.perms[perm, P_CTRL])
+    if unit and any(table.names[int(state.perms[i, P_CARD])]
+                    in EQUIP_DEATH_REPLACEMENT
+                    for i in state.attachments(perm)):
+        out.append(RK_ANGEL)
+    if unit and (int(state.death_shield_ply[perm]) == int(state.ply)
+                 or (int(state.armory_ply[perm]) == int(state.ply)
+                     and _can_pay_domain_power(state, ctrl, 3, 1))
+                 or _soraka_guards(state, table, perm, batch)):
+        out.append(RK_SHIELD)
+    if int(state.banish_death_ply[perm]) == int(state.ply):
+        out.append(RK_BANISH)
+    guard = int(state.death_guard[ctrl])
+    if unit and guard >= 0 and guard != perm and state.perms[guard, P_ALIVE] == 1:
+        out.append(RK_GUARD)
+    return out
+
+
 def _soraka_guards(state: GameState, table: CardTable, perm: int,
                    batch: tuple[int, ...] = ()) -> bool:
     """Soraka - Wanderer's replacement for a smaller friendly unit here.
@@ -1211,7 +1254,7 @@ def enforce_lethal(state: GameState, table: CardTable) -> list[int]:
                 # Altar of Blood opened an offer: this unit has not died and
                 # the rest of the sweep must wait for the answer, or the
                 # continuous check would come back round and kill it anyway.
-                if int(state.pend_altar) >= 0:
+                if int(state.pend_altar) >= 0 or int(state.pend_repl) >= 0:
                     return killed
                 continue
             killed.append(i)
@@ -1507,7 +1550,8 @@ def altar_offer(state: GameState, table: CardTable, perm: int) -> bool:
     from rl.engine.cost import plan_wild_power
     from rl.engine.effects import BF_DEATH_REPLACEMENT
     row = state.perms[perm]
-    if state.has_flag(perm, F_NON_UNIT) or int(state.pend_altar) >= 0:
+    if (state.has_flag(perm, F_NON_UNIT) or int(state.pend_altar) >= 0
+            or int(state.pend_repl) >= 0):
         return False
     if int(state.altar_ply[perm]) == int(state.ply):
         return False
@@ -1629,18 +1673,38 @@ def _destroy(state: GameState, table: CardTable, perm: int,
     # gear is not a unit, so it cannot guard its own death, and a second pass
     # finds no guard to consume. Without that order this recurses forever.
     ctrl_now = int(row[P_CTRL])
+    # 372 -- "If more than one Replacement Effect applies to the same event
+    # being executed, then the controller of the object being acted on
+    # determines the order the Replacement Effects will apply." So this is a
+    # DECISION, not a ladder, and it belongs to the dying permanent's
+    # controller. `_destroy` suspends for it exactly the way it does for Altar
+    # of Blood two screens up: return without killing, and the caller comes
+    # back round once the answer is in.
+    #
+    # **It matters, and it is live in both directions.** With Smite's banish
+    # ordered ahead of Zhonya's Hourglass the save was unreachable and the unit
+    # was always banished; ordered the other way round it would always be
+    # saved, and that is wrong too -- Zhonya's is a one-shot you may not want to
+    # spend on a 1 Might token. 370.2 is what makes the order decisive: once one
+    # replacement has applied, the death it replaced is gone and the others have
+    # nothing left to apply to.
+    opts = replacement_options(state, table, perm, batch)
+    if len(opts) > 1 and int(state.repl_ply[perm]) != int(state.ply):
+        state.pend_repl = int(perm)
+        return
+    if int(state.repl_ply[perm]) == int(state.ply):
+        pick = int(state.repl_pick[perm])
+        state.repl_ply[perm] = -1
+        state.repl_pick[perm] = -1
+        if pick not in opts:
+            pick = opts[0] if opts else -1     # the board moved under the answer
+    else:
+        pick = opts[0] if opts else -1
     # Guardian Angel -- "If I would die, kill Guardian Angel instead. Heal me,
     # exhaust me, and recall me." The same replacement as Zhonya's Hourglass,
     # but printed in an Equipment's Effect Text, so 136.2.c makes "I" the unit
     # it is attached to: it guards exactly that body and nothing else.
-    #
-    # Checked before Zhonya's. When both could replace the same death, 370.2
-    # lets the controller apply them in either order, and the outcome for the
-    # unit is identical (heal, exhaust, recall) -- what differs is which gear is
-    # spent. Spending the attached Angel first is a fixed choice rather than an
-    # offered one; it is the only place this engine picks between two
-    # replacements for the player, and no deck in the corpus runs both.
-    if not state.has_flag(perm, F_NON_UNIT):
+    if pick == RK_ANGEL:
         angel = next((i for i in state.attachments(perm)
                       if table.names[int(state.perms[i, P_CARD])]
                       in EQUIP_DEATH_REPLACEMENT), -1)
@@ -1654,8 +1718,9 @@ def _destroy(state: GameState, table: CardTable, perm: int,
             return
     # One-turn death shields on the unit itself (Tactical Retreat, Highlander),
     # then Soraka's for a smaller ally beside her. All three are the same
-    # replacement as Guardian Angel's: the unit never dies.
-    if not state.has_flag(perm, F_NON_UNIT):
+    # replacement as Guardian Angel's: the unit never dies. Grouped as one
+    # option because nothing in the pool can hold two of them at once.
+    if pick == RK_SHIELD:
         shielded = int(state.death_shield_ply[perm]) == int(state.ply)
         if shielded:
             state.death_shield_ply[perm] = -1
@@ -1671,15 +1736,15 @@ def _destroy(state: GameState, table: CardTable, perm: int,
             state.set_location(perm, base_loc(ctrl_now))
             row[P_READY] = 0
             return
-    # Smite -- "If it would die this turn, banish it instead."
-    if int(state.banish_death_ply[perm]) == int(state.ply):
+    # Smite -- "If it would die this turn, banish it instead." Unlike every
+    # other option here this one is NOT a save: the unit is gone either way, and
+    # what the choice buys is whether the save is spent on it.
+    if pick == RK_BANISH:
         state.banish_death_ply[perm] = -1
         banish(state, table, perm)
         return
-    guard = int(state.death_guard[ctrl_now])
-    if (guard >= 0 and guard != perm
-            and state.perms[guard, P_ALIVE] == 1
-            and not state.has_flag(perm, F_NON_UNIT)):
+    if pick == RK_GUARD:
+        guard = int(state.death_guard[ctrl_now])
         state.death_guard[ctrl_now] = -1
         _destroy(state, table, guard)
         # 455 -- a Recall relocates to the base and is NOT a Move (456.1), so
@@ -2602,7 +2667,8 @@ def _decision_pending(state: GameState) -> bool:
         or state.pend_may >= 0 or state.pend_order >= 0 or state.pend_cull >= 0
         or state.pend_discard >= 0 or state.pend_grave >= 0
         or state.pend_split >= 0 or state.pend_amount >= 0 or state.pend_name >= 0
-        or state.pend_ask >= 0 or state.pend_altar >= 0 or state.pend_kill_play >= 0
+        or state.pend_ask >= 0 or state.pend_altar >= 0 or state.pend_repl >= 0
+        or state.pend_kill_play >= 0
         or state.pend_dmg >= 0
         or state.pend_show_off >= 0
         or int(state.pend_double[0]) >= 0 or int(state.pend_reveal[0]) >= 0
@@ -3025,7 +3091,8 @@ def advance_combat(state: GameState, table: CardTable, cfg: Config,
         if state.showdown_step != SD_DAMAGE or int(state.pend_dmg_bf) >= 0:
             log.setdefault("rounds", []).append(
                 damage_step(state, table, cfg, bf))
-            if int(state.pend_dmg) >= 0 or int(state.pend_altar) >= 0:
+            if (int(state.pend_dmg) >= 0 or int(state.pend_altar) >= 0
+                    or int(state.pend_repl) >= 0):
                 return log
         resolution_step(state, table, cfg, bf, attacker, log)
     return log

@@ -595,6 +595,7 @@ class GameState:
         "pend_cull_dest", "pend_split", "split_left", "split_loc",
         "split_xp", "split_spell", "split_alloc", "bf_prev_ctrl", "bf_replaced", "bf_first_use", "empower_src",
         "victory_bonus", "unit_tax_ply", "free_hide_ply", "pend_altar", "altar_ply",
+        "pend_repl", "repl_pick", "repl_ply",
         "pend_dmg", "pend_dmg_pool", "pend_dmg_bf", "pend_dmg_targets",
         "pend_dmg_n_tgt", "pend_dmg_kills", "pend_dmg_n_kill", "pend_dmg_done",
         "show_off_perm", "show_off_card", "show_off_ply", "pend_show_off",
@@ -1021,6 +1022,16 @@ class GameState:
         # to be a decision taken at the moment of death (136.2.d), so the sweep
         # that was killing it stops here and `actions` asks.
         self.pend_altar = -1
+        # 372 -- the dying permanent whose Replacement Effect ORDER its
+        # controller is being asked to pick, or -1. `repl_pick` is the kind they
+        # chose (a `combat.RK_*`) per row, and `repl_ply` the ply stamp that
+        # makes that answer stick for the instant it takes the caller to come
+        # back round and kill the unit for real. The same shape as `pend_altar`
+        # / `altar_ply`, and for the same reason: `_destroy` suspends by simply
+        # returning without killing.
+        self.pend_repl = -1
+        self.repl_pick = np.full(MAX_PERMS, -1, np.int8)
+        self.repl_ply = np.full(MAX_PERMS, -1, np.int16)
         # ...and the per-row stamp that keeps the same death from being offered
         # twice: declining has to stick for the instant it takes the caller to
         # come back round and kill the unit for real.

@@ -73,6 +73,46 @@ def _():
 
 
 # ---------------------------------------------------------------------------
+def _smite_into_zhonyas(pick):
+    """Smite an enemy Faefolk while its controller holds Zhonya's Hourglass, and
+    answer 372's order question with `pick` (a `combat.RK_*`)."""
+    s = fresh(runes=32, seat=1)
+    give(s, 1, "Zhonya's Hourglass")
+    give(s, 0, "Smite")
+    s.bf_ctrl[0] = 1
+    foe = s.add_permanent(T.id_of("Irresistible Faefolk"), 1, bf_loc(0), ready=True)
+    # **PLAYED, not staged.** The guard is registered by Zhonya's own [Play]
+    # trigger, so an `add_permanent` copy of it does nothing at all -- which is
+    # how a first pass at this case measured the wrong thing.
+    cast(s, 1, "Zhonya's Hourglass", base_loc(1))
+    drain(s)
+    zh = perm_of(s, "Zhonya's Hourglass", 1)[0]
+    assert int(s.death_guard[1]) == zh, "the guard should be registered"
+    s.ply += 1
+    s.active = s.priority = 0
+    cast(s, 0, "Smite", foe)
+    offered, answered = None, False
+    for _ in range(40):
+        if answered and not s.n_chain and not s.n_trig \
+                and not chain_mod.decision_open(s):
+            break                       # stop before the turn ends and Awakens
+        who = A.acting_seat(s)
+        if who < 0:
+            break
+        lg = A.legal_actions(s, T, V1, who)
+        if not lg:
+            break
+        picks = [a for a in lg if a.kind == A.A_PICK] if s.pend_repl >= 0 else []
+        if picks:
+            assert who == 1, "372 asks the controller of the object being acted on"
+            offered = sorted(a.arg for a in picks)
+            A.apply(s, T, V1, next(a for a in picks if a.arg == pick))
+            answered = True
+            continue
+        A.apply(s, T, V1, next((a for a in lg if a.kind == A.A_PASS), lg[0]))
+    return s, foe, zh, offered
+
+
 @case("AJ-02", "Zhonya's beats Smite's banish, because 372 lets its controller choose")
 def _():
     """Smite's "if it would die this turn, banish it instead" and Zhonya's
@@ -83,28 +123,30 @@ def _():
     happens (though it stays live for a later death this turn).
     """
     need("Smite", "Zhonya's Hourglass", "Irresistible Faefolk")
-    s = fresh(runes=32, seat=1)
-    give(s, 1, "Zhonya's Hourglass")
-    give(s, 0, "Smite")
-    s.bf_ctrl[0] = 1
-    foe = s.add_permanent(T.id_of("Irresistible Faefolk"), 1, bf_loc(0), ready=True)
-    # PLAYED, not staged: the guard is registered by its [Play] trigger, so an
-    # `add_permanent` copy of Zhonya's does nothing at all.
-    cast(s, 1, "Zhonya's Hourglass", base_loc(1))
-    drain(s)
-    zh = perm_of(s, "Zhonya's Hourglass", 1)[0]
-    assert int(s.death_guard[1]) == zh, "the guard should be registered"
-
-    s.ply += 1
-    s.active = s.priority = 0
-    cast(s, 0, "Smite", foe)
-    drain(s)
-
+    s, foe, zh, offered = _smite_into_zhonyas(combat.RK_GUARD)
+    assert offered == sorted((combat.RK_BANISH, combat.RK_GUARD)), \
+        f"both replacements should be offered, got {offered}"
     assert alive(s, foe), "372 -- its controller applies Zhonya's, so it lives"
     assert int(s.perms[foe, P_LOC]) == base_loc(1), "recalled to base"
     assert int(s.perms[foe, P_READY]) == 0, "recalled EXHAUSTED"
     assert not alive(s, zh), "Zhonya's is what dies instead"
     assert int(s.n_banished[1]) == 0, "370.2 -- Smite never gets to banish it"
+
+
+@case("AJ-02b", "...and the other order is a real choice: keep the gear, lose the unit")
+def _():
+    """The reason 372 cannot be hard-coded either way. Zhonya's is a one-shot,
+    and spending it on a 1 Might Faefolk to deny a Smite may be the worse trade
+    -- so letting the banish apply first has to be reachable too. It leaves the
+    unit banished (not trashed: 370.2 means Smite's replacement did apply) and
+    the Hourglass still standing for something that matters.
+    """
+    need("Smite", "Zhonya's Hourglass", "Irresistible Faefolk")
+    s, foe, zh, _off = _smite_into_zhonyas(combat.RK_BANISH)
+    assert not alive(s, foe), "the banish applied, so the unit is gone"
+    assert int(s.n_banished[1]) == 1, "banished, not trashed"
+    assert alive(s, zh), "and Zhonya's was never spent -- that is the point"
+    assert int(s.death_guard[1]) == zh, "so it still guards the next death"
 
 
 # ---------------------------------------------------------------------------

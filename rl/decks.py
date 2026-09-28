@@ -649,18 +649,43 @@ def load_all(table: CardTable, root: Path | None = None,
     history becomes an archetype prior.
     """
     root = root or (ROOT / "decks")
-    out, bad = [], []
+    out, bad, short = [], [], []
     for f in decklist_files(root, latest_only=latest_only):
         d = load_deck(f, table)
-        if LEGAL_MAIN[0] <= len(d.main) <= LEGAL_MAIN[1]:
-            out.append(d)
-        elif len(d.main) >= 10:
-            bad.append((d.name, len(d.main)))
-    if bad and warn:
+        if not LEGAL_MAIN[0] <= len(d.main) <= LEGAL_MAIN[1]:
+            if len(d.main) >= 10:
+                bad.append((d.name, len(d.main)))
+            continue
+        # **103.2 counts the Chosen Champion inside the 40**, and 133.4 starts it
+        # in the Champion Zone, so `main` is 39 exactly when a champion was
+        # registered and 40 when none was. Anything else means cards went
+        # MISSING as the file was parsed, and the usual reason is the release
+        # gate: a list built on an unreleased set resolves none of those names,
+        # so it loads as a short deck with no champion and no legend rather than
+        # failing. Admitting it puts a deck a card light into training with a
+        # blanked archetype signal -- found when `decks/seraphine-not-alone/`
+        # (all RAD cards) turned up in the pool at 39 + no champion.
+        #
+        # `decks/upcoming/` is the place for such a list; this is the backstop
+        # for one that is not in it. Rejected here rather than at the call sites
+        # for the same reason `decks/banned/` is: `rglob` sweeps silently.
+        if len(d.main) + (1 if d.champion >= 0 else 0) != 40:
+            short.append((d.name, len(d.main), d.champion >= 0))
+            continue
+        out.append(d)
+    if warn and (bad or short):
         import sys as _sys
-        print(f"  skipped {len(bad)} unparseable decklist(s): "
-              + ", ".join(f"{n} ({k} cards)" for n, k in bad),
-              file=_sys.stderr)
+        if bad:
+            print(f"  skipped {len(bad)} unparseable decklist(s): "
+                  + ", ".join(f"{n} ({k} cards)" for n, k in bad),
+                  file=_sys.stderr)
+        if short:
+            print(f"  skipped {len(short)} decklist(s) that did not resolve to "
+                  f"40 registered cards -- cards the release gate hides, or a "
+                  f"typo'd name: "
+                  + ", ".join(f"{n} ({k} main{'' if c else ', no champion'})"
+                              for n, k, c in short),
+                  file=_sys.stderr)
     return out
 
 

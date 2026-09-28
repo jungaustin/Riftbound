@@ -127,7 +127,12 @@ REGRESSIONS = {
     ("v1 spell", 3): (859,),
     ("real-deck", 3): (95,),
     ("v1 spell", 8): (661,),
-    ("real-deck", 8): (5097,),
+#   real-deck 55 AT VICTORY 8 -- Heimerdinger's BORROWED-ability offer checked
+#     fewer costs than the permanent one right above it, so an ability with a
+#     Discard cost was offered with an empty hand and asserted as it was paid at
+#     finalization. Same species as 95 and 5097: two code paths disagreeing about
+#     what a play costs.
+    ("real-deck", 8): (5097, 55),
 }
 
 
