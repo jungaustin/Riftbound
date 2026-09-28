@@ -130,3 +130,86 @@ def _():
         f"got {n_before}")
     drain(s)
     assert int(s.n_trig) == 0, "and both drain onto the Chain and resolve"
+
+
+def _two_herons():
+    """Seat 0 with an Astral Heron at each of two battlefields, holding a first
+    card and two Premonitions (2E / 3P each -- big enough that a 2E+2P discount
+    shows in both halves)."""
+    s = fresh(runes=32, seat=0)
+    give(s, 0, "Meditation", "Premonition", "Premonition")
+    s.bf_ctrl[0] = 0
+    s.bf_ctrl[1] = 0
+    s.add_permanent(T.id_of("Astral Heron"), 0, bf_loc(0))
+    s.add_permanent(T.id_of("Astral Heron"), 0, bf_loc(1))
+    return s
+
+
+def _power_spent(s, name):
+    """Power recycled playing `name` -- runes leaving play, which is what a Power
+    cost takes (164.2) and an Energy cost does not."""
+    before = int(s.runes_in_play(0).sum())
+    cast(s, 0, name)
+    drain(s)
+    return before - int(s.runes_in_play(0).sum())
+
+
+@case(12624, "two Astral Herons: the discounts CAN be split, by reacting between them")
+def _():
+    """**Settled by the project owner, and 340.4 is why.** Playing your first
+    card fires both Herons, and 383.3 puts each on the Chain as its own item. So
+    after the first one resolves the Chain is not empty and has no Pending
+    Items -- 340.4 hands Priority to the controller of the newest item and
+    returns to Execute. That window is a real one, and a [Reaction] card played
+    in it spends the first discount before the second trigger has granted its
+    own. Two cards come out cheaper instead of one.
+
+    #12623 says the opposite and is **rejected** (`rejected.json`): it is the
+    outlier against #12622, #12624, #12625 and #12631, and against 340.4.
+    """
+    need("Astral Heron", "Meditation", "Premonition")
+    s = _two_herons()
+    cast(s, 0, "Meditation")            # the first card: both Herons trigger
+    # Walk to the window: one trigger resolved, the other still on the Chain.
+    for _ in range(30):
+        if int(s.next_discount[0, 0]) and int(s.n_chain):
+            break
+        who = A.acting_seat(s)
+        lg = A.legal_actions(s, T, V1, who)
+        if not lg:
+            break
+        A.apply(s, T, V1, next((a for a in lg if a.kind == A.A_ORDER),
+                               next((a for a in lg if a.kind == A.A_PASS), lg[0])))
+    else:
+        raise AssertionError("340.4 owes a window between the two resolutions")
+    assert s.next_discount[0].tolist() == [2, 2], (
+        f"one Heron has resolved, so one discount is banked, got "
+        f"{s.next_discount[0].tolist()}")
+    first = _power_spent(s, "Premonition")
+    assert first == 1, f"3 Power less the Heron's 2 is 1, got {first}"
+    assert s.next_discount[0].tolist() == [2, 2], (
+        "and the SECOND Heron then resolves and grants its own, so the next "
+        "card is discounted too -- that is the split")
+    second = _power_spent(s, "Premonition")
+    assert second == 1, f"the second card is discounted as well, got {second}"
+
+
+@case(12622, "...and letting both resolve first stacks them onto ONE card instead")
+def _():
+    """The other half of the same choice, and why the split is worth the trouble:
+    `next_discount` accumulates (356.4 discounts the total cost), so two Herons
+    allowed to resolve back to back put 4 Energy and 4 Power on a single card.
+    That is more on that one card and nothing on the next.
+    """
+    need("Astral Heron", "Meditation", "Premonition")
+    s = _two_herons()
+    cast(s, 0, "Meditation")
+    drain(s)                             # let BOTH triggers resolve
+    assert s.next_discount[0].tolist() == [4, 4], (
+        f"both resolved, so both discounts are banked together, got "
+        f"{s.next_discount[0].tolist()}")
+    first = _power_spent(s, "Premonition")
+    assert first == 0, f"4 Power of discount covers all 3, got {first}"
+    second = _power_spent(s, "Premonition")
+    assert second == 3, (f"...and the next card pays its printed 3 Power, "
+                         f"got {second} -- nothing was left over")

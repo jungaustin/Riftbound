@@ -227,12 +227,17 @@ no new engine bugs.**
 
 Three things in the batch worth knowing that are **not** encoded as cases:
 
-- **The rulings contradict each other on Astral Heron.** #12623 says the two
-  discounts cannot be split; #12622, #12624, #12625 and #12631 all say they can,
-  by playing a Reaction-speed card in the priority window between the two
-  triggers resolving. The majority and the later answers permit the split
-  (#12631 cites #12624), so #12623 reads as the outlier. Nothing is asserted
-  either way until someone decides which the engine encodes.
+- **The rulings contradicted each other on Astral Heron, and it is now
+  settled.** #12623 said the two discounts cannot be split; #12622, #12624,
+  #12625 and #12631 all say they can. The project owner confirmed the split from
+  play on 2026-09-27, and **340.4 is the mechanism**: after the first trigger
+  resolves the Chain is not empty and has no Pending Items, so its controller
+  gains Priority and play returns to Execute. A [Reaction] card played in that
+  window spends the first discount before the second trigger grants its own.
+  Both halves are asserted (`cases_84.py` #12624 and #12622) and the engine
+  already did it: split gives two cards at 2E+2P off each, while letting both
+  resolve stacks 4E+4P onto one and leaves nothing for the next. **#12623 is in
+  `rejected.json`** with the rule number.
 - **#12648 flags its own conflict with an older FAQ** that claims Deflect is
   once per spell. The current wording and the bulk of rulings go per choosing,
   which is what the engine does and what the case above pins.

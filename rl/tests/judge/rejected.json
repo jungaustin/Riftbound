@@ -62,5 +62,9 @@
  {
   "id": 6656,
   "reason": "Says a unit that leaves a Combat's battlefield and returns during the same Showdown gets no second 'when I attack/defend' trigger, because \"attack and defend triggers only trigger the first time a unit gains the attacker or defender designation\". There is no such rule. 323.2.c makes a designated unit at any other location LOSE that designation in the Cleanup, and 323.2.a then hands a designation to any undesignated unit present at the battlefield -- so a unit that walks out and back in is designated afresh and its trigger condition is met again. FAQ #6364 answers the same question the opposite way for Yasuo (Flash home, Zenith Blade back in, second attack trigger) and agrees with the rules; #6385 (the OTHER units leaving does not re-trigger the one that stayed) is consistent with both, because the unit that stayed never lost its designation. The engine was fixed to match 323.2.a/c and asserts #6364 in cases_81."
+ },
+ {
+  "id": 12623,
+  "reason": "Rule 340.4: after the first Astral Heron trigger resolves the Chain is not empty and has no Pending Items, so the controller of the newest item gains Priority and play returns to Step 2: Execute (312.2.c/d grant it in a Closed State). That window is real, and a [Reaction] card played in it spends the first discount before the second trigger has granted its own -- so the two discounts CAN be split across two cards. This answer says flatly that they cannot. It is also the outlier inside its own batch: #12622, #12624, #12625 and #12631 all permit the split and #12631 cites #12624. Confirmed from play by the project owner 2026-09-27. Engine: split gives two cards at 2E+2P off each; letting both resolve stacks 4E+4P onto one (cases_84.py #12624 and #12622 assert both halves)."
  }
 ]
