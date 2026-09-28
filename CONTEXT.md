@@ -12,33 +12,53 @@ rewritten and pruned freely, so treat it as *state*, not a log.
 
 | | |
 |---|---|
-| **Running** | Nothing |
-| **Committed** | Through `64395ee`. Uncommitted: `decks/renata-gutter-palace/` (new deck, v1, untested) |
+| **Running** | **`rl/runs/v7-victory8`** — 500 iterations at victory 8, launched 2026-09-27 on `916e30b`, ~7 hours. `loop=` and `trunc=` are the two new columns to watch |
+| **Committed** | Through `916e30b`. Uncommitted: `decks/renata-gutter-palace/`, `decks/seraphine-not-alone/` (both untracked) |
 | **Branch** | `rl/card-scripting` |
-| **Next** | **Launch the victory-8 run** — command and reasoning in `rl/docs/V8_SETUP.md`. Blocked only on the pre-training judge-call audit, which is Austin's own gate |
+| **Next** | Austin's judge list, batch 2 — batch 1 is 6/6 green and `harness.KNOWN_BAD` is empty |
 
-**The critical path is clear** (`64395ee`). Backlog 0–2 done, and chasing them
-turned up three more pre-existing crashes:
+**The engine is green on everything**: 13/13 suites, five fuzz modes at victory 3
+*and* 8, five named regression seeds, 2023 judge calls, 0 known-bad.
 
-- **`state.priority` went stale when the Chain was COUNTERED empty.** 340.2 hands
-  priority back only on the path where an item *resolved*; `chain.counter` pops
-  one and nobody restored it. So a unit played on the turn player's own turn was
-  announced under the opponent's seat and indexed their hand. `_normalize_priority`
-  now states the rule once, at the end of every `apply` — stale priority also lied
-  to `obs` (which feeds `priority == seat` to the policy) and to `invariants`.
-- **Truncation is decided on points (408.2.b)**, not called a draw: a lead of two
-  or more wins, less is a draw. Paying a flat 0 made stalling profitable.
-- **Sterile-loop detection** in `env._check_sterile_loop`, reported as `loop=` in
-  the training log. Blames a seat only when it had an alternative; a forced loop
-  falls back to 408.2.b.
-- Plus: an attached Equipment's granted ability crashed on activation (721.2
-  off-by-one between `activatable` and `_activate`; real-deck seed 95, *in the
-  training distribution*); `env.play` spun forever on a truncation; and
-  `invariants` called a legal Undying Loyalty play illegal by reading its printed
-  cost (v1 spell seed 661 **at victory 8**).
+### Austin's judge list, batch 1 — 3 interactions, 2 were engine bugs
 
-Named seeds now run first in `fuzz.main`, keyed by `(mode, victory)` — every one
-of these needed the game count or the victory score raised to be reachable.
+`rl/tests/judge/cases_austin_01.py`, ids `AJ-NN` so they cannot be mistaken for
+scraped RiftJudge numbers.
+
+- **AJ-03 passed as-is** (three cases). Simultaneous triggers: your own two are
+  offered as an order choice and LIFO is right (Yasuo reads 9 Might, not 6);
+  opposing triggers are placed in turn order with no choice, so Vex denies
+  Tideturner's move on your turn and allows it on theirs.
+- **AJ-01 was wrong: 466.5 → 466.6 → 466.7 ran backwards.** Control was settled
+  *after* the Showdown was torn down, so every Conquer trigger resolved in a
+  world where the Combat had already ended. Now it suspends at a new
+  `SD_CONQUER` step with the designations still on. Rengar reaches 8 Might.
+- **AJ-02 was wrong: 372 was a fixed ladder.** Smite's banish sat ahead of
+  Zhonya's, so the save was unreachable. Now `pend_repl` asks the dying
+  permanent's controller. Both directions are real and both are tested.
+
+### Four crashes fixed, all the same species
+
+**Two code paths disagreeing about what a play costs.** Named seeds now run
+first in `fuzz.main`, keyed by `(mode, victory)`:
+
+| seed | mode | what |
+|---|---|---|
+| 859 | v1 spell, v3 | `priority` went stale when the Chain was COUNTERED empty |
+| 95 | real-deck, v3 | an attached Equipment's granted ability, 721.2 off-by-one |
+| 661 | v1 spell, v8 | an invariant read Undying Loyalty's printed cost |
+| 5097 | real-deck, v8 | the **[Deflect] surcharge** offered against the printed cost, paid against the real one — this killed the first v8 run at iteration 19 |
+| 55 | real-deck, v8 | Heimerdinger's **borrowed**-ability offer checked fewer costs than the permanent loop above it |
+
+`actions.play_cost_reservation` is now the single answer to "what will this play
+recycle", used by every offer site. Consistency is the load-bearing part: being
+strict in one place only turns a crash into a deadlock.
+
+**Also**: truncation is decided on points (408.2.b), sterile loops end the
+episode and name the looper, `env.play` no longer spins on a truncation, and a
+decklist built on unreleased cards is now SKIPPED rather than loaded mutilated
+into the pool (`decks/seraphine-not-alone/` was entering training 39 cards with
+no champion).
 
 ## Victory 8 is measured and ready
 
@@ -65,15 +85,11 @@ could never play, so victory 8 starts cold rather than with `--init`.
 
 ## What v6 settled (`rl/runs/v6-overnight`, 1500 iters, 4.19M steps)
 
-**The generalization gap closed** — train 58.4% vs held-out 54.8% (−3.7 ± 12.7)
-against v5's −6.5. Not significant at 7 decks x 24 games, but the point estimate
-halved while absolute strength rose. More decks works.
-
-**It plateaued at iteration ~300 of 1500**, so compute is not the bottleneck: 1000
-further iterations bought ~2 points. Prime suspect is victory 5 being too short
-(`turns=5.14`) with tempo parity *inverted* at odd victory scores. Per-deck spread
-is 100%, but the near-0% decks all load at `coverage=1.000` — deck strength in
-this engine, not broken cards.
+The generalization gap closed — train 58.4% vs held-out 54.8% (−3.7 ± 12.7)
+against v5's −6.5, not significant but the point estimate halved. **It plateaued
+at iteration ~300 of 1500**, so compute was not the bottleneck; the suspect is
+victory 5 being too short (5.14 turns) with tempo parity inverted at odd scores.
+That is what v7 tests.
 
 ## What is true about the project
 
