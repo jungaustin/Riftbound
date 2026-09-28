@@ -116,10 +116,18 @@ def v0_pool(table):
 #     ready one. Keyed on victory 8 because it is a long-game state -- which is
 #     the argument for fuzzing the curriculum's DESTINATION and not only its
 #     current rung.
+#   real-deck 5097 AT VICTORY 8 -- the [Deflect] surcharge was OFFERED against
+#     the printed cost and PAID against the real one. Bellows Breath with a
+#     granted [Repeat]: 820.1.c.1 makes the Repeat's Power part of the same
+#     payment, so the runes the surcharge was promised were already gone.
+#     `actions.play_cost_reservation` is now the one answer every offer site
+#     uses. This one killed the first victory-8 training run at iteration 19,
+#     and needed 5,000 real-deck games to reach by random play.
 REGRESSIONS = {
     ("v1 spell", 3): (859,),
     ("real-deck", 3): (95,),
     ("v1 spell", 8): (661,),
+    ("real-deck", 8): (5097,),
 }
 
 

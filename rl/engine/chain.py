@@ -407,9 +407,19 @@ def flow_playable(state: GameState, table: CardTable, cfg: Config,
             continue
         if _name_locked(state, table, seat, card):
             continue
-        if plan_flow(state, table, seat, card) is None:
+        _flow = plan_flow(state, table, seat, card)
+        if _flow is None:
             continue
-        if not rsv.can_be_cast(state, table, spec, seat, -1, card=card):
+        # 829.1.c.1 -- the Flow cost REPLACES the printed one, and it is often
+        # heavier in Power (Lacerate prints 1, its Flow costs 2). Target
+        # legality includes whether a [Deflect] surcharge is payable
+        # (809.1.c), so it has to be asked against the cost this play will
+        # actually pay: asking it against the printed cost offered a Flow play
+        # whose only legal target then vanished at the slot.
+        from rl.engine.actions import _castable_under_cost
+        from rl.engine.state import COST_FLOW as _CF
+        if not _castable_under_cost(state, table, seat, card, spec,
+                                    cost_mode=_CF):
             continue
         out.append(i)
     return out

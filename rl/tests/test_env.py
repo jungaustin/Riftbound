@@ -108,23 +108,36 @@ def greedy_run(seed, auto_pass):
     return env, env.summary()
 
 collapsed = 0
+saved = 0
 for seed in range(60):
     e_on, r_on = greedy_run(seed, True)
     e_off, r_off = greedy_run(seed, False)
-    for k in ("winner", "turns", "points", "hash", "steps"):
+    # **`steps` is deliberately NOT compared.** Collapsing a pass-only window is
+    # the whole job of the flag, so it costs the policy one decision fewer --
+    # what has to be identical is the GAME, and `hash` digests every slot of it.
+    for k in ("winner", "turns", "points", "hash"):
         if r_on[k] != r_off[k]:
             die("auto-pass", f"seed {seed}: {k} differs, {r_on[k]} vs {r_off[k]}")
     collapsed += e_on.auto_passes
-ok("60 greedy games identical with the flag on and off")
+    saved += r_off["steps"] - r_on["steps"]
+ok(f"60 greedy games identical with the flag on and off (hash, winner, turns, "
+   f"points), while the flag saved {saved} decisions")
 
-# Say the quiet part out loud. `combat.run_combat` resolves Combat without ever
-# yielding priority, so v0 has no pass-only window and the number above is
-# measuring nothing. Assert that, so the day Reactions land this line fails and
-# forces the flag to be re-measured rather than re-assumed.
-if collapsed != 0:
-    die("auto-pass", f"{collapsed} windows collapsed, but v0 should have none; "
-                     f"combat must now be yielding priority -- re-measure")
-ok("v0 exposes no pass-only window at all (combat does not yield priority yet)")
+# **This assertion inverted on 2026-09-27, and the old one is why.** It used to
+# insist `collapsed == 0`, because `run_combat` resolved Combat without ever
+# yielding priority, so v0 had no pass-only window and the number above was
+# measuring nothing -- with a comment saying the day combat started yielding,
+# this line should fail and force the flag to be re-measured rather than
+# re-assumed. 466.6 is that day: ending a Combat now suspends at SD_CONQUER
+# while the Conquer triggers resolve, and that is a real priority window even in
+# v0, where nobody can act in it. So it is measured, and the number is asserted
+# from the low side rather than pinned: 48 windows over these 60 games.
+if collapsed < 20:
+    die("auto-pass", f"only {collapsed} windows collapsed; 466.6's conquer "
+                     f"window should give roughly one per conquer -- if combat "
+                     f"stopped yielding, re-measure rather than lowering this")
+ok(f"{collapsed} pass-only windows collapsed across the 60 games, and the game "
+   f"came out identical every time -- so the flag is a no-op on PLAY, not on cost")
 
 # So test the rule itself, which is the part that will matter.
 FAKE = A.Action(A.A_PLAY, 0)

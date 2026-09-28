@@ -16,7 +16,7 @@ import numpy as np
 from rl.engine.effects import play_from_look_cost
 from rl.engine.state import (MAX_HAND, N_BF, N_SEATS, P_ALIVE, P_ATTACHED_TO,
                              P_CTRL, P_DMG, P_LOC,
-                             P_READY, GameState, bf_index, fd_slots,
+                             P_READY, SD_CONQUER, GameState, bf_index, fd_slots,
                              is_battlefield)
 
 
@@ -126,7 +126,11 @@ def check(state: GameState, card_might: np.ndarray | None = None) -> None:
     # --- showdown ----------------------------------------------------------
     if state.showdown_bf >= N_BF:
         _fail("showdown at a nonexistent battlefield")
-    if state.showdown_bf >= 0 and not state.bf_contested[state.showdown_bf]:
+    # ...except during the 466.6 suspension: 466.5.a has already cleared the
+    # Contested status and 466.7 has not ended the Combat yet, so for that one
+    # step the two legitimately disagree.
+    if (state.showdown_bf >= 0 and not state.bf_contested[state.showdown_bf]
+            and int(state.showdown_step) != SD_CONQUER):
         _fail("showdown in progress at an uncontested battlefield")
     if (state.attacker >= 0) != (state.showdown_bf >= 0):
         _fail("attacker designation and showdown disagree")

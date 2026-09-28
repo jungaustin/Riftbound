@@ -550,7 +550,12 @@ LOOK_TYPE_BIT = {"Unit": LK_UNIT, "Spell": LK_SPELL, "Gear": LK_GEAR}
 MAX_TARGETS = 6
 
 # Showdown steps (PLAN.md Phase 1.3).
-SD_NONE, SD_PRIORITY, SD_DAMAGE, SD_CLEANUP = range(4)
+# SD_CONQUER is the 466.6 suspension: Control has been established and its
+# Conquer triggers are on the Chain, but 466.7 has NOT run yet, so the Combat is
+# still in progress and the Attacker/Defender designations are still on. Safe to
+# append -- `showdown_step` is in `obs.OBS_UNREAD` and `mirror`'s UNCHANGED set,
+# so no observation or checkpoint depends on how many values it has.
+SD_NONE, SD_PRIORITY, SD_DAMAGE, SD_CLEANUP, SD_CONQUER = range(5)
 
 
 class GameState:

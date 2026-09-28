@@ -105,7 +105,8 @@ from rl.engine.state import (F_DAMAGED_TURN, F_UNCHOOSABLE_TURN, F_STUNNED, PT_S
                              F_NO_MOVE,
                              N_BF, N_BF_BASE, N_SEATS, P_ALIVE, fd_slots,
                              P_ARRIVED, P_CARD, P_CTRL, P_DMG, P_FLAGS, P_LOC,
-                             P_READY, SD_CLEANUP, SD_DAMAGE, SD_NONE,
+                             P_READY, SD_CLEANUP, SD_CONQUER, SD_DAMAGE,
+                             SD_NONE,
                              SD_PRIORITY, GameState, base_loc, bf_loc, bf_index,
                              is_battlefield)
 
@@ -2660,7 +2661,7 @@ def _release_control(state: GameState, i: int) -> None:
 
 
 def _establish_control(state: GameState, table: CardTable, cfg: Config,
-                       i: int) -> list[tuple[int, str]]:
+                       i: int, ending: bool = False) -> list[tuple[int, str]]:
     """Settle Control of one Battlefield and Conquer if it changed hands.
 
     Rule 466.5: the player with Units remaining Establishes Control if they did
@@ -2675,8 +2676,13 @@ def _establish_control(state: GameState, table: CardTable, cfg: Config,
     Showdown 344.2 opens for exactly that purpose did not exist.
     """
     scored: list[tuple[int, str]] = []
-    if state.showdown_bf == i:
-        return scored                      # 190.4.b: Control is frozen in combat
+    # 190.4.b -- Control is frozen while a Showdown is running here, which is
+    # what stops a Cleanup settling it mid-combat. `ending=True` is the one
+    # exception and it is not a loophole: 466.5 IS a step of the Combat, and it
+    # comes before 466.7 ends it. Without the flag the correctly-ordered call
+    # was a silent no-op, so Control was never established at all.
+    if state.showdown_bf == i and not ending:
+        return scored
 
     loc = bf_loc(i)
     a, b = state.seats_at(loc)
@@ -2968,6 +2974,17 @@ def advance_combat(state: GameState, table: CardTable, cfg: Config,
     while state.showdown_bf >= 0:
         guard += 1
         assert guard <= N_SEATS * 8, "combat failed to terminate"
+
+        if state.showdown_step == SD_CONQUER:
+            # 466.6 -- Control is established and its Conquer triggers are on
+            # the Chain. Yield while any remain: they resolve through ordinary
+            # priority windows, and the designations stay on for them (323.2.a),
+            # which is the window a [Reaction] or [Ambush] unit can join the
+            # Combat in. Once the Chain is empty, 466.7 finally ends it.
+            if state.n_chain or state.n_trig:
+                return log
+            end_combat(state, table, int(state.showdown_bf), log)
+            return log
 
         if state.showdown_step == SD_PRIORITY:
             # `window_is_live` decides whether to OPEN a window, never whether
@@ -3685,24 +3702,56 @@ def resolution_step(state: GameState, table: CardTable, cfg: Config,
         state.passes = 0
         return False
 
-    # 466.5 -- Combat is over, so Control settles and a change of hands Conquers.
-    if state.showdown_combat and int(state.showdown_bf) >= 0:
-        queue_combat_ends(state, table, int(state.showdown_bf))
+    # 466.5 -- Control settles and a change of hands Conquers.
+    #
+    # **This runs BEFORE 466.7, and that ordering is the whole point.** The
+    # steps are: 466.5 establish Control (466.5.d Conquers), 466.6 "resolve any
+    # items on the chain from establishing control and associated FEPR", and
+    # only then 466.7 "Combat ends" with 466.7.a removing the designations. This
+    # used to be inverted -- the Showdown was torn down first and Control
+    # settled afterwards -- which made every Conquer trigger resolve in a world
+    # where the Combat was already over. A unit played into that window
+    # therefore never received the designation 323.2.a owes it ("units present
+    # at the Battlefield the Combat is taking place at, but do not have a
+    # designation, gain the same designation as their Controller"), so a Rengar
+    # answering a Zaun Warrens trigger was the new Combat's attacker but never
+    # the old one's defender, and Mask of Foresight fired once instead of twice.
+    #
+    # Only THIS battlefield. 190.4 grants Control "at the end of a Showdown or
+    # Combat", and the one ending is here -- a second battlefield somebody
+    # happens to be standing alone on has had no Showdown, so it is not theirs
+    # yet. The Cleanup that follows opens its Showdown.
+    log.setdefault("scored", []).extend(
+        _establish_control(state, table, cfg, bf, ending=True))
+    # 466.6 -- suspend until those Chain items and their FEPR have resolved. The
+    # Showdown stays open and the designations stay on, which is exactly what
+    # makes this window different from "after the Combat". `advance_combat`
+    # finishes the job; the A_PASS resume path brings us back once the Chain is
+    # empty.
+    if state.n_chain or state.n_trig:
+        state.showdown_step = SD_CONQUER
+        state.passes = 0
+        return False
+    end_combat(state, table, bf, log)
+    return True
+
+
+def end_combat(state: GameState, table: CardTable, bf: int, log: dict) -> None:
+    """466.7 -- Combat ends.
+
+    466.7.a removes the Attacker and Defender designations, 466.7.b queues the
+    "at the end of Combat" effects and 466.7.c expires the "this combat" ones.
+    Split out of `resolution_step` because 466.6 can suspend in between, so this
+    has two callers: the straight-through case and `advance_combat`'s resume.
+    """
+    if state.showdown_combat and bf >= 0:
+        queue_combat_ends(state, table, bf)
     state.showdown_bf = -1
     state.showdown_step = SD_NONE
     state.showdown_combat = 0
     state.attacker = -1
     state.priority = state.active
     state.focus = -1
-    # Only THIS battlefield. 190.4 grants Control "at the end of a Showdown or
-    # Combat", and the one that just ended was here -- a second battlefield
-    # somebody happens to be standing alone on has had no Showdown, so it is
-    # not theirs yet. It used to be settled here too, which was the same
-    # instant-Conquer-without-a-window bug that `cleanup` had, hiding in the
-    # Combat path. The Cleanup that follows this one opens its Showdown.
-    log.setdefault("scored", []).extend(
-        _establish_control(state, table, cfg, bf))
-    return True
 
 
 def queue_win_combat(state: GameState, table: CardTable, winner: int,

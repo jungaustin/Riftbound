@@ -611,8 +611,17 @@ def _hand_spell_actions(state: GameState, table: CardTable, cfg: Config,
         # so this is max(e, p) over the combined cost, not two payments.
         card = int(state.hand[seat, i])
         re_e, re_p = _repeat_extra(state, table, seat, card)
-        if re_e >= 0 and plan_payment(
-                state, table, seat, card, re_e, re_p) is not None:
+        if (re_e >= 0
+                and plan_payment(state, table, seat, card,
+                                 re_e, re_p) is not None
+                # 809.1.c -- the Repeat's own Power is recycled by the same
+                # payment (820.1.c.1), so ask target legality against that.
+                # Real-deck fuzz seed 5097 at victory 8: a granted Repeat on
+                # Bellows Breath, offered against the printed cost and paid
+                # against the combined one.
+                and (not re_p or _castable_under_cost(
+                    state, table, seat, card, spec_for(table, card),
+                    repeat=1))):
             out.append(Action(A_PLAY_REPEAT, i))
     return out
 
@@ -656,8 +665,42 @@ def spell_opt_cost_options(state: GameState, table: CardTable, seat: int,
         paid = False
     if paid and not spec.paid_ignores_cost:
         e, p = reduced_add_cost(state, table, seat, (0, spec.opt_cost_power))
-        paid = plan_payment(state, table, seat, card, e, p) is not None
+        _res = plan_payment(state, table, seat, card, e, p)
+        paid = _res is not None
+        if paid and p:
+            # 809.1.c -- the paid variant recycles MORE Power, so target
+            # legality has to be re-asked against THAT reservation. A
+            # [Deflect] unit can be an affordable choice without the optional
+            # cost and an unaffordable one with it, and the two are separate
+            # offers: without this the paid variant was announced and then had
+            # no legal target, which deadlocks instead of crashing.
+            paid = _castable_under_cost(
+                state, table, seat, card,
+                spec._replace(targets=spec.paid_targets)
+                if spec.paid_targets else spec,
+                repeat=2)
     return plain, paid
+
+
+def _castable_under_cost(state: GameState, table: CardTable, seat: int,
+                         card: int, spec, cost_mode: int = COST_PRINTED,
+                         repeat: int = 0) -> bool:
+    """355.8 castability, asked against the cost this variant of the play will
+    actually pay rather than the printed one (`play_cost_reservation`).
+
+    Every ANNOUNCE-side offer of a play that owes an additional cost goes
+    through here, so it agrees with the target offer that follows it. Being
+    strict in one place only is what turns a crash into a deadlock: a play
+    announced with no legal target leaves the seat with no legal action.
+    """
+    _res, _lp = play_cost_reservation(state, table, seat, card, spec,
+                                      cost_mode=cost_mode, repeat=repeat)
+    _prev, _prev_lp = rsv.COST_RESERVED[0], rsv.COST_LEFTOVER_P[0]
+    rsv.COST_RESERVED[0], rsv.COST_LEFTOVER_P[0] = _res, _lp
+    try:
+        return rsv.can_be_cast(state, table, spec, seat, -1, card=card)
+    finally:
+        rsv.COST_RESERVED[0], rsv.COST_LEFTOVER_P[0] = _prev, _prev_lp
 
 
 def reduced_add_cost(state: GameState, table: CardTable, seat: int,
@@ -2209,6 +2252,13 @@ def _slot_options(state: GameState, table: CardTable, item: int) -> list[int]:
     # reads it through `capped_by_cost_kill`.
     rsv.COST_KILL_PAID[0] = int(state.chain[item, C_COST_KILL]) >= 0
     rsv.TARGET_SUBJ[0] = int(state.chain[item, C_SUBJ])
+    # An ability pays no card cost, so it reserves nothing.
+    if int(state.chain[item, C_ABIL]) < 0:
+        rsv.COST_RESERVED[0], rsv.COST_LEFTOVER_P[0] = play_cost_reservation(
+            state, table, seat, int(state.chain[item, C_CARD]), spec,
+            cost_mode=int(state.chain[item, C_COST]),
+            repeat=int(state.chain[item, C_REPEAT]),
+            mode_idx=int(state.chain_targets[item, 0]))
     try:
         opts = rsv.choosable_targets(state, table, spec, slot, seat, chosen,
                                      int(state.chain[item, C_BOUND_BF]),
@@ -2242,6 +2292,71 @@ def _slot_options(state: GameState, table: CardTable, item: int) -> list[int]:
     finally:
         rsv.COST_KILL_PAID[0] = False
         rsv.TARGET_SUBJ[0] = -1
+        rsv.COST_RESERVED[0] = None
+        rsv.COST_LEFTOVER_P[0] = 0
+
+
+def play_cost_reservation(state: GameState, table: CardTable, seat: int,
+                          card: int, spec, cost_mode: int = COST_PRINTED,
+                          repeat: int = 0,
+                          mode_idx: int = -1) -> tuple[list[int] | None, int]:
+    """`(what this play's own cost will recycle, Power left over for a Deflect
+    surcharge)` -- the pair `resolve.COST_RESERVED` / `COST_LEFTOVER_P` carry.
+
+    **One function, called from every place that asks whether a target is
+    affordable**, because the offer side and the payment side disagreeing is
+    what the bug was: `plan_surcharge(reserved=None)` reserves the PRINTED
+    cost, and `_finalize_pending` pays the real one, which recycles more
+    whenever the play owes an additional cost. The offer then promised a
+    surcharge the payment had already spent the runes on -- the
+    `unaffordable Deflect cost at finalization` assert that killed the
+    victory-8 run at iteration 19, and real-deck fuzz seed 5097 at victory 8.
+
+    The contributors, mirroring the Power side of `_finalize_pending`:
+
+      - a **[Flow]** cost REPLACES the printed one outright (829.1.c.1) and is
+        often heavier in Power -- Lacerate prints 1 and its Flow costs 2;
+      - a **[Repeat]**, granted or printed, is an Additional Cost of the same
+        payment (820.1.c.1) -- this is the one seed 5097 found, a granted
+        Repeat on Bellows Breath;
+      - a **paid optional** Power cost (Rampage's [Body]);
+      - a chosen **mode** cost (Curtain Call), known only once slot 0 is filled.
+
+    It does not model the choice-dependent REDUCTIONS (Irelia, Sandswept Tomb,
+    a trash-tag discount), which would make the reservation smaller. Leaving
+    them out keeps the offer conservative rather than crashing, and because
+    every offer site uses this same function they stay CONSISTENT -- a play is
+    either offered and finalizable or never announced, which is what rules out
+    the deadlock that being strict in one place only would cause.
+    """
+    if card < 0:
+        return None, 0
+    if cost_mode == COST_FLOW:
+        # The printed cost is not paid at all, so there is no leftover story:
+        # `plan_flow` is the whole reservation.
+        return plan_flow(state, table, seat, card), 0
+    _le, _lp = pending_leftover(state, table, seat, card)
+    extra_p = 0
+    if repeat in (1, 3):
+        _rc = repeat_cost(state, table, seat, card)
+        if _rc[0] >= 0:
+            _re, _rp = reduced_add_cost(state, table, seat,
+                                        (max(0, _rc[0]), max(0, _rc[1])))
+            _used_p = min(_rp, _lp)
+            _rp = max(0, _rp - _lp)
+            _lp -= _used_p
+            extra_p += _rp
+    if spec is not None and repeat in (2, 3) and spec.opt_cost_power:
+        extra_p += reduced_add_cost(state, table, seat,
+                                    (0, spec.opt_cost_power))[1]
+    if spec is not None:
+        mc = getattr(spec, "mode_costs", ())
+        if mc and 0 <= mode_idx < len(mc):
+            extra_p += mc[mode_idx][1]
+    if not extra_p:
+        # Still report the leftover: it pays a surcharge even on a plain play.
+        return None, _lp
+    return plan_payment(state, table, seat, card, 0, extra_p), _lp
 
 
 def _advance_pending(state: GameState, table: CardTable, cfg: Config) -> dict:

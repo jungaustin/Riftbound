@@ -71,13 +71,6 @@ RESULTS = []
 # exemption behind. The suite exits 0 while they fail and 1 the moment one is
 # fixed without being removed from here.
 KNOWN_BAD = {
-    "AJ-01": "466.6/466.7 -- `combat.resolution_step` tears the Showdown down "
-             "BEFORE `_establish_control` queues the conquer triggers, so the "
-             "Combat has already ended while they are on the Chain. A unit "
-             "played in that window never receives the Defender designation "
-             "323.2.a owes it. Needs a suspended SD_CONQUER step, which is a "
-             "combat state-machine change touching every 'end of combat' and "
-             "'this combat' effect.",
     "AJ-02": "372 -- when two Replacement Effects apply to one death, the "
              "controller of the object being acted on picks the order. "
              "`combat._destroy` hard-codes Smite's banish ahead of Zhonya's "

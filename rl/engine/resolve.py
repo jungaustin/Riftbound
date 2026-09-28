@@ -266,10 +266,12 @@ def _affordable_with(state: GameState, table: CardTable, card: int, seat: int,
     if card < 0:
         return True
     need = deflect_cost(state, table, seat, chosen, spec) + extra
+    need = max(0, need - COST_LEFTOVER_P[0])
     if need <= 0:
         return True
     from rl.engine.cost import plan_surcharge
-    return plan_surcharge(state, table, seat, card, need) is not None
+    return plan_surcharge(state, table, seat, card, need,
+                          reserved=COST_RESERVED[0]) is not None
 
 
 def _run_revealed_abilities(state: GameState, table: CardTable, cfg: Config,
@@ -839,6 +841,36 @@ COST_KILL_PAID = [False]
 # The subject of the trigger whose slots are being asked about, for
 # `TargetSpec.not_subject`. Set around the query like `COST_KILL_PAID`.
 TARGET_SUBJ = [-1]
+
+# **What this play's OWN cost will actually recycle**, as a list of domains --
+# the reservation `_affordable_with` must plan the Deflect surcharge around.
+# Set around the query like the two above, and `None` means "nothing better
+# known, fall back to the printed cost".
+#
+# It exists because the printed cost is the WRONG reservation the moment the
+# play owes anything extra. `cost.plan_surcharge(reserved=None)` reserves
+# `plan_payment(card)`, but the payment at finalization can recycle more -- a
+# paid optional Power (Rampage's [Body]), a mode cost (Curtain Call), or a
+# [Flow] cost heavier in Power than the printed one (Lacerate prints 1, its
+# Flow costs 2). So the offer said the surcharge was affordable and
+# finalization found the runes gone, which is the `unaffordable Deflect cost at
+# finalization` assert. `actions._finalize_pending` already had to be taught
+# this for the CHARGE (real-deck fuzz seed 672); this is the same lesson for the
+# OFFER.
+#
+# It only bites when the energy does NOT come from the runes -- with pooled
+# energy (Empower, a Gold token) a seat can be one rune from empty and still
+# cast a 3-energy spell, which is why 6,000 random real-deck games at victory 8
+# never found it and 19 iterations of a warming policy did.
+COST_RESERVED: list = [None]
+
+# Power the one-shot "your next card costs less" promise has LEFT once this
+# play's own cost and its additional costs are paid. It pays part of a Deflect
+# surcharge (RiftJudge #11855), which `_finalize_pending` does and the offer
+# side has to do too -- otherwise the offer is STRICTER than the payment and
+# withholds a target that is genuinely affordable. Set and cleared alongside
+# `COST_RESERVED`.
+COST_LEFTOVER_P: list = [0]
 
 
 def _trash_targets(state: GameState, table: CardTable, spec: TargetSpec,
