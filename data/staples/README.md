@@ -15,7 +15,7 @@ Rescued from `riftbound-handoff/` on 2026-08-03, which is now safe to delete. Ve
 | `FINDINGS-2026-08-03.md` | **Read this before trusting a number.** Contains the metric correction below. |
 | `METHODOLOGY.md` | Denominator definition, aggregation math, type filter, format decision. |
 | `parse_staples.py` | Regenerates the CSVs from `html/`. `--selftest`, `--coverage`, `--threshold`. |
-| `html/` | The 10 manually-saved riftdecks `/staples` pages. **The only source** — see the re-fetch warning. |
+| `html/` | The 10 manually-saved riftdecks `/staples` pages. **Local-only (gitignored).** **The only source** — see the re-fetch warning. |
 | `legacy/` | Per-Legend Unleashed-era data from the abandoned first approach. Not used by anything here. |
 
 ## The one thing you must know before using these numbers

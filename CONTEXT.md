@@ -1,10 +1,10 @@
 # Session context — for starting a new chat
 
-**Purpose.** Paste-free handoff. Read this plus `README.md` and you should be able
+**Purpose.** Paste-free handoff. Read this plus `DEVELOPMENT.md` and you should be able
 to pick up without asking for a summary. Claude keeps this current; it is
 rewritten and pruned freely, so treat it as *state*, not a log.
 
-**Last updated:** 2026-09-28 (v8 run at iter 140, vs_greedy 59.5%; 372+373 both ask)
+**Last updated:** 2026-09-28 (history rewritten for public release; v8 run at iter 156/500, vs_greedy 59.5%, ETA ~07:00; 372+373 both ask)
 
 ---
 
@@ -12,13 +12,14 @@ rewritten and pruned freely, so treat it as *state*, not a log.
 
 | | |
 |---|---|
-| **Running** | **`rl/runs/v7-victory8`** — 500 iters at victory 8 on `0ed3cf7`, ~7h. FOURTH attempt; the first three died at iterations 19, 8 and 8. Watch `ovf=` (board-row overflow) and `loop=` |
-| **Committed** | Through `cc8dc44`. Uncommitted: `decks/renata-gutter-palace/`, `decks/seraphine-not-alone/` (untracked) |
+| **Running** | **`rl/runs/v7-victory8`** (pid 46202, started 09-27 22:29) — 500 iters at victory 8 on `0ed3cf7`, ~63s/iter, lands ~07:00. At 156/500, `trunc/loop/ovf` all 0.0%, vs_greedy 54.0 -> 59.5% (bar is 65%). FOURTH attempt; the first three died at iterations 19, 8 and 8. It predates `1f1bcd7`/`cc8dc44` (Heron split, 373) — both rare, obs layout unchanged, so it was left to finish rather than restarted. Ends with a `--per-deck 40` table + the 7 held-out decks: **that table decides whether specialists are worth forking** |
+| **Committed** | Through the public-release commit (README/LICENSE/disclaimer). **History was rewritten 2026-09-28** with `git filter-repo` to strip third-party files (rules PDFs, YouTube transcript, riftdecks HTML, RiftJudge scrape) — they stay on disk but are gitignored; never re-add. Uncommitted: `rl/tests/judge/cases_austin_02.py`, `decks/renata-gutter-palace/`, `decks/seraphine-not-alone/` (untracked) |
 | **Branch** | `rl/card-scripting` |
-| **Next** | Austin's judge list, batch 2. Judge corpus is caught up (2159 rulings, to 12724) and the last README gap (#7059) is closed |
+| **Decided** | The Heron/373 fixes ride along in the NEXT run, not this one. Austin's call 09-28 01:15: too niche to pay 3h of progress for |
+| **Next** | Austin's judge list, batch 2 (`cases_austin_02.py`; AJ-04 Irelia conquer double-ready passed as-is). Judge corpus is caught up (2159 rulings, to 12724) and the last README gap (#7059) is closed |
 
 **Nothing is known-broken.** 13/13 suites, five fuzz modes at victory 3 *and* 8,
-five named regression seeds, 2032 judge calls, 0 known-bad.
+five named regression seeds, 2033 judge calls, 0 known-bad.
 
 ### Austin's judge list, batch 1 — 6/6 green
 

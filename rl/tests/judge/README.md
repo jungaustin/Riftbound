@@ -11,7 +11,8 @@ report. A scenario whose cards are not scripted yet is a SKIP, never a pass.
 - `riftjudge_scenarios.json` / `.md` -- the scraped questions and rulings, kept
   verbatim so a case can be re-read against its source. The `.json` holds an
   entry for **every ruling any case cites** (2036 of them), so the suite needs
-  nothing outside the repo to be audited; the `.md` is the first batch's prose
+  nothing outside this folder to be audited; both files are **local-only**
+  (gitignored — third-party text is not republished); the `.md` is the first batch's prose
   and was not grown with it. The re-runnable artifact is
   `rl/tests/test_judge.py`.
 - Every case is titled with the RiftJudge question id, so `#12586` in the

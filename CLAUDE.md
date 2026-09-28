@@ -26,7 +26,8 @@ interrupted, and the value is entirely in it being current when that happens.
 | | |
 |---|---|
 | `CONTEXT.md` | current state — **read first** |
-| `README.md` | what the three sub-projects are |
+| `README.md` | public overview of the project |
+| `DEVELOPMENT.md` | what the three sub-projects are, data layout, tests |
 | `rl/README.md` | index into `rl/docs/` (PLAN, LEARNING, PLAYING, RUNS, BACKLOG) |
 | `rl/docs/BACKLOG.md` | everything deferred, with effort estimates |
 
