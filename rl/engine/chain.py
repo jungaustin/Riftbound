@@ -1593,7 +1593,7 @@ def decision_open(state: GameState) -> bool:
                 or state.pend_split >= 0 or state.pend_amount >= 0
                 or state.steal_seat >= 0 or state.pend_name >= 0
                 or state.dj_seat >= 0 or state.pend_altar >= 0
-                or state.pend_repl >= 0)
+                or state.pend_repl >= 0 or state.pend_guard >= 0)
 
 
 def oldest_pending(state: GameState) -> int:

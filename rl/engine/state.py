@@ -618,6 +618,7 @@ class GameState:
         "pend_cull_dest", "pend_split", "split_left", "split_loc",
         "split_xp", "split_spell", "split_alloc", "bf_prev_ctrl", "bf_replaced", "bf_first_use", "empower_src",
         "victory_bonus", "unit_tax_ply", "free_hide_ply", "pend_altar", "altar_ply",
+        "pend_guard", "guard_cands", "n_guard_cands",
         "pend_repl", "repl_pick", "repl_ply",
         "pend_dmg", "pend_dmg_pool", "pend_dmg_bf", "pend_dmg_targets",
         "pend_dmg_n_tgt", "pend_dmg_kills", "pend_dmg_n_kill", "pend_dmg_done",
@@ -1052,6 +1053,23 @@ class GameState:
         # back round and kill the unit for real. The same shape as `pend_altar`
         # / `altar_ply`, and for the same reason: `_destroy` suspends by simply
         # returning without killing.
+        # 373 -- ONE replacement, several simultaneous deaths it could apply
+        # to: "they must decide which event to apply Zhonya's Hourglass to
+        # first" is the rule's own worked example. The SEAT being asked, or -1.
+        #
+        # The candidates have to be STORED, not recomputed. The first version
+        # recomputed them from marked lethal damage, which is wrong for
+        # `destroy()` -- 428's kill outright marks no damage, so the unit dying
+        # was missing from its own candidate list while any unrelated unit
+        # sitting at lethal damage mid-sweep was in it. The batch is the truth
+        # and it is a local, so it is captured here at the moment of suspension.
+        #
+        # No `guard_pick` to go with these: the answer is carried out
+        # immediately, and healing the chosen unit is what takes it out of the
+        # sweep that comes back round.
+        self.pend_guard = -1
+        self.guard_cands = np.full(MAX_PERMS, -1, np.int16)
+        self.n_guard_cands = 0
         self.pend_repl = -1
         self.repl_pick = np.full(MAX_PERMS, -1, np.int8)
         self.repl_ply = np.full(MAX_PERMS, -1, np.int16)

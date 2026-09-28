@@ -99,6 +99,10 @@ SEAT_VALUED_SCALAR = ("pend_cull_first", "pend_cull_skip", "cull_spell_seat",
                       # item it would counter is `pend_tax_uid`.
                       "pend_tax", "pend_ask", "pend_ask_caster", "pend_hand_play",
                       "pend_mull",
+                      # 373's "which of these simultaneous deaths does the one
+                      # replacement apply to" -- the seat being asked, so it
+                      # flips. Unlike `pend_repl` beside it, which is a ROW.
+                      "pend_guard",
                       # Only one look is ever pending, so the BUFFER is
                       # seat-agnostic (it lists card ids) while this names who
                       # is looking -- the same split as pend_mull.
@@ -125,6 +129,10 @@ SEAT_VALUED_ARRAY = ("bf_ctrl", "fd_owner", "bf_contester", "mark_seat",
 UNCHANGED = (
     "n_perms", "bf_card", "bf_replaced", "empower_src", "victory_bonus",
     "bf_contested",
+    # 373's candidate deaths, as permanent ROWS plus their count. Rows keep their
+    # numbers under a seat swap, so neither flips -- the seat being ASKED is
+    # `pend_guard` above, which does.
+    "guard_cands", "n_guard_cands",
     "fd_card", "n_chain",
     "turn",
     "phase", "showdown_bf", "showdown_step", "showdown_combat",

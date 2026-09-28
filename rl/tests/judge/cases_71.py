@@ -282,6 +282,10 @@ def _():
     fight(s)
     assert alive(s, a) != alive(s, b), "exactly one was replaced"
     assert not alive(s, z), "one Hourglass per death prevented"
+    # Deliberately agnostic about WHICH one, because it was the engine's pick
+    # when this was written. 373 gives that choice to the guard's controller and
+    # `cases_72.py` #7059/.1/.2 assert it -- this case stays as the "exactly one"
+    # half, which is 373.2 and holds however the choice goes.
 
 
 @case(7056, "Baited Hook ignores the cost printed, not the cost demanded")

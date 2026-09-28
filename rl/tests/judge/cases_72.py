@@ -280,3 +280,85 @@ def _():
     run(s, limit=20, stop=lambda st: st.n_chain == 0 and st.n_trig == 0)
     assert int(s.showdown_bf) == 0 and int(s.attacker) == 1
     assert combat.might(s, T, shark) == 1, "[Assault 4] is an attacker's keyword"
+
+
+def _two_doomed_with_a_guard():
+    """Seat 1 holding a played Zhonya's Hourglass, with a 2 Might and a 6 Might
+    unit both about to take exactly lethal damage at the same battlefield."""
+    s = fresh(runes=32, seat=1)
+    give(s, 1, "Zhonya's Hourglass")
+    s.bf_ctrl[0] = 1
+    # PLAYED, so its [Play] trigger registers the guard -- staging the gear with
+    # `add_permanent` leaves `death_guard` at -1 and measures nothing.
+    cast(s, 1, "Zhonya's Hourglass", base_loc(1))
+    drain(s)
+    zh = perm_of(s, "Zhonya's Hourglass", 1)[0]
+    small = body(s, 1, bf_loc(0), 2)
+    big = body(s, 1, bf_loc(0), 6)
+    s.perms[small, P_DMG] = 2
+    s.perms[big, P_DMG] = 6
+    return s, zh, small, big
+
+
+def _answer_guard(s, perm):
+    who = A.acting_seat(s)
+    lg = A.legal_actions(s, T, V1, who)
+    opts = sorted(a.arg for a in lg if a.kind == A.A_PICK)
+    A.apply(s, T, V1, next(a for a in lg if a.kind == A.A_PICK and a.arg == perm))
+    drain(s)
+    return who, opts
+
+
+@case(7059, "one Zhonya's, two simultaneous deaths: its controller picks which")
+def _():
+    """373 spells this out and its worked example is this card: "Two units
+    controlled by the same player die in the same cleanup. That player also
+    controls Zhonya's Hourglass. They must decide which event to apply Zhonya's
+    Hourglass to first." 374 makes the chooser the REPLACEMENT's controller.
+
+    It used to be decided by row order -- the invisible tie-break this engine
+    keeps having to remove. `_destroy` now suspends on `pend_guard` when more
+    than one death qualifies, exactly as it does for the 372 order and for Altar
+    of Blood, by returning without killing.
+    """
+    need("Zhonya's Hourglass")
+    s, zh, small, big = _two_doomed_with_a_guard()
+    assert sorted(combat.guard_candidates(s, T, 1, (small, big), small)) \
+        == sorted((small, big)), "both units of the batch qualify"
+    combat.enforce_lethal(s, T)
+    assert int(s.pend_guard) == 1, (
+        f"373 owes the guard's controller a choice, got pend_guard="
+        f"{int(s.pend_guard)}")
+    who, opts = _answer_guard(s, big)
+    assert who == 1 and opts == sorted((small, big)), \
+        f"374 -- asked of the guard's controller, both deaths offered: {who} {opts}"
+    assert alive(s, big) and int(s.perms[big, P_LOC]) == base_loc(1) \
+        and int(s.perms[big, P_READY]) == 0, "the chosen one is healed and recalled"
+    assert not alive(s, small), "373.2 -- one replacement, one sequence"
+    assert not alive(s, zh), "and the Hourglass is what died instead"
+
+
+@case(7059.1, "...and the other pick is reachable, which is the whole point")
+def _():
+    need("Zhonya's Hourglass")
+    s, zh, small, big = _two_doomed_with_a_guard()
+    combat.enforce_lethal(s, T)
+    _answer_guard(s, small)
+    assert alive(s, small) and not alive(s, big), \
+        "saving the 2 Might one instead has to be a legal answer"
+    assert not alive(s, zh)
+
+
+@case(7059.2, "a single qualifying death asks nothing and behaves as before")
+def _():
+    """The guard against a needless decision point: with one death there is
+    nothing for 373 to order, so no window opens at all."""
+    need("Zhonya's Hourglass")
+    s, zh, small, big = _two_doomed_with_a_guard()
+    s.perms[big, P_DMG] = 0                      # only the small one is doomed
+    assert combat.guard_candidates(s, T, 1, (small,), small) == [small]
+    combat.enforce_lethal(s, T)
+    assert int(s.pend_guard) < 0, "one candidate is not a choice"
+    assert alive(s, small) and int(s.perms[small, P_LOC]) == base_loc(1), \
+        "and it is saved without asking"
+    assert not alive(s, zh) and alive(s, big)

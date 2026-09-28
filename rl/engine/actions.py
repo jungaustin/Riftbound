@@ -1199,6 +1199,23 @@ def legal_actions(state: GameState, table: CardTable, cfg: Config,
     # asked before the unit dies and not after. The sweep that was killing it
     # is stopped (`combat.enforce_lethal`, `combat.advance_combat`), which is
     # what makes "would die" answerable at all.
+    # 373 -- one death guard, several simultaneous deaths it could apply to.
+    # "They must decide which event to apply Zhonya's Hourglass to first" is the
+    # rule's own worked example. `A_PICK`'s arg is the permanent ROW to save,
+    # which is what this offer site says an arg means.
+    if state.pend_guard >= 0:
+        if seat != int(state.pend_guard):
+            return []
+        # Read from the STORED batch, not recomputed: the candidates are the
+        # simultaneous deaths as they stood when the question was asked, and the
+        # batch that defined them was a local in `_destroy`. A candidate that has
+        # since stopped being alive is dropped, and the survivors are still at
+        # least one, because nothing between the suspension and here can act.
+        opts = [int(p) for p in state.guard_cands[:int(state.n_guard_cands)]
+                if p >= 0 and state.perms[int(p), P_ALIVE] == 1]
+        assert opts, "the 373 offer went empty; nothing may act while it is open"
+        return [Action(A_PICK, p) for p in opts]
+
     # 372 -- more than one Replacement Effect applies to this death, so its
     # controller says which one applies first. `A_PICK`'s arg is a
     # `combat.RK_*` kind, which is what this offer site says an arg means.
@@ -1803,6 +1820,7 @@ def _mid_decision(state: GameState) -> bool:
         or state.pend_split >= 0 or state.pend_amount >= 0
         or state.steal_seat >= 0 or state.pend_name >= 0
         or state.dj_seat >= 0 or state.pend_altar >= 0 or state.pend_repl >= 0
+        or state.pend_guard >= 0
         or state.pend_kill_play >= 0 or state.pend_dmg >= 0
         or state.pend_show_off >= 0
         or is_terminal(state))
@@ -2119,6 +2137,9 @@ def _apply_one(state: GameState, table: CardTable, cfg: Config,
         state.pend_order = -1
         chain.place(state, table, cfg, action.arg)
         return {}
+
+    if k == A_PICK and state.pend_guard >= 0:
+        return _finish_death_guard(state, table, cfg, int(action.arg))
 
     if k == A_PICK and state.pend_repl >= 0:
         return _finish_replacement(state, table, cfg, int(action.arg))
@@ -3481,6 +3502,30 @@ def _resolve_play_from_hidden(state: GameState, table: CardTable, cfg: Config,
         chain.queue(state, TR_PLAY_ME, src, loc)
         return {"played_from_hidden": table.names[card], "at": loc}
     return combat.cleanup(state, table, cfg, mover=seat, dst=loc)
+
+
+def _finish_death_guard(state: GameState, table: CardTable, cfg: Config,
+                        perm: int) -> dict:
+    """373 -- apply the one death guard to the chosen simultaneous death.
+
+    Carried out immediately rather than recorded and replayed, which is why
+    there is no `guard_pick` field to go with `pend_guard`: the chosen unit is
+    healed, so it is no longer lethally damaged and the sweep that comes back
+    round simply does not see it. The others die with the guard already spent,
+    which is 373.2 -- one replacement, one sequence.
+    """
+    seat = int(state.pend_guard)
+    cands = [int(p) for p in state.guard_cands[:int(state.n_guard_cands)]]
+    state.pend_guard = -1
+    state.guard_cands[:] = -1
+    state.n_guard_cands = 0
+    assert perm in cands, f"row {perm} is not one of the qualifying deaths"
+    name = table.names[int(state.perms[perm, P_CARD])]
+    combat.apply_death_guard(state, table, seat, perm)
+    # The rest of the batch is still lethally damaged, so the continuous check
+    # (143.2.a) finishes the job -- now with nothing left to save them.
+    combat.enforce_lethal(state, table)
+    return {"death_guard_saved": name}
 
 
 def _finish_replacement(state: GameState, table: CardTable, cfg: Config,
@@ -5115,6 +5160,11 @@ def acting_seat(state: GameState) -> int:
     # assignment happens before any death it goes on to cause.
     if state.pend_dmg >= 0:
         return int(state.pend_dmg)
+    # 373 -- which of several simultaneous deaths the ONE replacement applies
+    # to, asked of the replacement's controller (374). Ahead of 372 because it
+    # picks the event; 372 then orders whatever applies to that event.
+    if state.pend_guard >= 0:
+        return int(state.pend_guard)
     # 372 -- which Replacement Effect applies first, asked of the dying
     # permanent's controller. Ahead of Altar of Blood for the same reason
     # `pend_dmg` is: this question is about a death that has not happened yet.

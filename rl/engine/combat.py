@@ -960,6 +960,52 @@ RK_ANGEL, RK_SHIELD, RK_BANISH, RK_GUARD = range(4)
 RK_NAMES = ("attached gear", "shield", "banish", "gear in play")
 
 
+def guard_candidates(state: GameState, table: CardTable, seat: int,
+                     batch: tuple[int, ...], perm: int) -> list[int]:
+    """373 -- which of THIS batch of simultaneous deaths `seat`'s one death guard
+    could apply to.
+
+    **The batch is the truth, not the board.** A first version recomputed this
+    from marked lethal damage, on the reasoning that both sites passing a `batch`
+    derive it that way. That is wrong for `destroy()` -- 428's kill outright
+    marks no damage at all, so the unit actually dying was not in its own
+    candidate list, while any unrelated unit sitting at lethal damage mid-sweep
+    was. It counted the wrong set, and the real-deck fuzz at victory 8 caught it
+    as `a single qualifying death should never have asked`.
+
+    An empty `batch` means one death on its own, which is never a choice.
+    The guard itself is excluded: it is a gear, so it was never a candidate.
+    """
+    guard = int(state.death_guard[seat])
+    if guard < 0 or state.perms[guard, P_ALIVE] != 1:
+        return []
+    return [int(i) for i in (batch or (perm,))
+            if state.perms[i, P_ALIVE] == 1
+            and int(state.perms[i, P_CTRL]) == seat
+            and int(i) != guard and not state.has_flag(int(i), F_NON_UNIT)]
+
+
+def apply_death_guard(state: GameState, table: CardTable, seat: int,
+                      perm: int) -> None:
+    """Spend `seat`'s death guard on `perm`: kill the guard, heal, exhaust and
+    recall the unit (Zhonya's Hourglass, as errata'd).
+
+    One place, because 373 can now reach it two ways -- straight through
+    `_destroy` when only one death qualifies, and through the 373 offer when
+    several do -- and the two must not drift.
+    """
+    guard = int(state.death_guard[seat])
+    state.death_guard[seat] = -1
+    _destroy(state, table, guard)
+    # 455 -- a Recall relocates to the base and is NOT a Move (456.1), so no
+    # move trigger fires. The HEAL is the errata: without it the marked damage
+    # survives, 143.2.a is a continuous check, and the unit dies again on the
+    # spot -- which made the card answer targeted removal and little else.
+    state.perms[perm, P_DMG] = 0
+    state.set_location(perm, base_loc(seat))
+    state.perms[perm, P_READY] = 0
+
+
 def replacement_options(state: GameState, table: CardTable, perm: int,
                         batch: tuple[int, ...] = ()) -> list[int]:
     """Which Replacement Effects could apply to `perm`'s death right now (372).
@@ -1254,7 +1300,8 @@ def enforce_lethal(state: GameState, table: CardTable) -> list[int]:
                 # Altar of Blood opened an offer: this unit has not died and
                 # the rest of the sweep must wait for the answer, or the
                 # continuous check would come back round and kill it anyway.
-                if int(state.pend_altar) >= 0 or int(state.pend_repl) >= 0:
+                if (int(state.pend_altar) >= 0 or int(state.pend_repl) >= 0
+                        or int(state.pend_guard) >= 0):
                     return killed
                 continue
             killed.append(i)
@@ -1551,7 +1598,7 @@ def altar_offer(state: GameState, table: CardTable, perm: int) -> bool:
     from rl.engine.effects import BF_DEATH_REPLACEMENT
     row = state.perms[perm]
     if (state.has_flag(perm, F_NON_UNIT) or int(state.pend_altar) >= 0
-            or int(state.pend_repl) >= 0):
+            or int(state.pend_repl) >= 0 or int(state.pend_guard) >= 0):
         return False
     if int(state.altar_ply[perm]) == int(state.ply):
         return False
@@ -1744,23 +1791,23 @@ def _destroy(state: GameState, table: CardTable, perm: int,
         banish(state, table, perm)
         return
     if pick == RK_GUARD:
-        guard = int(state.death_guard[ctrl_now])
-        state.death_guard[ctrl_now] = -1
-        _destroy(state, table, guard)
-        # 455 -- a Recall relocates to the base and is NOT a Move (456.1), so
-        # no move trigger fires.
+        # 373 -- ONE guard, several simultaneous deaths it could apply to: "they
+        # must decide which event to apply Zhonya's Hourglass to first" is the
+        # rule's own example (RiftJudge #7059). Which one it lands on used to be
+        # decided by row order, which is the invisible tie-break this engine
+        # keeps having to remove. Suspend and ask, the same way the 372 order and
+        # Altar of Blood do -- by returning without killing.
         #
-        # **The HEAL is the errata, and it changes what the card answers.** The
-        # printed text is "Recall that unit exhausted" with no heal, which made
-        # this a replacement of the death and not of its cause: the marked
-        # damage survived, 143.2.a is a continuous check, and the unit died
-        # again on the spot. Read that way Zhonya's answered targeted removal
-        # and did nearly nothing against damage. `data/errata.json` supersedes
-        # it with "Heal that unit, exhaust it, and recall it", so the damage
-        # goes and the unit actually survives a lethal hit.
-        state.perms[perm, P_DMG] = 0
-        state.set_location(perm, base_loc(ctrl_now))
-        row[P_READY] = 0
+        # Only asked while more than one death qualifies. With exactly one --
+        # which includes every kill outright, where `batch` is empty -- there is
+        # nothing to decide, so a single death behaves as it always did.
+        cands = guard_candidates(state, table, ctrl_now, batch, perm)
+        if len(cands) > 1:
+            state.pend_guard = int(ctrl_now)
+            state.guard_cands[:len(cands)] = cands
+            state.n_guard_cands = len(cands)
+            return
+        apply_death_guard(state, table, ctrl_now, perm)
         return
     if not state.has_flag(perm, F_NON_UNIT):
         state.unit_died_ply[int(row[P_CTRL])] = int(state.ply)
@@ -2668,7 +2715,7 @@ def _decision_pending(state: GameState) -> bool:
         or state.pend_discard >= 0 or state.pend_grave >= 0
         or state.pend_split >= 0 or state.pend_amount >= 0 or state.pend_name >= 0
         or state.pend_ask >= 0 or state.pend_altar >= 0 or state.pend_repl >= 0
-        or state.pend_kill_play >= 0
+        or state.pend_guard >= 0 or state.pend_kill_play >= 0
         or state.pend_dmg >= 0
         or state.pend_show_off >= 0
         or int(state.pend_double[0]) >= 0 or int(state.pend_reveal[0]) >= 0
@@ -3092,7 +3139,7 @@ def advance_combat(state: GameState, table: CardTable, cfg: Config,
             log.setdefault("rounds", []).append(
                 damage_step(state, table, cfg, bf))
             if (int(state.pend_dmg) >= 0 or int(state.pend_altar) >= 0
-                    or int(state.pend_repl) >= 0):
+                    or int(state.pend_repl) >= 0 or int(state.pend_guard) >= 0):
                 return log
         resolution_step(state, table, cfg, bf, attacker, log)
     return log

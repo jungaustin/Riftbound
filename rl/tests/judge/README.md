@@ -206,9 +206,13 @@ Known gaps added this round, deliberately not asserted:
   the ones that ask about re-aiming between instances are not.
 - `OP_BLINK` plays its unit inline, so a blinked unit is never offered
   [Accelerate] and its owner never chooses base or a battlefield (#8838 family).
-- #7059: which of several simultaneous deaths a Zhonya's replaces is still the
-  engine's pick, not its controller's -- the same shape as the group-location
-  question, which #9352 above now asks properly.
+- ~~#7059: which of several simultaneous deaths a Zhonya's replaces is still the
+  engine's pick~~ -- **fixed 2026-09-27.** 373's worked example is this card:
+  "they must decide which event to apply Zhonya's Hourglass to first", and 374
+  makes the chooser the replacement's controller. `_destroy` now suspends on
+  `state.pend_guard` when more than one death qualifies, by returning without
+  killing -- the same shape as the 372 order and Altar of Blood. One qualifying
+  death still asks nothing. `cases_72.py` #7059, #7059.1 and #7059.2.
 
 ## Batch 84 (2026-09-27, questions 12602-12724)
 
