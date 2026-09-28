@@ -1137,6 +1137,44 @@ if _r6.rewards != A.outcome(_env6.state, CFG):
     die("overflow", "408.2.b decides it, like any other truncation")
 ok("the env ends that episode, records why, and scores it on points")
 
+# **The AUTO-PASS path, which is how this escaped the first fix.** `_advance`
+# applies auto-passes itself, and an auto-passed A_PASS resolves the Chain top --
+# exactly where a token-maker resolves. The first version wrapped only `step`'s
+# own call, so the victory-8 run died at iteration 8 a second time.
+#
+# Asserted STRUCTURALLY rather than by provoking it. Reaching a real overflow
+# from inside an auto-pass needs a pass-only window to fall on the exact action
+# that makes the tokens, which no fixture can pin down -- and the property that
+# actually matters is not "this one path is handled", it is **"there is only one
+# path"**. So: exactly one `A.apply(` in the whole file, inside `_apply`. A new
+# call site added later fails this line instead of a seven-hour run.
+_env_src = (__import__("pathlib").Path(__file__).resolve().parents[1]
+            / "env.py").read_text()
+_apply_sites = _re.findall(r"^(\s*)(?:[\w.\[\]]+\s*=\s*)?A\.apply\(",
+                           _env_src, _re.M)
+if len(_apply_sites) != 1:
+    die("overflow", f"env.py has {len(_apply_sites)} `A.apply(` call sites; every "
+                    f"one must go through `_apply` or a BoardOverflow escapes it")
+_in_apply = _env_src.index("A.apply(") > _env_src.index("def _apply(") \
+    and _env_src.index("A.apply(") < _env_src.index("def _advance(")
+if not _in_apply:
+    die("overflow", "the one `A.apply(` must sit inside `_apply`")
+ok("env.py funnels every A.apply through `_apply`, so no path can skip the guard")
+
+# ...and the funnel itself reports the overflow rather than raising through.
+_env7 = RiftboundEnv(T, CFG, auto_pass=False)
+_env7.reset(*((15,) + deal(15)))
+A.apply = lambda *a, **k: (_ for _ in ()).throw(BoardOverflow("injected"))
+try:
+    _kept = _env7._apply(_env7.legal[0])
+finally:
+    A.apply = _real_apply
+if _kept is not False:
+    die("overflow", "`_apply` must report the overflow as False, not raise")
+if not _env7.state.truncated or not _env7.board_overflow or _env7.legal:
+    die("overflow", "...and mark the episode truncated, flagged and unplayable")
+ok("`_apply` absorbs it, marks the episode and leaves nothing playable")
+
 # A reused env must forget it, or every later episode reports an overflow.
 _env6.reset(*((14,) + deal(14)))
 if _env6.summary()["board_overflow"]:

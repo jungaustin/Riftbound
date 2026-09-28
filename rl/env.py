@@ -92,6 +92,7 @@ class RiftboundEnv:
         self._seen: set[tuple[int, int]] = set()
         self.loop_loser = -1      # >= 0 once a seat is caught looping
         self.board_overflow = False   # this episode hit `MAX_PERMS`
+        self._last_log: dict = {}     # the log `_apply` produced, for `info`
 
     # -- properties ------------------------------------------------------
 
@@ -147,21 +148,7 @@ class RiftboundEnv:
             f"actions; the policy must sample under the mask")
 
         act = self._legal[action_index]
-        # **A board-row overflow ends the episode instead of the run.** Same
-        # philosophy as `decision_cap` below: the cap is on permanent rows
-        # CREATED in one turn (they are only reclaimed at end of turn), and a
-        # policy that assembles a token engine or finds a productive loop can
-        # reach it where the rules alone do not -- measured, random play at
-        # victory 8 peaks at 33 of 48. The first victory-8 run died at iteration
-        # 8 on exactly this. The position is mid-mutation once it raises, so the
-        # episode is discarded; only the point totals are read, and they are
-        # already written.
-        try:
-            log = A.apply(self.state, self.table, self.cfg, act)
-        except BoardOverflow:
-            self.state.truncated = True
-            self.board_overflow = True
-            self._legal, self._obs = [], None
+        if not self._apply(act):
             return StepResult(
                 obs=None, rewards=self.final_rewards(), done=True,
                 truncated=True, info={"action": act, "board_overflow": True})
@@ -181,7 +168,7 @@ class RiftboundEnv:
             rewards=self.final_rewards() if done else (0.0, 0.0),
             done=done,
             truncated=bool(s.truncated),
-            info={"action": act, "log": log},
+            info={"action": act, "log": self._last_log},
         )
 
     def _check_sterile_loop(self) -> None:
@@ -231,6 +218,33 @@ class RiftboundEnv:
 
     # -- the driver ------------------------------------------------------
 
+    def _apply(self, act) -> bool:
+        """Apply one action. False means the board ran out of permanent ROWS and
+        this episode is over.
+
+        **Every `A.apply` in this class goes through here**, and that is the
+        point: the first version wrapped only `step`'s own call, and the
+        victory-8 run died at iteration 8 a second time because the overflow came
+        from the AUTO-PASS inside `_advance` -- an auto-passed A_PASS resolves the
+        Chain top, which is exactly where a token-maker resolves.
+
+        A board-row overflow ends the episode rather than the run, the same way
+        `decision_cap` does. The cap is on rows CREATED in one turn (they are
+        only reclaimed at end of turn), and measured at victory 8 random play
+        peaks at 33 of 48 and greedy at 36 -- so what reaches it is a policy, not
+        the rules. The position is mid-mutation once it raises, so the episode is
+        discarded; nothing reads it afterwards but the point totals, which are
+        already written.
+        """
+        try:
+            self._last_log = A.apply(self.state, self.table, self.cfg, act)
+        except BoardOverflow:
+            self.state.truncated = True
+            self.board_overflow = True
+            self._legal, self._obs = [], None
+            return False
+        return True
+
     def _advance(self) -> None:
         """Run the engine forward to the next real decision.
 
@@ -260,7 +274,8 @@ class RiftboundEnv:
                     f"on turn {s.turn}")
 
             if self.auto_pass and should_auto_pass(legal):
-                A.apply(s, self.table, self.cfg, legal[0])
+                if not self._apply(legal[0]):
+                    return          # the board overflowed; the episode is over
                 self.auto_passes += 1
                 continue
 
