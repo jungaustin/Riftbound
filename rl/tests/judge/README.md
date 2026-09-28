@@ -209,3 +209,36 @@ Known gaps added this round, deliberately not asserted:
 - #7059: which of several simultaneous deaths a Zhonya's replaces is still the
   engine's pick, not its controller's -- the same shape as the group-location
   question, which #9352 above now asks properly.
+
+## Batch 84 (2026-09-27, questions 12602-12724)
+
+**123 new rulings scraped, corpus 2036 -> 2159.** The range is contiguous and
+12724 is the newest question the site has; 12725 and above 404. Four cases
+written from it (`cases_84.py`), chosen to probe what changed in the engine this
+week rather than to cover the batch evenly — **all four pass, so this batch found
+no new engine bugs.**
+
+| # | what it pins |
+|---|---|
+| 12648 | Deflect is charged **per choosing** (809.1.c), and 820.2.a makes each execution of a [Repeat] choose for itself: Bellows Breath repeated into a [Deflect 3] Kayle owes 6 Power, not 3. Asserted as the delta against a Kayle with no Deflect, so the number is the surcharge and not the spell's own cost baked into a constant |
+| 12693 | an attack trigger fires once per combat (383.4.e) — a unit walking in mid-combat is not stunned again |
+| 12716 | a Deathknell unit that arrives in the Beginning Step is there to Hold in the Scoring Step (315.2, 469.2), and 471.1.a.1 exempts a Hold, so it can be the **eighth** point |
+| 12681 | two of one player's Rift Heralds dying together queue both Deathknells (383.3.d) |
+
+Three things in the batch worth knowing that are **not** encoded as cases:
+
+- **The rulings contradict each other on Astral Heron.** #12623 says the two
+  discounts cannot be split; #12622, #12624, #12625 and #12631 all say they can,
+  by playing a Reaction-speed card in the priority window between the two
+  triggers resolving. The majority and the later answers permit the split
+  (#12631 cites #12624), so #12623 reads as the outlier. Nothing is asserted
+  either way until someone decides which the engine encodes.
+- **#12648 flags its own conflict with an older FAQ** that claims Deflect is
+  once per spell. The current wording and the bulk of rulings go per choosing,
+  which is what the engine does and what the case above pins.
+- **#12667 corrects older FAQs: the Victory Score is 8, not 7** — which is what
+  `config.victory_score_full` already says.
+
+Card names in the scraped `cards` field are as the pages rendered them, so
+punctuation drifts ("Karthus Eternal" vs "Karthus, Eternal"). Normalize against
+the legal pool before matching them to `cards.json`.
