@@ -1,0 +1,38 @@
+# Singapore Regional Qualifier -- #12 MtyAlley Kuroji
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Kha'Zix - Voidreaver
+Champion: Kha'Zix - Mutating Horror
+Main Deck:
+2x Baron Nashor
+2x Dragonsoul Sage
+2x Fizz - Trickster
+1x Here to Help
+3x Illaoi, Prophet of the Great Kraken
+3x Irresistible Faefolk
+3x Mister Root
+1x Overt Operation
+2x Punch First
+2x Rampage
+3x Rengar, Trophy Hunter
+1x Ride The Wind
+3x Stacked Deck
+2x Star-Crossed
+1x Switcheroo
+3x Up from the Deep
+3x Void Assault
+2x Zed, Without a Sound
+Battlefields:
+1x Forbidding Waste
+1x Sandswept Tomb
+1x Star Spring
+Runes:
+5x Body Rune
+7x Chaos Rune
+Sideboard:
+2x Gust
+2x Ruin Runner
+3x Sabotage
+1x Star-Crossed
+2x Unyielding Spirit

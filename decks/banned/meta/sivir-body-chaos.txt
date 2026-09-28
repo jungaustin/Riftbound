@@ -1,0 +1,36 @@
+# MOVED 2026-09-25: contains banned card(s) -- Aspirant's Climb, Stacked Deck
+# Sivir Body/Chaos
+Legend: Sivir, Battle Mistress
+Champion: Sivir, Mercenary
+Main Deck:
+3x Catalyst of Aeons
+3x Dazzling Aurora
+3x Elder Dragon
+3x Flurry of Blades
+3x Gust
+1x Heedless Resurrection
+2x Last Rites
+3x Lunar Boon
+2x Mindsplitter
+3x Mobilize
+2x Ride the Wind
+2x Sabotage
+2x Scryer's Bloom
+3x Stacked Deck
+1x The Harrowing
+3x Treasure Trove
+Battlefields:
+1x Aspirant's Climb
+1x Forgotten Monument
+1x Sigil of the Storm
+Runes:
+6x Body Rune
+6x Chaos Rune
+Sideboard:
+1x Abandon
+1x Baron Nashor
+1x Factory Recall
+2x Fading Memories
+1x Invert Timelines
+1x Sabotage
+1x Unyielding Spirit

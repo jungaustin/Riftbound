@@ -1,0 +1,40 @@
+Legend:
+1 Annie - Dark Child
+
+Champion:
+1 Annie - Fiery
+
+MainDeck:
+3 Vex - Apathetic
+3 Insightful Investigator
+3 Evelynn - Entrancing
+3 Scorchclaw
+3 Kharox
+2 Miss Fortune - Buccaneer
+2 Draven - Audacious
+1 Tibbers
+3 Hextech Ray
+3 Bone Skewer
+3 Void Seeker
+2 Falling Star
+2 Wind and Ghosts
+2 Gust
+2 Conscription
+2 Blind Fury
+
+Battlefields:
+1 Power Nexus
+1 Ravenbloom Conservatory
+1 Void Gate
+
+Rune Pool:
+6 Fury Rune
+6 Chaos Rune
+
+Sideboard:
+2 Thermo Beam
+2 Decree of Rage
+2 Decree of Discord
+2 Angler Beast
+1 Noxus Saboteur
+1 Ravenbloom Prefect

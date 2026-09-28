@@ -1,0 +1,447 @@
+{
+ "set_id": "RAD",
+ "name": "RAD (spoiler season -- official set name unknown)",
+ "released_on": "2099-01-01",
+ "source": "Spoiler season, 2026-09-25. Nine cards transcribed from card scans (printed text, authoritative); four from the project owner's rules-accurate paraphrase, with no scan yet. See `verification`.",
+ "verification": {
+  "_": "Everything a human should re-check against the official gallery before this set is trusted. Delete an entry once confirmed.",
+  "released_on": "PLACEHOLDER. 2099-01-01 keeps the set hidden until the real date is known. Set it and the gate flips by itself.",
+  "set_name": "Unknown. Cards print 'RAD - NNN/167', so the code is RAD and the set has 167 numbered cards.",
+  "from_paraphrase_not_scan": [
+   "K'Sante - Pride of Nazumah",
+   "Ntofo Strikes",
+   "Seraphine - Starry-Eyed Songstress",
+   "Seraphine, Not Alone"
+  ],
+  "read_from_art_not_text": {
+   "domains": "Every domain here is read off the colour of the cost pips, not off text. Pillaged Armory and Primordial Roar (orange = Body?) are the least certain.",
+   "power": "The small pips under the energy number. Guessed as 1 wherever one pip is visible; Pillaged Armory and Ntofo Strikes are recorded as no power cost.",
+   "rarity": "Only Neeko's rarity was stated (Epic). The rest are inferred from card frame and slot."
+  },
+  "conflicts": {
+   "Ekko - Boy Who Shattered Time": "The owner's note says the discount is '2 less energy and 1 less power'. The SCAN shows only '{2 energy}'. The scan is used here; confirm which is right."
+  },
+  "new_keywords": [
+   "[Deploy]",
+   "[Show Off]",
+   "[Disarm]"
+  ],
+  "reconstructed": {
+   "Bomb": "Not a scanned card. Its stats and text are reconstructed from Ziggs's reminder text, which states its whole rules box. Collector number and domain are invented."
+  },
+  "resolved": {
+   "[Deploy] scope": "CONFIRMED 2026-09-26 by the project owner and by the rules: ANY battlefield. 806.3's control clause is written for Units; 149.2 allows gear elsewhere 'unless an effect specifies otherwise'."
+  }
+ },
+ "cards": [
+  {
+   "id": "rad-preview-141",
+   "name": "Ziggs - Hexplosives Expert",
+   "riftbound_id": "rad-141-167",
+   "set_id": "RAD",
+   "collector_number": 141,
+   "type": "Legend",
+   "supertype": "Champion",
+   "rarity": "Rare",
+   "domains": [
+    "Fury",
+    "Mind"
+   ],
+   "energy": null,
+   "power": null,
+   "might": null,
+   "tags": [
+    "Ziggs"
+   ],
+   "text": "{1 energy}, Exhaust: Play a Bomb gear token to a battlefield. (It has [Deploy]. When it dies, deal 2 to an enemy there and kill your other Bombs there.)",
+   "flavour": null,
+   "image_url": "",
+   "printings": [
+    "rad-141-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Legend"
+   ]
+  },
+  {
+   "id": "rad-preview-142",
+   "name": "Hexplosive Minefield",
+   "riftbound_id": "rad-142-167",
+   "set_id": "RAD",
+   "collector_number": 142,
+   "type": "Spell",
+   "supertype": "Signature",
+   "rarity": "Rare",
+   "domains": [
+    "Fury"
+   ],
+   "energy": 2,
+   "power": 1,
+   "might": null,
+   "tags": [
+    "Ziggs"
+   ],
+   "text": "[Action] (Play on your turn or in showdowns.)Kill any number of friendly Bomb tokens. At end of turn, play that many Bomb tokens to a single battlefield.",
+   "flavour": "\"Fire in the hole!\" -Ziggs",
+   "image_url": "",
+   "printings": [
+    "rad-142-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Spell"
+   ]
+  },
+  {
+   "id": "rad-preview-073",
+   "name": "Pillaged Armory",
+   "riftbound_id": "rad-073-167",
+   "set_id": "RAD",
+   "collector_number": 73,
+   "type": "Gear",
+   "supertype": null,
+   "rarity": "Common",
+   "domains": [
+    "Body"
+   ],
+   "energy": 1,
+   "power": null,
+   "might": null,
+   "tags": [],
+   "text": "[Deploy] (Play this only to a battlefield. When an opponent holds here, kill this.)When you play this or when you conquer here, [Buff] a friendly unit. (Give it a +1 Might buff if it doesn't have one.)",
+   "flavour": "Stolen weapons hit different.",
+   "image_url": "",
+   "printings": [
+    "rad-073-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Gear"
+   ]
+  },
+  {
+   "id": "rad-preview-082",
+   "name": "Primordial Roar",
+   "riftbound_id": "rad-082-167",
+   "set_id": "RAD",
+   "collector_number": 82,
+   "type": "Spell",
+   "supertype": null,
+   "rarity": "Uncommon",
+   "domains": [
+    "Body"
+   ],
+   "energy": 4,
+   "power": 2,
+   "might": null,
+   "tags": [],
+   "text": "[Show Off] a unit. (As you play this, you may reveal a unit from your hand or pick a friendly unit.)If you showed off a unit, deal damage equal to that unit's Might to a unit.",
+   "flavour": "A taste of what's to come.",
+   "image_url": "",
+   "printings": [
+    "rad-082-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Spell"
+   ]
+  },
+  {
+   "id": "rad-preview-090",
+   "name": "Evelynn, Consuming",
+   "riftbound_id": "rad-090-167",
+   "set_id": "RAD",
+   "collector_number": 90,
+   "type": "Unit",
+   "supertype": "Champion",
+   "rarity": "Epic",
+   "domains": [
+    "Chaos"
+   ],
+   "energy": 5,
+   "power": 1,
+   "might": 5,
+   "tags": [
+    "Evelynn",
+    "Demon"
+   ],
+   "text": "[Ambush] (You may play me as a [Reaction] to a battlefield where you have units.)When you play a card from face down, ready me and give me +1 Might this turn.",
+   "flavour": "\"I was born of a thousand screams. What's one more?\"",
+   "image_url": "",
+   "printings": [
+    "rad-090-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Unit"
+   ]
+  },
+  {
+   "id": "rad-preview-063",
+   "name": "Kai'Sa, Rebel",
+   "riftbound_id": "rad-063-167",
+   "set_id": "RAD",
+   "collector_number": 63,
+   "type": "Unit",
+   "supertype": "Champion",
+   "rarity": "Epic",
+   "domains": [
+    "Mind"
+   ],
+   "energy": 5,
+   "power": 1,
+   "might": 5,
+   "tags": [
+    "Kai'Sa",
+    "The Void"
+   ],
+   "text": "[Disarm] (When I attack, give an enemy unit here -1 Might this turn.)While I'm in a showdown, your spells have [Reaction]. (Play them any time, even before spells and abilities resolve.)",
+   "flavour": "\"It's a good day for a hunt.\"",
+   "image_url": "",
+   "printings": [
+    "rad-063-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Unit"
+   ]
+  },
+  {
+   "id": "rad-preview-145",
+   "name": "Orianna - Lady of Clockwork",
+   "riftbound_id": "rad-145-167",
+   "set_id": "RAD",
+   "collector_number": 145,
+   "type": "Legend",
+   "supertype": "Champion",
+   "rarity": "Rare",
+   "domains": [
+    "Calm",
+    "Mind"
+   ],
+   "energy": null,
+   "power": null,
+   "might": null,
+   "tags": [
+    "Orianna"
+   ],
+   "text": "At the start of your Main Phase, you may pay {1 energy} to choose a friendly gear. It becomes a unit gear with Might equal to its Energy cost until you choose another gear with me.",
+   "flavour": null,
+   "image_url": "",
+   "printings": [
+    "rad-145-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Legend"
+   ]
+  },
+  {
+   "id": "rad-preview-139",
+   "name": "Ekko - Boy Who Shattered Time",
+   "riftbound_id": "rad-139-167",
+   "set_id": "RAD",
+   "collector_number": 139,
+   "type": "Legend",
+   "supertype": "Champion",
+   "rarity": "Rare",
+   "domains": [
+    "Fury",
+    "Mind"
+   ],
+   "energy": null,
+   "power": null,
+   "might": null,
+   "tags": [
+    "Ekko"
+   ],
+   "text": "[Empower] - {1 energy}, Exhaust (Use only if not Empowered.)Disempower me, Exhaust: Reduce the cost of the next unit you play this turn by {2 energy} and give it \"Kill me at end of turn.\"",
+   "flavour": null,
+   "image_url": "",
+   "printings": [
+    "rad-139-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Legend"
+   ]
+  },
+  {
+   "id": "rad-preview-167",
+   "name": "Neeko, Blending In",
+   "riftbound_id": "rad-167-167",
+   "set_id": "RAD",
+   "collector_number": 167,
+   "type": "Unit",
+   "supertype": "Champion",
+   "rarity": "Epic",
+   "domains": [
+    "Colorless"
+   ],
+   "energy": 6,
+   "power": 1,
+   "might": 4,
+   "tags": [
+    "Neeko",
+    "Ixtal"
+   ],
+   "text": "(Neutral cards can go in decks of any Domain.)If Neeko is in your deck, choose 3 different legends in addition to your starting legend. (Different means none match names.)When you play me, choose one of those Legends and add it to your Legend Zone while I'm on the board.",
+   "flavour": null,
+   "image_url": "",
+   "printings": [
+    "rad-167-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Unit"
+   ]
+  },
+  {
+   "id": "rad-preview-172",
+   "name": "K'Sante - Pride of Nazumah",
+   "riftbound_id": "rad-172-167",
+   "set_id": "RAD",
+   "collector_number": 172,
+   "type": "Legend",
+   "supertype": "Champion",
+   "rarity": "Rare",
+   "domains": [
+    "Calm",
+    "Body"
+   ],
+   "energy": null,
+   "power": null,
+   "might": null,
+   "tags": [
+    "K'Sante"
+   ],
+   "text": "{1 energy}, Exhaust: Give a friendly unit \"I have [Assault] equal to my [Shield]\" this turn.",
+   "flavour": null,
+   "image_url": "",
+   "printings": [
+    "rad-172-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Legend"
+   ]
+  },
+  {
+   "id": "rad-preview-146",
+   "name": "Ntofo Strikes",
+   "riftbound_id": "rad-146-167",
+   "set_id": "RAD",
+   "collector_number": 146,
+   "type": "Spell",
+   "supertype": "Signature",
+   "rarity": "Rare",
+   "domains": [
+    "Calm",
+    "Body"
+   ],
+   "energy": 2,
+   "power": null,
+   "might": null,
+   "tags": [
+    "K'Sante"
+   ],
+   "text": "[Action] (Play on your turn or in showdowns.)Give a friendly unit [Shield 2] this turn. Then deal damage equal to that unit's Shield to an enemy unit.",
+   "flavour": null,
+   "image_url": "",
+   "printings": [
+    "rad-146-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Spell"
+   ]
+  },
+  {
+   "id": "rad-preview-151",
+   "name": "Seraphine - Starry-Eyed Songstress",
+   "riftbound_id": "rad-151-167",
+   "set_id": "RAD",
+   "collector_number": 151,
+   "type": "Legend",
+   "supertype": "Champion",
+   "rarity": "Rare",
+   "domains": [
+    "Mind",
+    "Order"
+   ],
+   "energy": null,
+   "power": null,
+   "might": null,
+   "tags": [
+    "Seraphine"
+   ],
+   "text": "When you play a spell, you may pay an additional cost: exhaust me and three friendly units. If you do, that spell costs {2 energy} less.",
+   "flavour": null,
+   "image_url": "",
+   "printings": [
+    "rad-151-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Legend"
+   ]
+  },
+  {
+   "id": "rad-preview-138",
+   "name": "Seraphine, Not Alone",
+   "riftbound_id": "rad-138-167",
+   "set_id": "RAD",
+   "collector_number": 138,
+   "type": "Unit",
+   "supertype": "Champion",
+   "rarity": "Epic",
+   "domains": [
+    "Order"
+   ],
+   "energy": 5,
+   "power": null,
+   "might": 1,
+   "tags": [
+    "Seraphine"
+   ],
+   "text": "When you play me or when I become exhausted, play a 1 Might Recruit unit token to your base.I have +1 Might for each other exhausted unit you control.",
+   "flavour": null,
+   "image_url": "",
+   "printings": [
+    "rad-138-167"
+   ],
+   "aliases": [],
+   "types": [
+    "Unit"
+   ]
+  },
+  {
+   "id": "rad-preview-t01",
+   "name": "Bomb",
+   "riftbound_id": "rad-t01",
+   "set_id": "RAD",
+   "collector_number": 1,
+   "type": "Gear",
+   "supertype": "Token",
+   "rarity": "Common",
+   "domains": [
+    "Colorless"
+   ],
+   "energy": null,
+   "power": null,
+   "might": null,
+   "tags": [],
+   "text": "[Deploy] (Play this only to a battlefield. When an opponent holds here, kill this.)When I die, deal 2 to an enemy here and kill your other Bombs here.",
+   "flavour": null,
+   "image_url": "",
+   "printings": [
+    "rad-t01"
+   ],
+   "aliases": [],
+   "types": [
+    "Gear"
+   ]
+  }
+ ]
+}

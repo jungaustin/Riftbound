@@ -1,0 +1,41 @@
+# Singapore Regional Qualifier -- #343 Haru
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Vi - Piltover Enforcer
+Champion: Vi - Peacekeeper
+Main Deck:
+1x Ashe - Focused
+2x B.F. Sword
+1x Brynhir Thundersong
+3x Carrion Dredger
+2x Deathgrip
+2x Fiora - Victorious
+3x Hextech Gauntlets
+2x Hidden Blade
+2x Honest Broker
+2x Jhin - Murderous Artist
+3x Kai'Sa, Survivor
+3x Kennen, Keeper of Balance
+1x Long Sword
+1x Pyke - Dockside Butcher
+1x Rengar - Pouncing
+2x Rengar - Unseen
+2x Seal of Rage
+1x Shen - Kinkou
+2x Tactical Retreat
+3x Unsung Hero
+Battlefields:
+1x Amateur Recital
+1x Sunken Temple
+1x Vilemaw's Lair
+Runes:
+6x Fury Rune
+6x Order Rune
+Sideboard:
+1x Ashe - Focused
+1x Brittle Steel
+1x Brynhir Thundersong
+2x Decree of Unity
+2x Falling Star
+2x Salvage
+1x Vengeance

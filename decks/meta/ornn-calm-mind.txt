@@ -1,0 +1,38 @@
+# Ornn Calm/Mind (user-supplied 2026-08-31, source not recorded)
+# Supplied as a flat list with set codes and no section headers; split by card
+# type from the table. Ornn - Blacksmith is the Champion, which leaves exactly
+# 39 in the main deck and 12 runes.
+Legend: Ornn - Fire Below the Mountain
+Champion: Ornn - Blacksmith
+Main Deck:
+2x Charm
+3x Patched Porobot
+1x Helm of Suppression
+3x Sprite Fountain
+3x Scuttle Crab
+1x Cloth Armor
+2x Aspiring Engineer
+3x Sterak's Gage
+1x Guardian Angel
+3x Poro Snax
+3x Brutalizer
+3x Clockwork Keeper
+3x Pit Crew
+1x Lecturing Yordle
+3x Seal of Focus
+1x Mask of Foresight
+3x Defy
+Battlefields:
+1x Veiled Temple
+1x Seat of Power
+1x Ornn's Forge
+Runes:
+8x Calm Rune
+4x Mind Rune
+Sideboard:
+2x Decree of Insight
+2x Decree of Focus
+2x Pickpocket
+1x Disarming Rake
+1x Not So Fast
+1x Guardian Angel

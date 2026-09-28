@@ -77,6 +77,13 @@ class Card:
     text: str
     timing: str
     tags: tuple[str, ...] = ()
+    # 178.1 -- the FULL printed type line. `type` is only the first word of it,
+    # and Patched Porobot ("Unit Gear") is both types for every rule that asks.
+    types: tuple[str, ...] = ()
+
+    @property
+    def all_types(self) -> tuple[str, ...]:
+        return self.types or (self.type,)
 
     @property
     def is_unit(self) -> bool:
@@ -123,14 +130,28 @@ def _to_card(raw: dict) -> Card:
         text=normalize_text(text),
         timing=_timing_of(text),
         tags=tuple(raw.get("tags") or ()),
+        types=tuple(raw.get("types") or ()),
     )
 
 
 @lru_cache(maxsize=1)
 def card_index() -> dict[str, Card]:
+    """Every card by loose name.
+
+    **Gated on `riftbound.upcoming` like the other two corpus readers.** This
+    one is easy to miss: `find()` below is what `rl/decks.py` resolves every
+    decklist name through, so leaving it ungated would let a list naming an
+    unreleased card resolve cleanly and only fail later, in `pool_table`, as a
+    missing row. The errata overlay is deliberately NOT applied here -- this
+    index predates it and `rl/engine/cardtable` stopped using it for exactly
+    that reason -- so this adds the upcoming cards and nothing else.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from riftbound import upcoming
     data = json.loads((ROOT / "data" / "cards.json").read_text())
     index: dict[str, Card] = {}
-    for raw in data["cards"]:
+    for raw in [*data["cards"], *upcoming.extra_cards()]:
         index.setdefault(loose_key(raw["name"]), _to_card(raw))
     return index
 

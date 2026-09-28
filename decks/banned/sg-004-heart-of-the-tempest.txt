@@ -1,0 +1,40 @@
+# Singapore Regional Qualifier -- #4 EDG Rico1997
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Yordle, Kennen - Heart of the Tempest
+Champion: Kennen, Storm of Shuriken
+Main Deck:
+2x Carrion Dredger
+1x Deathgrip
+1x Edge of Night
+2x Forge of the Future
+2x Gust
+2x Last Rites
+3x Lightning Rush
+3x Nocturne - Horrifying
+1x Rebuke
+3x Rhasa the Sunderer
+3x Ride The Wind
+1x Salvage
+3x Seal of Discord
+3x Shadow Order Disciple
+3x Stacked Deck
+2x Switcheroo
+1x Tideturner
+3x Traveling Merchant
+Battlefields:
+1x Minefield
+1x Veiled Temple
+1x Zaun Warrens
+Runes:
+9x Chaos Rune
+3x Order Rune
+Sideboard:
+2x Abandon
+1x Deathgrip
+2x Decree of Unity
+1x Forge of the Future
+1x Ravenbloom Prefect
+1x Salvage
+2x Vi - Peacekeeper

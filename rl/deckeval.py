@@ -67,9 +67,10 @@ def opening_value(net, enc, table, cfg, a: DeckLoad, b: DeckLoad,
     vals = []
     for i in range(n):
         for swap in (0, 1):
-            decks, runes, bfs = matchup(b, a) if swap else matchup(a, b)
+            decks, runes, bfs, legs, champs = (matchup(b, a) if swap
+                                              else matchup(a, b))
             env = RiftboundEnv(table, cfg, encoder=enc)
-            obs = env.reset(10_000 + i, decks, runes, bfs)
+            obs = env.reset(10_000 + i, decks, runes, bfs, legs, champs)
             if obs is None:
                 continue
             t = to_torch(batch([obs]), "cpu")
@@ -88,9 +89,10 @@ def head_to_head(net, enc, table, cfg, a: DeckLoad, b: DeckLoad,
     wins = games = 0
     for i in range(n):
         for swap in (0, 1):
-            decks, runes, bfs = matchup(b, a) if swap else matchup(a, b)
+            decks, runes, bfs, legs, champs = (matchup(b, a) if swap
+                                              else matchup(a, b))
             env = RiftboundEnv(table, cfg, encoder=enc)
-            obs = env.reset(20_000 + i, decks, runes, bfs)
+            obs = env.reset(20_000 + i, decks, runes, bfs, legs, champs)
             while obs is not None:
                 obs = env.step(net_choice(net, obs, "cpu", deterministic,
                                           gen)).obs
@@ -112,6 +114,7 @@ def evaluate(net, enc, table, cfg, a: DeckLoad, b: DeckLoad, n: int) -> dict:
     h = head_to_head(net, enc, table, cfg, a, b, n)
     return {"a": a.name, "b": b.name,
             "coverage_a": a.coverage, "coverage_b": b.coverage,
+            "bf_a": a.bf_coverage, "bf_b": b.bf_coverage,
             "swapped_a": _swapped(a), "swapped_b": _swapped(b),
             "v0": opening_value(net, enc, table, cfg, a, b),
             **h}
@@ -129,10 +132,18 @@ def _fmt(r: dict) -> str:
     warn = "  <-- SHAPE CHANGED" if max(r["swapped_a"], r["swapped_b"]) > 0.25 \
         else ("  <-- proxy" if min(r["coverage_a"], r["coverage_b"]) < 0.5
               else "")
+    # `bf` is reported next to `cov` because a deck can read 100% covered while
+    # all three of its battlefields do nothing -- and two decks differing only
+    # in battlefields are then INDISTINGUISHABLE here, which is a property of
+    # the engine rather than of the decks. Printing it stops the win rate being
+    # quoted as if it settled a battlefield choice.
+    if max(r["bf_a"], r["bf_b"]) < 1.0 and not warn:
+        warn = "  <-- battlefields inert"
     return (f"  {r['a']:<34} vs {r['b']:<30} "
             f"{r['winrate']:>6.1%} +/-{r['ci95']:.1%}  "
             f"V(s0) {r['v0']:+.3f}   "
             f"cov {r['coverage_a']:.0%}/{r['coverage_b']:.0%} "
+            f"bf {r['bf_a']:.0%}/{r['bf_b']:.0%} "
             f"swap {r['swapped_a']:.0%}/{r['swapped_b']:.0%}{warn}")
 
 

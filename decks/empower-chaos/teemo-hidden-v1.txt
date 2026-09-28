@@ -1,0 +1,32 @@
+Legend:
+1 Teemo - Swift Scout
+
+Champion:
+1 Teemo - Strategist
+
+MainDeck:
+3 Gust
+2 Retreat
+2 Teemo - Scout
+2 Teemo - Strategist
+2 Blastcone Fae
+2 Bone Skewer
+2 Pack of Wonders
+3 Guerilla Warfare
+3 Temporal Breach
+3 Apprentice Mage
+3 Tornado Warrior
+3 Wind and Ghosts
+3 Ember Monk
+2 Tail-Cloaked Matriarch
+2 Consult the Past
+2 Kharox
+
+Battlefields:
+1 Risen Altar
+1 Seat of Power
+1 Minefield
+
+Rune Pool:
+8 Mind Rune
+4 Chaos Rune

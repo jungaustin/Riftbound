@@ -1,0 +1,38 @@
+# Singapore Regional Qualifier -- #383 CBL DAGS
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Ambessa - Matriarch of War
+Champion: Ambessa, The Wolf
+Main Deck:
+1x Forge of the Future
+2x Guttural Roar
+2x Hidden Blade
+3x Irresistible Faefolk
+3x Kayle, Justified
+3x Kennen, Keeper of Balance
+3x Legion Marauder
+2x Nidalee - Cat Form
+1x Onslaught
+2x Pit Rookie
+1x Public Execution
+3x Punch First
+3x Rampage
+1x Repulse
+2x Sabotage
+3x Solari Sunhawk
+2x Tactical Retreat
+2x Vi - Peacekeeper
+Battlefields:
+1x Forbidding Waste
+1x Risen Altar
+1x Sunken Temple
+Runes:
+7x Body Rune
+5x Order Rune
+Sideboard:
+2x Decree of Strength
+2x Decree of Unity
+1x Forge of the Future
+1x Public Execution
+2x Ruin Runner
+2x Salvage

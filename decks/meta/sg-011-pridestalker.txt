@@ -1,0 +1,39 @@
+# Singapore Regional Qualifier -- #11 DSG Prismaticism
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Rengar - Pridestalker
+Champion: Rengar, Trophy Hunter
+Main Deck:
+1x Darius - Trifarian
+1x Ferrous Forerunner
+2x First Mate
+3x Grim Apothecary
+3x Inferna
+3x Irresistible Faefolk
+3x Kai'Sa, Survivor
+3x Kinkou Initiate
+2x Nidalee - Cat Form
+3x Noxus Hopeful
+1x Pakaa Cub
+3x Pit Rookie
+3x Punch First
+1x Pyke - Dockside Butcher
+2x Rampage
+2x Sabotage
+3x Thrill of the Hunt
+Battlefields:
+1x Emperor's Dais
+1x Seat of Power
+1x Star Spring
+Runes:
+8x Body Rune
+4x Fury Rune
+Sideboard:
+1x Brittle Steel
+1x Brynhir Thundersong
+2x Decree of Strength
+2x Ferrous Forerunner
+1x Noxian Demolitionist
+1x Pyke - Dockside Butcher
+1x Rampage
+1x Sabotage

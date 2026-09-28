@@ -1,0 +1,41 @@
+# Singapore Regional Qualifier -- #69 Lalasong
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Lillia - Bashful Bloom
+Champion: Lillia - Fae Fawn
+Main Deck:
+1x Akali, Silent
+1x Back Off
+2x Brutalizer
+1x Charm
+3x Defy
+1x Disarming Rake
+3x Discipline
+3x En Garde
+1x Heart of Dark Ice
+3x Lonely Poro
+3x Mask of Foresight
+3x Ravenbloom Student
+3x Smoke and Mirrors
+1x Smoke Screen
+3x Sprite Burst
+3x Sprite Fountain
+2x Stupefy
+1x Thousand-Tailed Watcher
+1x Unchecked Power
+Battlefields:
+1x Black Flame Altar
+1x Dusk Rose Lab
+1x Seat of Power
+Runes:
+7x Calm Rune
+5x Mind Rune
+Sideboard:
+1x Akali, Silent
+1x Charm
+1x Decree of Focus
+2x Decree of Insight
+2x Disarming Rake
+1x Lilting Lullaby
+1x Twilight Shroud
+1x Unchecked Power

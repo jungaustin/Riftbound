@@ -1,5 +1,5 @@
 {
- "fetched_at": "2026-07-31T19:51:42Z",
+ "fetched_at": "2026-09-10T09:21:23Z",
  "source": "https://api.riftcodex.com",
  "raw_entry_count": 1451,
  "sets": [
@@ -16,13 +16,22 @@
    "published_on": "2025-10-31T00:00:00"
   },
   {
-   "id": "69bc5bf6e195be3e561d1eb1",
-   "name": "Origins",
-   "set_id": "OGN",
-   "card_count": 352,
-   "tcgplayer_id": "24344",
-   "cardmarket_id": "6286",
-   "published_on": "2025-10-31T00:00:00"
+   "id": "69bc5bf6e195be3e561d1eaf",
+   "name": "Spiritforged",
+   "set_id": "SFD",
+   "card_count": 288,
+   "tcgplayer_id": "24519",
+   "cardmarket_id": "6399",
+   "published_on": "2026-02-13T00:00:00"
+  },
+  {
+   "id": "69bc5bf6e195be3e561d1eae",
+   "name": "Unleashed",
+   "set_id": "UNL",
+   "card_count": 280,
+   "tcgplayer_id": "24560",
+   "cardmarket_id": null,
+   "published_on": "2026-05-08T00:00:00"
   },
   {
    "id": "69bc5bf6e195be3e561d1eb2",
@@ -43,24 +52,12 @@
    "published_on": "2026-07-31T00:00:00"
   },
   {
-   "id": "69bc5bf6e195be3e561d1eae",
-   "name": "Unleashed",
-   "set_id": "UNL",
-   "card_count": 280,
-   "tcgplayer_id": "24560",
-   "cardmarket_id": null,
-   "published_on": "2026-05-08T00:00:00"
-  },
-  {
-   "id": "69bc5bf6e195be3e561d1eb3",
-   "name": "Riftbound Organized Play Promotional Cards",
-   "set_id": "OPP",
-   "card_count": 133,
-   "tcgplayer_id": "24343",
-   "cardmarket_id": [
-    "6322",
-    "6483"
-   ],
+   "id": "69bc5bf6e195be3e561d1eb1",
+   "name": "Origins",
+   "set_id": "OGN",
+   "card_count": 352,
+   "tcgplayer_id": "24344",
+   "cardmarket_id": "6286",
    "published_on": "2025-10-31T00:00:00"
   },
   {
@@ -76,13 +73,16 @@
    "published_on": "2025-12-01T00:00:00"
   },
   {
-   "id": "69bc5bf6e195be3e561d1eaf",
-   "name": "Spiritforged",
-   "set_id": "SFD",
-   "card_count": 288,
-   "tcgplayer_id": "24519",
-   "cardmarket_id": "6399",
-   "published_on": "2026-02-13T00:00:00"
+   "id": "69bc5bf6e195be3e561d1eb3",
+   "name": "Riftbound Organized Play Promotional Cards",
+   "set_id": "OPP",
+   "card_count": 133,
+   "tcgplayer_id": "24343",
+   "cardmarket_id": [
+    "6322",
+    "6483"
+   ],
+   "published_on": "2025-10-31T00:00:00"
   }
  ],
  "indexes": {

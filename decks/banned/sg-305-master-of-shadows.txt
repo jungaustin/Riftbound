@@ -1,0 +1,42 @@
+# Singapore Regional Qualifier -- #305 ACAD Frodan
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Zed - Master of Shadows
+Champion: Zed, Without a Sound
+Main Deck:
+2x Baron Nashor
+1x Blood Rush
+2x Cleave
+1x Death Mark
+2x Ferrous Forerunner
+1x Flash
+2x Gust Monk
+3x Kai'Sa, Survivor
+3x Noxus Hopeful
+2x Perfect Execution
+3x Ride The Wind
+2x Shadow Order Disciple
+3x Stacked Deck
+2x Switcheroo
+2x The Harrowing
+2x Tideturner
+3x Traveling Merchant
+2x Up from the Deep
+1x Vi, Destructive
+Battlefields:
+1x Forbidding Waste
+1x Minefield
+1x Zaun Warrens
+Runes:
+8x Chaos Rune
+4x Fury Rune
+Sideboard:
+1x Brittle Steel
+1x Falling Star
+1x Ferrous Forerunner
+2x Pyke - Returned
+2x Ravenbloom Prefect
+1x Rebuke
+1x Star-Crossed
+1x Up from the Deep

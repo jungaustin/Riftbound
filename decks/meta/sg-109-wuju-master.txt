@@ -1,0 +1,36 @@
+# Singapore Regional Qualifier -- #109 Psyc0w
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Master Yi - Wuju Master
+Champion: Master Yi - Tempered
+Main Deck:
+2x Alpha Strike
+1x Arachnoid Horror
+3x Back Off
+2x Concentrate
+3x Defy
+3x Discipline
+1x Emperor's Divide
+3x Gemhand Hunter
+2x Grim Resolve
+2x Herald of Spring
+2x Master Yi - Tempered
+3x Master Yi - Unstoppable
+1x Poppy - Paragon
+3x Punch First
+2x Scuttle Crab
+3x Wuju Apprentice
+3x Zhonya's Hourglass
+Battlefields:
+1x Gardens of Becoming
+1x Reckoner's Arena
+1x Targon's Peak
+Runes:
+7x Body Rune
+5x Calm Rune
+Sideboard:
+2x Decree of Focus
+2x Decree of Strength
+2x Disarming Rake
+2x Not So Fast
+2x Rampage

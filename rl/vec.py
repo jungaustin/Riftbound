@@ -67,7 +67,8 @@ def batch(obs: list[Obs]) -> BatchObs:
 class VecRiftbound:
     """`n_envs` games advanced in lockstep, with auto-reset.
 
-    `deal_fn(seed) -> (decks, rune_decks, battlefields)` is called once per
+    `deal_fn(seed) -> (decks, rune_decks, battlefields[, legends[, champions]])`
+    is called once per
     episode. Making it a callable rather than fixed decklists is what lets the
     deck-evaluator work (§1.1) reuse this loop unchanged: sample a matchup per
     episode and the same machinery trains a policy that generalizes across

@@ -12,4 +12,23 @@ venv/
 
 # macOS
 .DS_Store
+
+# Tooling caches
+.pytest_cache/
+.benchmarks/
+.ruff_cache/
+
+# Training artifacts -- checkpoints are megabytes and runs are reproducible from
+# their PROVENANCE.txt + the engine commit recorded in each checkpoint.
 rl/runs/
+
+# Third-party material -- kept locally, never published. Removed from history
+# with git filter-repo on 2026-09-28; do not re-add.
+reference/*.pdf
+reference/Deck building youtube video.txt
+data/staples/html/
+rl/tests/judge/riftjudge_scenarios.json
+rl/tests/judge/riftjudge_scenarios.md
+
+# Scratch
+Unorganized/

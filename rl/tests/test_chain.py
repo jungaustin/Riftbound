@@ -27,8 +27,8 @@ from rl.engine.state import (C_CARD, C_UID, F_STUNNED, P_FLAGS,
                              GameState, bf_loc)
 
 T = full_table()
-CFG = Config()
-CFG_V1 = replace(Config(), units_only=False)
+CFG = Config().with_solved_damage()
+CFG_V1 = replace(Config().with_solved_damage(), units_only=False)
 
 BACK_OFF = T.id_of("Back Off")
 
@@ -214,6 +214,25 @@ if uid_a not in opts:
     die("counter", f"an older finalized item should be counterable: {opts}")
 ok("a counterspell may target older chain items but never itself")
 
+# **The OFFER, with the counter not yet on the Chain.** Every check above
+# queries targets with the counter already pushed, which is why this went
+# unnoticed: `_spell_targets` also skipped the newest item, and at offer time
+# the newest item is the spell being answered. Against a single spell -- the
+# ordinary case -- no counterspell in the pool was ever offered.
+s_offer = fresh()
+v_offer = s_offer.add_permanent(U2, 1, bf_loc(0))
+lone = chain.push(s_offer, BACK_OFF, 1)
+chain.set_target(s_offer, lone, 0, v_offer)
+chain.finalize(s_offer, lone)
+s_offer.active, s_offer.priority = 1, 0
+s_offer.hand[0, 0] = BIG
+s_offer.n_hand[0] = 1
+s_offer.runes_ready[0, :] = 4
+if not chain.playable_hand_indices(s_offer, T, CFG_V1, 0):
+    die("counter", "a counterspell must be offered against a LONE spell on the "
+                   "Chain -- the newest item is the spell being answered")
+ok("...and it is offered against a lone spell, before it is itself pushed")
+
 # Uids survive other items resolving -- the whole reason they exist.
 chain.set_target(s, c, 0, uid_a)
 chain.finalize(s, c)
@@ -334,6 +353,67 @@ if rsv.legal_targets(s, T, enemy_only, 0, 0, [], -1):
 if not rsv.legal_targets(s, T, SPECS["Wind Wall"], 0, 0, [], -1):
     die("counter", "a plain 'a spell' slot may answer your own spell")
 ok("who narrows a chain slot: 'an enemy spell' vs the unqualified 'a spell'")
+
+
+# ---------------------------------------------------------------------------
+# [6] A required target that disappears AFTER the trigger was placed.
+#
+# 355.8 is enforced at placement -- `chain.fire` will not push an ability with
+# no legal target -- and that used to be the only check, so an ability whose
+# target was legal when it triggered and gone by the time it resolved left its
+# controller with an empty action list. `acting_seat` still named them, so the
+# game stopped dead rather than fizzling.
+#
+# Found by the v1 fuzz on seed 565: Yuumi ("when I attack or defend, give one
+# of your OTHER units HERE +3 Might") triggered on defence beside Overzealous
+# Fan, which then paid its own optional cost by killing itself. Placed last,
+# Yuumi resolved first (383.3.d) -- alone at her battlefield, with a required
+# slot and nothing legal to put in it.
+from rl.engine import actions as _A
+from rl.engine import combat as _combat
+from rl.engine.effects import TR_ATTACK_OR_DEFEND
+
+_yuumi = T.id_of("Yuumi - Magical Cat")
+
+
+def _defending(*rows):
+    """A Combat at battlefield 0 with seat 0 defending, holding `rows`."""
+    st = fresh()
+    st.showdown_bf = 0
+    st.attacker = 1
+    out = [st.add_permanent(c, 0, bf_loc(0)) for c in rows]
+    return st, out
+
+
+# Fired with a legal target present, so 355.8 lets it onto the Chain...
+_s, (_yr, _mate) = _defending(_yuumi, T.id_of("First Mate"))
+if not chain.fire(_s, T, CFG_V1, TR_ATTACK_OR_DEFEND, _yr):
+    die("fizzle", "Yuumi's trigger did not fire beside a legal target, so "
+                  "this tests nothing")
+# A trigger reaches the Chain without anyone acting, so something has to
+# finalize it -- that is what opens the target slot (359.3.b).
+_A._advance_pending(_s, T, CFG_V1)
+if int(_s.pend_slot) < 0:
+    die("fizzle", "no target slot opened; the fixture is wrong")
+_args = {a.arg for a in _A.legal_actions(_s, T, CFG_V1, 0)
+         if a.kind == _A.A_TARGET}
+if _mate not in _args:
+    die("fizzle", "the legal target at the same battlefield was not offered")
+if -1 in _args:
+    die("fizzle", "the skip was offered alongside a legal target, so a "
+                  "required slot could be declined")
+ok("a required slot offers its legal targets and no skip")
+
+# ...and then the target leaves, exactly as Overzealous Fan did by killing
+# itself to pay its own cost, while the ability is still waiting to resolve.
+_combat.destroy(_s, T, _mate)
+_legal = _A.legal_actions(_s, T, CFG_V1, 0)
+if not _legal:
+    die("fizzle", "a required slot whose only target died left the controller "
+                  "with no action at all -- the game deadlocks here")
+if [a for a in _legal if a.kind == _A.A_TARGET and a.arg != -1]:
+    die("fizzle", "a dead permanent was still offered as a target")
+ok("...and once it dies the slot fizzles instead of deadlocking")
 
 
 print("\n\033[32mall chain tests passed\033[0m")

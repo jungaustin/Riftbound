@@ -191,3 +191,23 @@ def render_pool(cards: list[Card], header: str = "") -> str:
         lines.insert(0, header)
     lines += [c.compact() for c in cards]
     return "\n".join(lines)
+
+
+# 133.8.b: "Tags used to link Legends, Champion Units, and Signature cards are
+# known as Champion Tags." A species or faction tag is NOT a Champion Tag even
+# when a Legend prints it, so it can never satisfy 103.2.a.2 (Chosen Champion)
+# or 103.2.d.2 (Signature cards).
+#
+# Derived from the card pool rather than guessed: a genuine Champion Tag never
+# co-occurs with two or more OTHER legend tags on a champion unit. Exactly one
+# tag fails that test -- Yordle, which sits on 35 cards and co-occurs with
+# Kennen, Poppy, Rumble, Teemo and Vex. Only one Legend of 49 prints it
+# (Yordle, Kennen - Heart of the Tempest), which is why the bug hid for so long.
+#
+# Re-derive after any new set: python3 riftbound/tools/derive_champion_tags.py
+NON_CHAMPION_TAGS = frozenset({"Yordle"})
+
+
+def champion_tags(tags) -> set[str]:
+    """The Champion Tags among `tags` (133.8.b)."""
+    return set(tags or ()) - NON_CHAMPION_TAGS

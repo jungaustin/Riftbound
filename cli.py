@@ -134,6 +134,22 @@ def cmd_sets(args):
               f"{str(s.get('published_on'))[:10]}")
 
 
+def cmd_upcoming(args):
+    """Show the unreleased sets on disk and whether they are currently visible."""
+    from riftbound import upcoming
+    print(upcoming.status())
+    if upcoming.set_files():
+        print(f"\n  set {upcoming.ENV_FLAG}=1 to include them everywhere "
+              f"(deckbuilding, ratings, the RL engine) while scripting:")
+        print(f"    {upcoming.ENV_FLAG}=1 python cli.py pool <legend>")
+        print(f"    {upcoming.ENV_FLAG}=1 python -m rl.tests.test_judge")
+        print("\n  each set becomes visible on its own released_on with no "
+              "flag and no code change.")
+    else:
+        print(f"\n  add one as data/upcoming/<SET_ID>.json -- see "
+              f"riftbound/upcoming.py for the schema.")
+
+
 def cmd_legends(args):
     db = CardDB.load(DATA_DIR)
     rows = db.legends
@@ -275,6 +291,7 @@ def main():
 
     sub.add_parser("sync").set_defaults(func=cmd_sync)
     sub.add_parser("sets").set_defaults(func=cmd_sets)
+    sub.add_parser("upcoming").set_defaults(func=cmd_upcoming)
 
     sp = sub.add_parser("legends")
     sp.add_argument("--search")

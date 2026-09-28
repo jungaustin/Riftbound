@@ -24,6 +24,14 @@ ALL_KEYWORDS = (
     "Ganking", "Add", "Accelerate", "Temporary", "Tank", "Deathknell", "Repeat",
     "Flow", "Assault", "Shield", "Stun", "Ambush", "Weaponmaster", "Legion",
     "Vision", "Mighty", "Buff", "Hunt", "Predict", "Backline", "Unique",
+    # 819 -- appended rather than slotted in alphabetically, because the index
+    # into this tuple IS the `kw_mask` bit and the feature-matrix column.
+    "Quick-Draw",
+    # The RAD set (spoiler season). Appended for the same reason, and note
+    # that appending here WIDENS the card feature matrix, so it invalidates
+    # older checkpoints. "Show Off" is the first two-word keyword; the
+    # bracket parser already allows spaces, so nothing there needed changing.
+    "Deploy", "Show Off", "Disarm",
 )
 
 # The v1 SCOPE TARGET -- keywords v1 intends to reach. This is an aspiration
@@ -53,6 +61,12 @@ ENGINE_KEYWORDS = {
     "Hidden":    "chain.hideable -- may be hidden in the Facedown Zone",
     "Accelerate": "actions.legal_actions -- the A_PLAY_AT_FAST variant, and "
                   "cost.accelerate_cost for the additional cost (805)",
+    "Vision":    "effects._vision_abilities -- 817.1.b is 'When this is "
+                 "played, predict', synthesised from the keyword like [Hunt] "
+                 "rather than transcribed per card (436.1 Predict)",
+    "Repeat":    "actions.legal_actions -- the A_PLAY_REPEAT variant, "
+                 "cardtable.repeat_cost for the additional cost, and "
+                 "chain.resolve_top for the one extra execution (820)",
     "Shield":    "combat.combat_role_bonus -- +X Might while a defender (814)",
     "Buff":      "combat.might -- a Buff counter is +1 Might (702/703)",
     "Flow":      "chain.flow_playable -- play from the trash for the Flow "
@@ -67,7 +81,32 @@ ENGINE_KEYWORDS = {
     "Assault":   "combat.combat_role_bonus -- +X Might while an attacker (807)",
     "Action":    "effects.SPEED_ACTION, via a card's DSL spec",
     "Reaction":  "effects.SPEED_REACTION, via a card's DSL spec",
+    "Equip":     "effects._equip_abilities -- 818.1.c.2 is '[Cost]: Attach "
+                 "this gear to a unit you control', synthesised from the "
+                 "keyword like [Hunt]; cardtable.equip_cost reads the cost",
+    "Quick-Draw": "effects._quick_draw_abilities for 819.1.d's 'when you play "
+                  "this, attach it to a unit you control'; the [Reaction] half "
+                  "(819.1.b) is a speed and is read where speeds are",
+    "Unique":    "a DECK-CONSTRUCTION limit (one copy per deck); nothing about "
+                 "it happens in a game, so there is nothing to execute",
+    "Weaponmaster": "effects._weaponmaster_abilities for 821.1.c's optional "
+                    "play trigger; OP_WEAPONMASTER pays the Equip cost less "
+                    "[A] (only when it has one, 821.1.c.3) and attaches",
+    "Deploy":    "actions.play_destinations for 'play this only to a "
+                 "battlefield' (it REPLACES 149.2's base-only set for gear), "
+                 "and effects._deploy_abilities + phases' Hold step for 'when "
+                 "an opponent holds here, kill this' (TR_ENEMY_HOLDS_HERE)",
+    "Disarm":    "effects._disarm_abilities -- 'When I attack, give an enemy "
+                 "unit here -1 Might this turn', synthesised from the keyword "
+                 "like [Hunt] because the effect is fixed by the keyword "
+                 "rather than written on the card",
 }
+
+# **Reading a keyword is not the same as playing the card as printed.** These
+# two are honest entries above -- the engine really does attach for [Equip] and
+# [Quick-Draw] -- and Equipment is still withheld from the coverage metric,
+# because a card's Might Bonus is a printed field of its own (137.3) that
+# `data/cards.json` does not carry. See `decks.EQUIP_NEEDS_DATA`.
 # Keywords that ARE a triggered ability rather than a passive property --
 # 808.1 makes [Deathknell] short for "When I die, [Effect]", and the effect is
 # the card's own text. There is no separate keyword implementation to check: a
@@ -119,7 +158,16 @@ class Config:
     # victory 8 but only 77.3% at victory 3, because the restriction dominates
     # there rather than gating the finish.
     victory_score: int = 5            # anneal 5 -> 8
-    turn_cap: int = 30                # truncate -> reward 0
+    turn_cap: int = 30
+    # **408.2.b -- how a game that runs out of clock is actually decided.** It
+    # is NOT a draw by default: "a player is declared the winner of the game if
+    # they have a point lead of two or more. If no player has a point lead of
+    # two or more, the game is a draw." Paying a flat 0 on truncation instead
+    # rewarded a LOSING player for stalling, since 0 beats the -1 they were
+    # heading for. Latent at victory 5 (`trunc=0.0%`), and the reason this had
+    # to be fixed before the victory-8 curriculum, which gives a stall far more
+    # room to pay off. `actions.outcome` reads this.
+    truncation_lead_to_win: int = 2
     # **A turn cap cannot catch a loop INSIDE one turn.** A livelocked priority
     # window never advances the turn, so `turn_cap` never fires and the episode
     # runs forever -- which is what dragged a mirror-match run's mean episode
@@ -130,9 +178,42 @@ class Config:
     # 8 stayed under it. 1500 is >4x that ceiling, so a game reaching it is not
     # a long game.
     decision_cap: int = 1500
+    # **Sterile-loop detection.** An exact `state_hash` repeat with the same
+    # seat to move is a position the game has already been in, so nothing in
+    # between made progress -- provable, because the digest covers every slot.
+    # Ending there instead of grinding to `decision_cap` saves ~1100 wasted
+    # decisions AND lets the loss be attributed: a seat that had another legal
+    # action and chose the loop anyway loses it. A seat with exactly one legal
+    # action was forced, so that case falls back to 408.2.b on points -- a
+    # forced loop is not the looper's fault and scoring it as one would teach a
+    # lie.
+    #
+    # Hashing costs 67us, which is ~13% of a decision, so it does not run on
+    # every one. It starts only once an episode is longer than any legal game
+    # measured -- and the number to measure against is **victory 8**, not the
+    # victory-3 curriculum: 1,000 real-deck games at victory 8 ran to a mean of
+    # 235 decisions and a max of 529, against 352 at victory 3. 700 is past that
+    # ceiling, so no healthy game pays for the hash, and it still ends a
+    # livelock 800 decisions before `decision_cap` would.
+    loop_watch_after: int = 700
 
     # --- action space ------------------------------------------------------
     max_actions: int = 64             # assert on overflow, log the distribution
+
+    # How often each seat's registered decklist is KNOWN to its opponent, drawn
+    # independently per seat at reset. This is not a rules value -- it is the
+    # match context the episode is standing in. A Legend is public from setup
+    # (103.1.a, 355.10.a.1) and fixes the Domain Identity (103.1.b.2), so the
+    # archetype is never hidden; what this knob varies is the stronger claim of
+    # the full 40, which is the Bo3 game-2 situation.
+    #
+    # **Randomized rather than fixed on purpose.** Trained always-known, the
+    # policy never learns to read an archetype from how it is being played, and
+    # is helpless in game 1 -- which is most games against a stranger. Trained
+    # always-unknown, the explicit conditioning is dead weight. 0.5 exercises
+    # both paths; the per-seat independence also produces the one-sided case,
+    # where the opponent knows your list and you do not know theirs.
+    deck_known_prob: float = 0.5
     # Ordinary movement is base <-> battlefield ONLY; lateral battlefield-to-
     # battlefield movement requires [Ganking]. Confirmed with the project owner.
     lateral_movement_needs_ganking: bool = True
@@ -142,7 +223,18 @@ class Config:
     # In v1 the engine solves damage assignment instead of exposing it to the
     # policy: the subgame is separable and reduces to an ordered exact-lethal
     # knapsack, so there is nothing to learn. PLAN.md §5.3 gotcha 8.
-    engine_solves_damage_assignment: bool = True
+    # 465.2.c.2 gives the choice of which units combat damage kills to the
+    # player dealing it, and `[Tank]` / `[Backline]` exist to constrain exactly
+    # that choice -- so deciding it in the engine made both keywords
+    # strategically inert and left the policy with no gradient toward
+    # sequencing its attacks: batching was never punished, because the
+    # engine's defender never sniped the unit that mattered.
+    #
+    # False (the default since D1) hands the choice to the player whenever
+    # there IS one -- `combat.assignment_is_a_choice`, i.e. the pool cannot
+    # cover every target. True pins the old behaviour, which the judge cases
+    # and the combat tests rely on to stay deterministic.
+    engine_solves_damage_assignment: bool = False
 
     # --- reward ------------------------------------------------------------
     # Terminal-only, +/-1. gamma=1.0 makes the critic a literal win-probability
@@ -152,6 +244,16 @@ class Config:
 
     def at_victory_score(self, score: int) -> "Config":
         return replace(self, victory_score=score)
+
+    def with_solved_damage(self) -> "Config":
+        """Pin the pre-D1 behaviour: the ENGINE assigns combat damage.
+
+        For scenario tests. They assert which units a given pool kills, and
+        that is only a fixed answer while `solve_kills` owns the choice -- with
+        the player owning it the damage step suspends and waits to be asked,
+        which is the point of D1 but not what those tests are measuring.
+        """
+        return replace(self, engine_solves_damage_assignment=True)
 
 
 DEFAULT = Config()

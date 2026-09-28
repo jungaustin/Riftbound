@@ -1,0 +1,38 @@
+# Singapore Regional Qualifier -- #6 JIN
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Yordle, Kennen - Heart of the Tempest
+Champion: Kennen, Storm of Shuriken
+Main Deck:
+1x Abandon
+2x Fizz - Trickster
+2x Gust
+2x Last Rites
+3x Lightning Rush
+3x Nocturne - Horrifying
+2x Rebuke
+3x Rhasa the Sunderer
+3x Ride The Wind
+3x Seal of Discord
+3x Shadow Order Disciple
+3x Stacked Deck
+2x Star-Crossed
+1x Switcheroo
+3x Traveling Merchant
+3x Up from the Deep
+Battlefields:
+1x Forbidding Waste
+1x Minefield
+1x Zaun Warrens
+Runes:
+9x Chaos Rune
+3x Order Rune
+Sideboard:
+1x Abandon
+2x Decree of Unity
+1x Imperial Decree
+2x Ravenbloom Prefect
+2x Salvage
+1x Shadows of the Past
+1x Switcheroo

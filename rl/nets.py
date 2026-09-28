@@ -85,9 +85,13 @@ def masked_pool(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
 class RiftboundNet(nn.Module):
     def __init__(self, shapes: dict, hidden: int = 256, card_hidden: int = 128,
-                 head_hidden: int = 128) -> None:
+                 head_hidden: int = 128,
+                 privileged_critic: bool = False) -> None:
         super().__init__()
-        self.zone_names = ("hand", "board", "battlefields", "facedown")
+        self.privileged_critic = bool(privileged_critic)
+        # From the encoder, never a copy -- see `obs.ZONES`. The copy that
+        # used to live here missed `legends` for every run after a8a7bf4.
+        self.zone_names = tuple(shapes["zones"])
         row_dim = shapes["row_dim"]
         card_dim = shapes["card_dim"]
         g_dim = shapes["globals"][0]
@@ -114,10 +118,32 @@ class RiftboundNet(nn.Module):
         self.act_head[-1] = nn.Linear(head_hidden, 1, bias=False)
         init_(self.act_head[-1], gain=0.01)
 
-        # Critic: trunk state plus the information the policy is denied.
+        # Two critics, and which one drives learning is a knob (§6.4).
+        #
+        # `value_sym` sees exactly what the policy sees. `value_priv` also sees
+        # the opponent's hand and every facedown card.
+        #
+        # **Why the privileged one is no longer the default.** As a pure
+        # baseline it is free: the policy gradient is
+        # `grad log pi(a|o) * A`, and a baseline that depends on hidden state is
+        # still independent of the ACTION given the state, so its expected
+        # contribution is exactly zero. But GAE does not use V only as a
+        # baseline -- `V(s_{t+1})` appears inside the TD residual, and there it
+        # carries information the policy does not have. The distortion shrinks
+        # as gae_lambda -> 1 (0.95 here, so it is small) but it is not zero, and
+        # the direction it errs in is the bad one: a reckless line that the
+        # opponent happened not to hold the answer to gets less blame than it
+        # earned, because the critic knew they could not punish it.
+        #
+        # Both heads are always trained, so `explained_variance` can be read
+        # for each and the choice settled by measurement rather than by
+        # argument -- and so an honest, policy-side win probability is always
+        # available for replaying a position back to a human.
         self.priv_enc = init_(mlp([card_dim, card_hidden, card_hidden], True))
-        self.value = init_(mlp([hidden + 2 * card_hidden, hidden, 1]))
-        init_(self.value[-1], gain=1.0)
+        self.value_sym = init_(mlp([hidden, hidden, 1]))
+        init_(self.value_sym[-1], gain=1.0)
+        self.value_priv = init_(mlp([hidden + 2 * card_hidden, hidden, 1]))
+        init_(self.value_priv[-1], gain=1.0)
 
     # -- forward ---------------------------------------------------------
 
@@ -132,27 +158,54 @@ class RiftboundNet(nn.Module):
         x = torch.cat([h.unsqueeze(1).expand(b, a, h.shape[-1]), actions], -1)
         return self.act_head(x).squeeze(-1).masked_fill(~action_mask, NEG_INF)
 
-    def value_of(self, h: torch.Tensor,
-                 privileged: torch.Tensor | None) -> torch.Tensor:
+    def values(self, h: torch.Tensor,
+               privileged: torch.Tensor | None) -> tuple:
+        """`(value used for learning, the other one)`, per `privileged_critic`.
+
+        **The auxiliary head is fed a DETACHED trunk.** Both critics share the
+        trunk with the policy, so whichever one is not driving learning must not
+        shape that representation -- otherwise turning the privileged critic
+        "off" would still let hidden-information gradients steer the features
+        the policy reads, which is the thing switching it off is for. Detached,
+        the spare head is a pure measurement.
+        """
         if privileged is None:
             z = torch.zeros(h.shape[0], 2 * self.priv_enc[-2].out_features,
                             device=h.device, dtype=h.dtype)
         else:
             cards = privileged.view(-1, self.priv_slots, self.card_dim)
             z = masked_pool(self.priv_enc(cards), (cards != 0).any(-1))
-        return self.value(torch.cat([h, z], -1)).squeeze(-1)
+        if self.privileged_critic:
+            main = self.value_priv(torch.cat([h, z], -1)).squeeze(-1)
+            aux = self.value_sym(h.detach()).squeeze(-1)
+        else:
+            main = self.value_sym(h).squeeze(-1)
+            aux = self.value_priv(torch.cat([h.detach(), z], -1)).squeeze(-1)
+        return main, aux
+
+    def win_prob(self, obs: dict) -> torch.Tensor:
+        """The POLICY-side value, always, whatever drives learning.
+
+        This is the number to show a person: with terminal-only reward and
+        gamma=1 the critic is a win probability, and it is only honest as a
+        teaching signal if it was computed from what a player could actually
+        see. `value_priv` would answer "given the opponent's hand", which is
+        not a question anyone sitting at the table can ask.
+        """
+        h = self.encode(obs["zones"], obs["zone_mask"], obs["globals"])
+        return self.value_sym(h).squeeze(-1)
 
     def forward(self, obs: dict):
         h = self.encode(obs["zones"], obs["zone_mask"], obs["globals"])
-        return (self.logits(h, obs["actions"], obs["action_mask"]),
-                self.value_of(h, obs.get("privileged")))
+        main, aux = self.values(h, obs.get("privileged"))
+        return (self.logits(h, obs["actions"], obs["action_mask"]), main, aux)
 
     # -- sampling --------------------------------------------------------
 
     def act(self, obs: dict, deterministic: bool = False,
             generator: torch.Generator | None = None):
         """Returns (action_index, logprob, entropy, value), all [B]."""
-        logits, value = self(obs)
+        logits, value, _aux = self(obs)
         logp = F.log_softmax(logits, -1)
         if deterministic:
             idx = logits.argmax(-1)
@@ -179,11 +232,16 @@ class RiftboundNet(nn.Module):
         return ent / n.log()
 
     def evaluate(self, obs: dict, idx: torch.Tensor):
-        """Log-prob, entropy and value of `idx` under the current parameters."""
-        logits, value = self(obs)
+        """Log-prob, entropy and both values of `idx` under the current params.
+
+        The fourth return is the critic that is NOT driving learning; it is
+        fitted to the same returns so the two can be compared, and its gradient
+        cannot reach the trunk. See `values`.
+        """
+        logits, value, aux = self(obs)
         logp = F.log_softmax(logits, -1)
         return (logp.gather(-1, idx.unsqueeze(-1)).squeeze(-1),
-                self.entropy(logits, obs["action_mask"]), value)
+                self.entropy(logits, obs["action_mask"]), value, aux)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,42 @@
+# Subops Gastaldon -- 5th, Convergence #3
+# post-banlist Kennen -- added 2026-09-25 from lists supplied by the project owner
+Legend: Yordle, Kennen - Heart of the Tempest
+Champion: Kennen, Storm of Shuriken
+Main Deck:
+3x Call to Glory
+1x Cemetery Attendant
+1x Edge of Night
+1x Existential Dread
+2x Fizz - Trickster
+1x Hidden Blade
+3x Lightning Rush
+1x Nocturne - Horrifying
+2x Rhasa the Sunderer
+2x Ride The Wind
+1x Salvage
+3x Seal of Discord
+1x Sivir - Mercenary
+2x Star-Crossed
+1x Switcheroo
+1x Tactical Retreat
+2x Tail-Cloaked Matriarch
+1x Tideturner
+3x Tornado Warrior
+3x Traveling Merchant
+3x Trifarian Gloryseeker
+1x Unsung Hero
+Battlefields:
+1x Minefield
+1x Shadow Temple
+1x Zaun Warrens
+Runes:
+9x Chaos Rune
+3x Order Rune
+Sideboard:
+2x Decree of Unity
+2x Gust
+1x Hard Bargain
+1x Lacerate
+1x Rhasa the Sunderer
+2x Salvage
+1x Shadows of the Past

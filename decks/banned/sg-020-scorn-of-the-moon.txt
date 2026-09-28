@@ -1,0 +1,41 @@
+# Singapore Regional Qualifier -- #20 JarbsX
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Diana - Scorn of the Moon
+Champion: Diana - Lunari
+Main Deck:
+2x Abandon
+2x Acceptable Losses
+1x Eclipse
+2x Fizz - Trickster
+1x Flash
+2x Gust
+3x Hwei - Brooding Painter
+3x Moonfall
+1x Ocean Drake
+2x Patched Porobot
+3x Ravenbloom Student
+3x Ride The Wind
+1x Smoke Screen
+3x Stacked Deck
+2x Star-Crossed
+3x Stupefy
+3x Tideturner
+2x Vex - Apathetic
+Battlefields:
+1x Abandoned Hall
+1x Rockfall Path
+1x Targon's Peak
+Runes:
+7x Chaos Rune
+5x Mind Rune
+Sideboard:
+1x Baron Nashor
+1x Decree of Insight
+1x Mel, Newly Awakened
+2x Pickpocket
+1x Singularity
+1x Star-Crossed
+1x Switcheroo
+2x Up from the Deep

@@ -1,0 +1,41 @@
+# post-banlist list (unattributed) -- Sacrifice / Gust Monk build
+# post-banlist Kennen -- added 2026-09-25 from lists supplied by the project owner
+Legend: Yordle, Kennen - Heart of the Tempest
+Champion: Kennen, Storm of Shuriken
+Main Deck:
+1x Baron Nashor
+2x Ezreal, Prodigy
+2x Fizz - Trickster
+1x Gust Monk
+2x Last Rites
+3x Lightning Rush
+3x Rhasa the Sunderer
+3x Ride The Wind
+2x Sacrifice
+3x Seal of Discord
+3x Shadow Order Disciple
+1x Shadows of the Past
+2x Star-Crossed
+2x Switcheroo
+2x Tail-Cloaked Matriarch
+1x The Harrowing
+1x Tideturner
+1x Tornado Warrior
+3x Traveling Merchant
+1x Edge of Night
+Battlefields:
+1x Minefield
+1x Sandswept Tomb
+1x Zaun Warrens
+Runes:
+9x Chaos Rune
+3x Order Rune
+Sideboard:
+1x Decree of Unity
+1x Downwell
+1x Hard Bargain
+2x Ravenbloom Prefect
+1x Rebuke
+2x Salvage
+1x Star-Crossed
+1x Vi - Peacekeeper

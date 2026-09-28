@@ -7,7 +7,64 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .model import Card, canonical_name, loose_key
+from . import upcoming
+from .model import Card, canonical_name, champion_tags, loose_key
+
+
+def _apply_overlay(raw, overlay_path: Path):
+    """Overlay local corrections onto the synced card data.
+
+    `cli.py sync` regenerates cards.json wholesale, so a correction edited into it
+    is silently destroyed on the next refresh. Corrections therefore live in their
+    own file and are re-applied on every load. The overlay carries two kinds, in
+    two sections, and the distinction is worth keeping:
+
+      "cards" -- official Riot ERRATA. Upstream has the card but the wording is
+                 superseded. Source: the riftbound.gg errata page.
+      "gaps"  -- fields upstream OMITS ENTIRELY. These are not rules changes; the
+                 API simply never carried the data. The known case is Equipment:
+                 not one of the 50 Equipment cards has its "Attached:" block (the
+                 Might bonus and the granted ability), so Equipment is invisible
+                 to any rating pass until a gap entry is written by hand from the
+                 physical card.
+
+    Both sections map a card name to the fields that replace the synced ones.
+    Only real Card fields may be set -- `Card.from_dict` is `cls(**d)` and will
+    raise on anything else, so an Equipment's attached effect is folded into
+    `text` rather than invented as a new column.
+
+    Names are matched with `loose_key`, because Riot's errata page and our
+    upstream disagree about punctuation in champion names ("Gangplank - Naval" vs
+    "Gangplank, Naval"). Exact-name matching silently skipped five entries.
+
+    A key matching no card raises: a typo'd or renamed entry must not fail
+    quietly, or the deck tools go on reasoning from superseded text.
+    """
+    if not overlay_path.exists():
+        return raw
+    try:
+        doc = json.loads(overlay_path.read_text())
+    except (OSError, ValueError):
+        return raw
+    fixes = {**doc.get("cards", {}), **doc.get("gaps", {})}
+    if not fixes:
+        return raw
+    cards = raw.get("cards", raw) if isinstance(raw, dict) else raw
+    by_key = {loose_key(name): (name, fix) for name, fix in fixes.items()}
+    unmatched = dict(by_key)
+    for card in cards:
+        hit = by_key.get(loose_key(card.get("name", "")))
+        if hit:
+            unmatched.pop(loose_key(card["name"]), None)
+            card.update({k: v for k, v in hit[1].items() if not k.startswith("_")})
+    if unmatched:
+        names = ", ".join(sorted(n for n, _ in unmatched.values()))
+        raise ValueError(
+            f"{overlay_path} lists {len(unmatched)} card(s) that are not in the "
+            f"card pool: {names}. Either the name is wrong or upstream renamed "
+            f"the card -- fix the key rather than dropping the entry."
+        )
+    return raw
 
 
 class CardNotFound(Exception):
@@ -61,7 +118,16 @@ class CardDB:
             raise FileNotFoundError(
                 f"{path} not found. Run `python cli.py sync` first."
             )
-        return cls(json.loads(path.read_text()))
+        raw = json.loads(path.read_text())
+        # Sets that are not out yet (`data/upcoming/`). Merged BEFORE the errata
+        # overlay, so a preview card can be corrected by `errata.json` exactly
+        # like a released one -- spoiler text is the most likely thing in the
+        # corpus to need a correction. Empty unless a set's release date has
+        # passed or `RIFTBOUND_UPCOMING` is set; see `riftbound/upcoming.py`.
+        extra = upcoming.extra_cards()
+        if extra:
+            raw = {**raw, "cards": [*raw["cards"], *extra]}
+        return cls(_apply_overlay(raw, data_dir / "errata.json"))
 
     # ---------- lookup ----------
 
@@ -138,7 +204,9 @@ class CardDB:
     def legal_pool(self, legend: Card) -> LegalPool:
         """Everything legal under a Legend's domain identity (rule 103.1.b)."""
         identity = legend.domain_set
-        legend_tags = set(legend.tags)
+        # 133.8.b: only Champion Tags link a Legend to its champions and
+        # signatures. A faction tag (Yordle) must not qualify anything.
+        legend_tags = champion_tags(legend.tags)
         buildable = [
             c
             for c in self.cards
@@ -149,13 +217,17 @@ class CardDB:
             # 103.2.d.2: a signature card without the Legend's champion tag can
             # never be legal here, so it is filtered out rather than offered and
             # then rejected by the validator.
-            and (not c.is_signature or legend_tags & set(c.tags))
+            and (not c.is_signature or legend_tags & champion_tags(c.tags))
         ]
         return LegalPool(
             legend=legend,
             identity=identity,
             champion_options=sorted(
-                (c for c in buildable if c.is_champion_unit and legend_tags & set(c.tags)),
+                (
+                    c
+                    for c in buildable
+                    if c.is_champion_unit and legend_tags & champion_tags(c.tags)
+                ),
                 key=lambda c: (c.energy or 0, c.name),
             ),
             main_deck=sorted(

@@ -32,6 +32,8 @@ card ids.
 
 from __future__ import annotations
 
+import re
+
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,10 +44,33 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "sim"))
 from engine.cards import find  # noqa: E402
 
-from rl.config import ABILITY_KEYWORDS, DOMAINS  # noqa: E402
+from rl.config import ABILITY_KEYWORDS, DOMAINS, ENGINE_KEYWORDS  # noqa: E402
 from rl.engine.cardtable import CardTable, read_decklist  # noqa: E402
-from rl.engine.effects import (ABILITIES, COND_LEGION, SPECS,  # noqa: E402
-                               STATICS)
+from rl.engine.effects import (BF_ABILITIES, BF_STATICS,
+                               ABILITIES, ABILITY_BORROWERS,  # noqa: E402
+                               COND_EMPOWERED, abilities_for,
+                               COND_LEGION, LEGEND_ABILITIES, LEGEND_STATICS,
+                               OP_EMPOWER, OP_LOOK_TOP,
+                               ENTERS_READY_IF, EQUIP_ABILITIES,
+                               EQUIP_STATICS, EQUIP_DEATH_REPLACEMENT,
+                               PLAY_FROM_LOOK,
+                               PLAY_PERMISSIONS, SPECS,
+                               STATICS, TEMPORARY_SUPPRESSORS, TOKEN_DOUBLERS,
+                               DEATHKNELL_DOUBLERS, PAID_COST_ENTERS_READY,
+                               EQUIP_BONUS_DOUBLERS, EARLY_SCORE_TO_DRAW,
+                               TIE_RECALLS_ALL, MOVED_TWICE_NO_DAMAGE,
+                               PLAY_AFTER_TURN, PLAY_ONLY_CONQUERED,
+                               BLOCKS_OPP_POINTS, ONE_RUNE_CHANNEL, WARDEN_LOCKS,
+                               EFFECT_BONUS_DAMAGE, RUNE_WARD, IGNORE_TANK_HERE,
+                               EQUIP_EFFECT_BONUS_DAMAGE, FLOW_DISCOUNTERS,
+                               PLAY_COSTS_XP, PLAY_COSTS_DISCARD, ADD_COST_REDUCERS,
+                               NEVER_READIED, CHOSEN_DISCOUNT, SHOWDOWN_REPEAT,
+                               NONHAND_DISCOUNT, HOLD_CONQUER_SWAP, HIDDEN_LOCKS,
+                               EMPOWERED_SPELL_WARD, EMPOWERED_CHOSEN_TO_MIGHT,
+                               TRASH_UNIT_PLAY, MOVE_TAXERS, MULTI_BUFF,
+                               EQUIP_GRANTS_TAG, NAMED_SPELL_LOCKS,
+                               TEXT_COPIERS, COPY_ON_ATTACH, NONHAND_ACCELERATE,
+                               REVEAL_PEEKERS, PARTIAL_TRANSCRIPTIONS)
 
 _DOMAIN_ID = {d.lower(): i for i, d in enumerate(DOMAINS)}
 
@@ -56,7 +81,33 @@ class DeckLoad:
     main: list[int]                 # card ids, length = printed deck size
     runes: list[int]                # domain ids
     battlefields: list[int]         # card ids, in printed order
-    coverage: float                 # fraction played as printed
+    coverage: float                 # fraction of the MAIN DECK played as printed
+    # 103.1 -- the Champion Legend, which every decklist declares and which is
+    # in the Legend Zone from turn 1 (111). -1 when the list did not name one.
+    legend: int = -1
+    # 103.2.a's Chosen Champion. **The 40th card**: 103.2 counts it in the
+    # 40-card Main Deck, 133.4 starts it in the Champion Zone instead, and that
+    # is exactly why `main` is 39 -- every list in the corpus is 39 + this, and
+    # the 3-copy limit holds across both zones (11 of the 30 run further copies
+    # in `main`, never a 4th).
+    #
+    # Read by the engine since 2026-09-24: `game.new_game` places it (112) and
+    # the observation carries it as public information (108.3.e). What is still
+    # missing is 108.3.d, playing it from that zone -- see `new_game`.
+    champion: int = -1
+    # **`coverage` deliberately excludes battlefields**, and that is a
+    # reporting hazard, not a convenience: every deck in the corpus prints 3,
+    # none of the 66 battlefield cards has an encoded ability, and every one of
+    # them has rules text. So a deck at `coverage == 1.0` still has three cards
+    # doing nothing, and a round robin cannot tell two decks apart when they
+    # differ ONLY in battlefields -- which is exactly what `lillia-fae-fawn/v6`
+    # and `v7` are, and they scored identically against all six opponents.
+    #
+    # The split is kept because `coverage` is what `--min-coverage` filters
+    # training decks on, and folding battlefields in would drop every deck
+    # below any useful threshold at once. `bf_coverage` carries the other half
+    # so that anything REPORTING a number can report an honest one.
+    bf_coverage: float = 0.0
     substituted: dict = field(default_factory=dict)   # printed name -> count
     # Kept in the deck, but with printed behaviour the engine ignores. This is
     # the category the old coverage number hid: the card is *there*, its cost
@@ -101,16 +152,117 @@ def includable(table: CardTable, cid: int) -> bool:
         # gear whose text is transcribed goes in as itself. One without a spec
         # would sit on the board doing nothing, which is a worse lie than a
         # substitution, so it still has to be swapped out.
-        return table.names[cid] in ABILITIES or table.names[cid] in STATICS
+        #
+        # An EQUIPMENT is the third case and needs neither registry: 818.1.c.2
+        # makes [Equip] an ability in its own right and `_equip_abilities`
+        # synthesises it from the keyword, exactly as [Hunt] is synthesised. So
+        # the honest test is whether the engine has anything at all to do with
+        # the card, which `abilities_for` answers for all three sources at once.
+        # This stays a strictly lower bar than `plays_as_printed`: a gear whose
+        # extra text is untranscribed is playable without being correct.
+        return (table.names[cid] in ABILITIES or table.names[cid] in STATICS
+                or table.names[cid] in TIE_RECALLS_ALL
+                or bool(abilities_for(table, cid)))
     return False
 
 
 def _encodes_legion(name: str) -> bool:
     """Does this card's transcription actually carry the [Legion] gate?"""
     for ab in ABILITIES.get(name, ()):
-        if any(op.cond == COND_LEGION for op in ab.ops):
+        if ab.cond == COND_LEGION or any(op.cond == COND_LEGION for op in ab.ops):
             return True
     return any(st.cond == COND_LEGION for st in STATICS.get(name, ()))
+
+
+def _encodes_predict(name: str) -> bool:
+    """Does this card's transcription actually perform the [Predict]?
+
+    Credited the same way [Legion] is, and NOT through `ABILITY_KEYWORDS`.
+    Blanket-crediting a keyword to any card that has a spec is how Hunt and
+    Vision were once forgiven on cards that never implemented them: the spec
+    covers the rest of the text and the keyword silently rides along. 436.1
+    makes Predicting a real action -- look at the top card, choose whether to
+    Recycle it -- so the only honest test is whether an OP_LOOK_TOP is there.
+    """
+    for entry in list(ABILITIES.get(name, ())) + (
+            [SPECS[name]] if name in SPECS else []):
+        if any(op.op == OP_LOOK_TOP for op in entry.ops):
+            return True
+    return False
+
+
+# The sentence a card spends on its own 806.3 exception, which
+# `actions.play_destinations` executes -- stripped from the residual so the
+# clause is not counted as outstanding behaviour.
+#
+# "I can AMBUSH to ..." is the errata's wording for Rengar, Trophy Hunter and
+# means the same thing: 822.1.d says Ambush also appears as a verb, and "in
+# such a case the verb is taken to mean 'play with the permissions of the
+# Ambush keyword'" -- with Rengar as the rulebook's own worked example. That is
+# exactly what `play_destinations` does with PERM_ENEMY plus the `ambush_only`
+# timing, so the alternative verb belongs here and not in a second mechanism.
+_PLAY_PERM_CLAUSE = re.compile(
+    r"(?:You may play me|I can be played|I can Ambush) to an? [^.]*\.?", re.I)
+
+
+def _encodes_empower(name: str) -> bool:
+    """Does this card's transcription carry the [Empower] activated ability?
+
+    827.1.c.1 makes [Empower Cost] short for "[Cost]: Empower this", and the
+    cost is different on every card -- {2 energy}, "{1 energy} or {Body rune}",
+    "Kill a friendly unit". So the ENGINE implements the mechanism (the status,
+    the once-only gate, the dependent-ability condition) while each card still
+    has to state its own cost. That makes it a Deathknell-shaped keyword, not a
+    Deflect-shaped one, and blanket-crediting it in `ENGINE_KEYWORDS` would
+    pass ~35 cards that never transcribed a cost.
+    """
+    return any(op.op == OP_EMPOWER
+               for ab in ABILITIES.get(name, ()) for op in ab.ops)
+
+
+def _encodes_empowered(name: str) -> bool:
+    """Does it carry the [Empowered] dependent ability (828.1.b.1)?"""
+    return any(st.cond == COND_EMPOWERED for st in STATICS.get(name, ())) or \
+        any(op.cond == COND_EMPOWERED
+            for ab in ABILITIES.get(name, ()) for op in ab.ops) or \
+        any(ab.while_empowered for ab in ABILITIES.get(name, ()))
+
+
+_ATTACHED_BAND = re.compile(r"Attached:\s*[+-]?\d+\s*Might\.?\s*(.*)$", re.S)
+
+
+def _grants_attached_ability(table: CardTable, cid: int) -> bool:
+    """Does this Equipment's "Attached:" band carry more than a Might Bonus?
+
+    718.3 appends an Attached card's Effect Text to its Top-Most Card, which is
+    not implemented -- so a card whose band is nothing but "+N Might" IS played
+    as printed, and one with a clause after it is not. Reading the band rather
+    than keeping a list means the answer follows the data.
+    """
+    m = _ATTACHED_BAND.search(table.raw_text[cid] or "")
+    rest = m.group(1).strip(" .") if m else ""
+    if not rest:
+        return False
+    # 718.3's KEYWORD half is implemented: `cardtable.attached_keywords` parses
+    # the band and `combat.perm_kw` hands the keyword to the Top-Most card. A
+    # band that is nothing but keywords is therefore fully executed -- provided
+    # the engine actually reads every one of them, which is the same honesty
+    # test `unread_keywords` applies to a card's own keywords.
+    granted = table.attached_kw[cid]
+    if granted:
+        return any(kw not in ENGINE_KEYWORDS for kw, _ in granted)
+    # ...and 718.3's ABILITY half is implemented for anything transcribed in
+    # `EQUIP_ABILITIES`, which fires from the unit's row with "I" reading as
+    # the unit (136.2.c). Membership asserts the whole band is transcribed,
+    # exactly as membership in `ABILITIES` asserts it for a card's own text.
+    return (table.names[cid] not in EQUIP_ABILITIES
+            and table.names[cid] not in EQUIP_STATICS
+            and table.names[cid] not in EQUIP_DEATH_REPLACEMENT
+            and table.names[cid] not in EQUIP_EFFECT_BONUS_DAMAGE
+            and table.names[cid] not in HOLD_CONQUER_SWAP
+            and table.names[cid] not in EQUIP_GRANTS_TAG
+            and table.names[cid] not in TEXT_COPIERS
+            and table.names[cid] not in COPY_ON_ATTACH)
 
 
 def plays_as_printed(table: CardTable, cid: int) -> bool:
@@ -127,7 +279,52 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
       residual_text    anything printed beyond keywords needs a DSL spec
       unread_keywords  a keyword nothing consults is not being played
     """
+    # A BATTLEFIELD is never `includable` -- it does not go in the main deck --
+    # so it is judged on its own terms before that check. It counts as played
+    # only when its text is transcribed -- as a static in `BF_STATICS`, as a
+    # triggered ability in `BF_ABILITIES`, or both. Every one of the 66
+    # battlefields prints rules text, so none is covered by default.
+    if table.is_type(cid, "Battlefield"):
+        name = table.names[cid]
+        if name not in BF_STATICS and name not in BF_ABILITIES:
+            return False
+        return not table.unread_keywords(cid)
+    # A LEGEND is not includable either, and for the same reason: 107.4.b puts
+    # it in its own zone, never the Main Deck, so `includable` rejects it and
+    # every legend read as uncovered -- including the three that are fully
+    # transcribed. Lillia - Bashful Bloom is the most-played legend in the
+    # corpus and scored zero.
+    #
+    # Judged like a battlefield rather than like a unit, because a legend has
+    # no body to fall back on: it is never played, never attacks and has no
+    # Might, so unlike a unit there is no sense in which an untranscribed one
+    # is still "mostly right". Its abilities are the whole card.
+    if table.is_type(cid, "Legend"):
+        name = table.names[cid]
+        if name not in LEGEND_STATICS and name not in LEGEND_ABILITIES:
+            return False
+        return not table.unread_keywords(cid)
     if not includable(table, cid):
+        return False
+    if table.names[cid] in PARTIAL_TRANSCRIPTIONS:
+        return False
+    # **EQUIPMENT IS WITHHELD while it grants an ABILITY, and only then.**
+    # The Might Bonus is read: 137.3's number lives in the "Attached:" band
+    # that `data/errata.json` supplies and `cardtable.might_bonus` parses, so
+    # Long Sword really does give its unit +2 Might, and [Equip]/[Quick-Draw]
+    # are honest entries in `ENGINE_KEYWORDS`.
+    #
+    # What is not read is the other half of that band. 136.2/718.3 append an
+    # Attached card's Effect Text to its Top-Most Card's Rules Text -- "When I
+    # hold, score 1 point" (Trinity Force), "+2 Might while I'm an attacker"
+    # (Serrated Dirk) -- and that is a mechanism, not a lookup: the ability has
+    # to fire from a row that is not the one it is printed on. Until it does, an
+    # Equipment that prints one attaches, grants its Might, and silently drops
+    # the clause that made it worth playing.
+    #
+    # So the guard asks the band card by card and clears itself as 718.3 lands,
+    # rather than needing a list maintained by hand.
+    if "Equipment" in table.tags[cid] and _grants_attached_ability(table, cid):
         return False
     if table.is_type(cid, "Spell"):
         return True                       # a spec transcribes the whole text
@@ -142,8 +339,16 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
     # gate. Blanket-crediting it the way Deathknell is credited would pass any
     # card that merely has a spec, including one that transcribed the effect
     # and quietly dropped the "if you've played another card this turn".
-    if "Legion" in unread and _encodes_legion(name):
+    if "Legion" in unread and (_encodes_legion(name) or name in TRASH_UNIT_PLAY):
         unread.discard("Legion")
+    if "Predict" in unread and _encodes_predict(name):
+        unread.discard("Predict")
+    if "Empower" in unread and _encodes_empower(name):
+        unread.discard("Empower")
+    if "Empowered" in unread and (_encodes_empowered(name)
+                                  or name in EMPOWERED_SPELL_WARD
+                                  or name in EMPOWERED_CHOSEN_TO_MIGHT):
+        unread.discard("Empowered")
     if unread:
         return False
     # Presence in ABILITIES or STATICS means the same thing presence in SPECS
@@ -151,7 +356,75 @@ def plays_as_printed(table: CardTable, cid: int) -> bool:
     # ability and one unimplemented one (Scuttle Crab: an ETB draw and a
     # Deathknell) are deliberately absent, so this stays an allowlist rather
     # than a guess.
-    if table.residual_text(cid) and not (name in ABILITIES or name in STATICS):
+    # A printed play-destination permission (806.3's exceptions) is executed
+    # by `actions.play_destinations`, so it counts as implemented -- but it
+    # only ever covers its OWN sentence. Ocean Drake says "You may play me
+    # to an open battlefield" AND "you may return a non-Dragon unit to its
+    # owner's hand"; forgiving the whole residual because the first half is
+    # handled would credit a card whose second half does nothing. So strip
+    # just that clause and let whatever is left be judged normally.
+    residual = table.residual_text(cid)
+    if name in PLAY_PERMISSIONS:
+        residual = _PLAY_PERM_CLAUSE.sub("", residual).strip()
+    # `TOKEN_DOUBLERS` sits alongside ABILITIES/STATICS for the same reason:
+    # membership asserts that the card's whole text is the thing the engine
+    # implements. That is true of Zilean, whose text is nothing but the
+    # replacement clause. A future doubler with extra text would need an
+    # ABILITIES entry for that text, exactly as any other card does.
+    if residual and not (name in ABILITIES or name in STATICS
+                         or name in SPECS
+                         # An Equipment's "Attached:" band is its whole
+                         # residual, and `EQUIP_ABILITIES` transcribing it means
+                         # the same thing an ABILITIES entry means for a card's
+                         # own text. The guard above has already refused any
+                         # band that is NOT transcribed.
+                         or name in EQUIP_ABILITIES
+                         or name in EQUIP_STATICS
+                         or name in EQUIP_DEATH_REPLACEMENT
+                         # Nocturne's whole residual IS the permission -- an
+                         # extra legal action while a look is suspended, which
+                         # `actions.legal_actions` offers and
+                         # `_resolve_play_from_look` carries out. A plain
+                         # membership test rather than a clause strip like
+                         # PLAY_PERMISSIONS above, because there is no second
+                         # sentence left over to judge.
+                         or name in PLAY_FROM_LOOK
+                         or name in TOKEN_DOUBLERS
+                         or name in DEATHKNELL_DOUBLERS
+                         or name in NONHAND_DISCOUNT
+                         or name in HIDDEN_LOCKS
+                         or name in TRASH_UNIT_PLAY
+                         or name in MOVE_TAXERS
+                         or name in EQUIP_GRANTS_TAG
+                         or name in TEXT_COPIERS
+                         or name in NONHAND_ACCELERATE
+                         or name in REVEAL_PEEKERS
+                         or name in COPY_ON_ATTACH
+                         or name in HOLD_CONQUER_SWAP
+                         or name in PAID_COST_ENTERS_READY
+                         or name in EQUIP_BONUS_DOUBLERS
+                         or name in EARLY_SCORE_TO_DRAW
+                         or name in TIE_RECALLS_ALL
+                         or name in MOVED_TWICE_NO_DAMAGE
+                         or name in PLAY_AFTER_TURN
+                         or name in PLAY_ONLY_CONQUERED
+                         or name in BLOCKS_OPP_POINTS
+                         or name in ONE_RUNE_CHANNEL
+                         or name in WARDEN_LOCKS
+                         or name in EFFECT_BONUS_DAMAGE
+                         or name in RUNE_WARD
+                         or name in IGNORE_TANK_HERE
+                         or name in EQUIP_EFFECT_BONUS_DAMAGE
+                         or name in FLOW_DISCOUNTERS
+                         or name in PLAY_COSTS_XP
+                         or name in PLAY_COSTS_DISCARD
+                         or name in ADD_COST_REDUCERS
+                         or name in NEVER_READIED
+                         or name in CHOSEN_DISCOUNT
+                         or name in SHOWDOWN_REPEAT
+                         or name in TEMPORARY_SUPPRESSORS
+                         or name in ENTERS_READY_IF
+                         or name in ABILITY_BORROWERS):
         return False
     # A card that creates a token it cannot play correctly is approximating,
     # exactly as a card whose own text is ignored would be. The Bird token
@@ -287,49 +560,180 @@ def load_deck(path: Path, table: CardTable) -> DeckLoad:
         if cid is not None:
             bfs.extend([cid] * count)
 
+    def _one(section: str) -> int:
+        """The single card named in a one-line section, or -1."""
+        for _count, nm in parsed.get(section, []):
+            card = find(nm)
+            cid = table._index.get(card.name) if card else None
+            if cid is not None:
+                return int(cid)
+        return -1
+
     total = len(main) or 1
+    bf_ok = sum(1 for c in bfs if plays_as_printed(table, c))
     return DeckLoad(name=Path(path).parent.name + "/" + Path(path).stem,
                     main=main, runes=runes, battlefields=bfs,
-                    coverage=as_printed / total, substituted=subs,
+                    coverage=as_printed / total,
+                    bf_coverage=bf_ok / (len(bfs) or 1),
+                    legend=_one("Legend"), champion=_one("Champion"),
+                    substituted=subs,
                     approximated=approx, missing=missing)
 
 
+_VERSION = re.compile(r"v(\d+)")
+
+
+def decklist_files(root: Path | None = None,
+                   latest_only: bool = False,
+                   meta_only: bool = False) -> list[Path]:
+    """The decklist files under `root`, optionally one per DECK.
+
+    `decks/` holds two different things under one glob, and they must not be
+    weighted alike. `decks/meta/` is a flat folder of distinct netdecks, one
+    file each. Every other folder is ONE deck plus its iteration history:
+    `lillia-fae-fawn-blind/` alone holds v1 through v8.
+
+    So a plain `rglob("*.txt")` counts that single deck eight times. It is the
+    right reading for `deckeval`, whose entire job is comparing v7 against v8 --
+    and the wrong one everywhere else, where it silently multiplies whatever
+    the repo owner happened to iterate on most. `latest_only` keeps just the
+    newest version of each personal deck; the meta folder is always kept whole.
+    """
+    root = Path(root or (ROOT / "decks"))
+    # `decks/banned/` holds real tournament lists that are ILLEGAL under the
+    # current banlist -- kept for reference and meta analysis, never trained on.
+    # `decks/upcoming/` holds lists for a set that is not out yet.
+    # Excluded here rather than at the call sites: `rglob` would otherwise sweep
+    # them in silently, and a policy trained against a banned card is learning a
+    # game nobody is allowed to play. `cli.py check` is the other half of this.
+    # `decks/upcoming/` is the same idea one set earlier: lists built from cards
+    # that are not legal yet. A deck there must never be trained on even while
+    # `RIFTBOUND_UPCOMING` is set, because the flag exists to let the ENGINE see
+    # the cards for scripting, not to let the agent practise an illegal format.
+    EXCLUDE = {"banned", "upcoming"}
+    def _keep(f: Path) -> bool:
+        return not (set(f.relative_to(root).parts[:-1]) & EXCLUDE)
+    meta = sorted(f for f in (root / "meta").glob("*.txt") if _keep(f))
+    if meta_only:
+        return meta
+    if not latest_only:
+        return sorted(f for f in root.rglob("*.txt") if _keep(f))
+    by_folder: dict[Path, list[Path]] = {}
+    for f in sorted(root.rglob("*.txt")):
+        # `_keep` is needed here too, not just above: a banned PERSONAL deck sits
+        # at decks/banned/<deck>/vN.txt, whose parent is the deck name rather
+        # than "meta", so the skip below would let it straight through.
+        if f.parent.name == "meta" or not _keep(f):
+            continue
+        by_folder.setdefault(f.parent, []).append(f)
+    # An unversioned filename sorts to -1, so a folder holding exactly one
+    # unversioned list still yields that list rather than nothing.
+    latest = [max(fs, key=lambda f: (int(m.group(1))
+                                     if (m := _VERSION.search(f.stem)) else -1))
+              for fs in by_folder.values()]
+    return meta + sorted(latest)
+
+
 def load_all(table: CardTable, root: Path | None = None,
-             warn: bool = True) -> list[DeckLoad]:
+             warn: bool = True, latest_only: bool = False) -> list[DeckLoad]:
     """Every decklist under `root` that parses to a plausible deck.
 
     A file that parses to a main deck far off 40 cards is rejected here, and
     loudly. It used to be admitted on `len(main) >= 10` and would then blow up
     deep inside a training run on `MAX_DECK` -- a parse failure surfacing as an
     engine crash thousands of games later, with nothing pointing at the file.
+
+    `latest_only` collapses each personal folder to its newest version -- see
+    `decklist_files`. Off by default because `deckeval` compares versions and
+    must see them all; the TRAINING pool wants it on, or one deck's iteration
+    history becomes an archetype prior.
     """
     root = root or (ROOT / "decks")
-    out, bad = [], []
-    for f in sorted(Path(root).rglob("*.txt")):
+    out, bad, short = [], [], []
+    for f in decklist_files(root, latest_only=latest_only):
         d = load_deck(f, table)
-        if LEGAL_MAIN[0] <= len(d.main) <= LEGAL_MAIN[1]:
-            out.append(d)
-        elif len(d.main) >= 10:
-            bad.append((d.name, len(d.main)))
-    if bad and warn:
+        if not LEGAL_MAIN[0] <= len(d.main) <= LEGAL_MAIN[1]:
+            if len(d.main) >= 10:
+                bad.append((d.name, len(d.main)))
+            continue
+        # **103.2 counts the Chosen Champion inside the 40**, and 133.4 starts it
+        # in the Champion Zone, so `main` is 39 exactly when a champion was
+        # registered and 40 when none was. Anything else means cards went
+        # MISSING as the file was parsed, and the usual reason is the release
+        # gate: a list built on an unreleased set resolves none of those names,
+        # so it loads as a short deck with no champion and no legend rather than
+        # failing. Admitting it puts a deck a card light into training with a
+        # blanked archetype signal -- found when `decks/seraphine-not-alone/`
+        # (all RAD cards) turned up in the pool at 39 + no champion.
+        #
+        # `decks/upcoming/` is the place for such a list; this is the backstop
+        # for one that is not in it. Rejected here rather than at the call sites
+        # for the same reason `decks/banned/` is: `rglob` sweeps silently.
+        if len(d.main) + (1 if d.champion >= 0 else 0) != 40:
+            short.append((d.name, len(d.main), d.champion >= 0))
+            continue
+        out.append(d)
+    if warn and (bad or short):
         import sys as _sys
-        print(f"  skipped {len(bad)} unparseable decklist(s): "
-              + ", ".join(f"{n} ({k} cards)" for n, k in bad),
-              file=_sys.stderr)
+        if bad:
+            print(f"  skipped {len(bad)} unparseable decklist(s): "
+                  + ", ".join(f"{n} ({k} cards)" for n, k in bad),
+                  file=_sys.stderr)
+        if short:
+            print(f"  skipped {len(short)} decklist(s) that did not resolve to "
+                  f"40 registered cards -- cards the release gate hides, or a "
+                  f"typo'd name: "
+                  + ", ".join(f"{n} ({k} main{'' if c else ', no champion'})"
+                              for n, k, c in short),
+                  file=_sys.stderr)
     return out
 
 
+def present(deck: DeckLoad, pick: int = 0,
+            fallback: DeckLoad | None = None) -> int:
+    """The battlefield `deck` presents, by 486.5: ONE of its own three.
+
+    `pick` indexes the deck's printed battlefield list and wraps, so a caller
+    sweeping 0..2 works on a deck that printed fewer than three. A deck that
+    printed none borrows from `fallback` -- an incomplete decklist should not
+    block a matchup -- and returns -1 if there is nothing anywhere.
+    """
+    pool = deck.battlefields or (fallback.battlefields if fallback else [])
+    return pool[pick % len(pool)] if pool else -1
+
+
 def matchup(a: DeckLoad, b: DeckLoad, rune_size: int = 12,
-            n_bf: int = 2) -> tuple[list, list, list]:
+            n_bf: int = 2, picks: tuple[int, int] = (0, 0)
+            ) -> tuple[list, list, list, list, list]:
     """Two DeckLoads as `game.new_game` arguments.
 
-    Each player brings battlefields and one goes into play (486.5); with N_BF=2
-    that is one from each deck. A deck missing battlefield entries falls back to
-    the other's, so a partial list never blocks a matchup.
+    Five elements: decks, rune decks, battlefields, legends, champions.
+
+    486.5: **each player selects one of their OWN three battlefields**, and the
+    two are placed simultaneously. With N_BF=2 that is exactly one from each
+    deck, in seat order -- `bfs[0]` is what seat 0 brought.
+
+    `picks` is which of its three each deck presents. It is a parameter rather
+    than a fixed index because choosing is the decision the format is built
+    around ([[riftbound-builds-for-bo3]]): a caller that wants to know which
+    battlefield a deck should bring sweeps the 3x3 grid, and one that does not
+    care gets each deck's first.
+
+    This used to read deck A's FIRST battlefield and deck B's SECOND from a
+    pool that fell back to whichever deck had any -- two bugs in one line. A
+    deck with no battlefields listed supplied BOTH, and, worse, the pair
+    depended on argument order: `matchup(a, b)` gave `[a[0], b[1]]` while
+    `matchup(b, a)` gave `[b[0], a[1]]`. Every evaluator here averages over a
+    seat swap to cancel the first-player advantage, so each half of that
+    average was played on a DIFFERENT pair of battlefields. Presenting per deck
+    makes the swap change only the seats, which is what it is for.
     """
     decks = [list(a.main), list(b.main)]
     runes = [(a.runes * 3)[:rune_size], (b.runes * 3)[:rune_size]]
-    pool = (a.battlefields or b.battlefields)
-    other = (b.battlefields or a.battlefields)
-    bfs = [pool[0], (other[1] if len(other) > 1 else other[0])][:n_bf]
-    return decks, runes, bfs
+    bfs = [present(a, picks[0], b), present(b, picks[1], a)][:n_bf]
+    legends = [a.legend, b.legend]
+    # 112/133.4 -- the Chosen Champion starts in the Champion Zone, so it is a
+    # FIFTH element rather than a 40th card in `decks`. Callers that only want
+    # the board setup unpack four and ignore it.
+    champions = [a.champion, b.champion]
+    return decks, runes, bfs, legends, champions

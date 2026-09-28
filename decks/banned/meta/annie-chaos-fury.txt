@@ -1,0 +1,38 @@
+# MOVED 2026-09-25: contains banned card(s) -- Stacked Deck, The Arena's Greatest
+# Annie Chaos/Fury
+Legend: Annie, Dark Child
+Champion: Annie, Stubborn
+Main Deck:
+1x Abandon
+2x Cleave
+3x Ferrous Forerunner
+3x Flash
+1x Grim Apothecary
+1x Hard Bargain
+3x Inferna
+3x Kai'Sa, Survivor
+3x Long Sword
+3x Noxus Hopeful
+2x Overzealous Fan
+3x Rengar, Pouncing
+3x Stacked Deck
+2x Star-Crossed
+1x Switcheroo
+3x Traveling Merchant
+2x Vex, Apathetic
+Battlefields:
+1x Seat of Power
+1x The Arena's Greatest
+1x Zaun Warrens
+Runes:
+5x Chaos Rune
+7x Fury Rune
+Sideboard:
+1x Abandon
+1x Against the Odds
+1x Factory Recall
+1x Falling Star
+1x Kha'Zix, Mutating Horror
+1x Rebuke
+1x Star-Crossed
+1x Thermo Beam

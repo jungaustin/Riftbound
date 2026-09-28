@@ -1,0 +1,39 @@
+# Singapore Regional Qualifier -- #311 Purp
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Renata Glasc - Chem-Baroness
+Champion: Renata Glasc - Mastermind
+Main Deck:
+1x Bard - Mercurial
+1x Cloth Armor
+2x Deathgrip
+2x Enthralling Protector
+3x Hidden Blade
+2x Hostile Takeover
+2x Kennen, Keeper of Balance
+1x Ki Barrier
+3x Patched Porobot
+3x Pit Crew
+3x Plundering Poro
+3x Shepherd's Heirloom
+1x Singularity
+2x Sprite Burst
+3x Sprite Fountain
+2x Stupefy
+2x Thousand-Tailed Watcher
+2x Time Warp
+1x Vi - Peacekeeper
+Battlefields:
+1x Forge of the Fluft
+1x Seat of Power
+1x Treasure Hoard
+Runes:
+8x Mind Rune
+4x Order Rune
+Sideboard:
+2x Bellows Breath
+1x Cull the Weak
+2x Decree of Insight
+1x Forge of the Future
+2x Pickpocket
+2x Salvage

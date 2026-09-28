@@ -1,0 +1,37 @@
+# Singapore Regional Qualifier -- #14 SashkoEnaiSlabiq
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+Legend: Rek'sai - Void Burrower
+Champion: Rek'Sai - Breacher
+Main Deck:
+1x Ashe - Focused
+3x Carrion Dredger
+3x Cleave
+3x Cull the Weak
+1x Disciple of Shen
+3x Falling Star
+2x Ferrous Forerunner
+1x Forge of the Future
+3x Hidden Blade
+3x Inferna
+3x Kai'Sa, Survivor
+1x Kennen, Keeper of Balance
+1x Long Sword
+3x Mischievous Marai
+3x Noxus Hopeful
+3x Undertitan
+2x Vi - Peacekeeper
+Battlefields:
+1x Forbidding Waste
+1x The Candlelit Sanctum
+1x Zaun Warrens
+Runes:
+7x Fury Rune
+5x Order Rune
+Sideboard:
+2x Ashe - Focused
+1x Brittle Steel
+2x Decree of Unity
+2x Forge of the Future
+2x Salvage
+1x Vi - Peacekeeper

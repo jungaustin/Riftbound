@@ -1,0 +1,38 @@
+# Singapore Regional Qualifier -- #144 Misterpandawan
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Sivir - Battle Mistress
+Champion: Sivir - Mercenary
+Main Deck:
+1x Baron Nashor
+1x Boots of Swiftness
+3x Catalyst of Aeons
+3x Dazzling Aurora
+3x Elder Dragon
+3x Flurry of Blades
+3x Gust
+1x Hard Bargain
+3x Lunar Boon
+3x Platewyrm Egg
+1x Punch First
+2x Rampage
+1x Ride The Wind
+3x Scryer's Bloom
+3x Stacked Deck
+2x The Harrowing
+3x Up from the Deep
+Battlefields:
+1x Forgotten Monument
+1x Sigil of the Storm
+1x Threshold of the Gray
+Runes:
+6x Body Rune
+6x Chaos Rune
+Sideboard:
+2x Baron Nashor
+2x Hard Bargain
+2x Punch First
+1x Rampage
+1x Ride The Wind
+2x Sabotage

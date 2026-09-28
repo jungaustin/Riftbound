@@ -32,7 +32,7 @@ from rl.engine.state import (N_BF, P_ALIVE, P_CARD, P_LOC, GameState,
                              base_loc, bf_loc)
 
 T = full_table()
-CFG = Config()
+CFG = Config().with_solved_damage()
 
 
 def ok(name):
@@ -51,6 +51,12 @@ def unit(might, kw=None, exclude=("Tank", "Backline")):
         if kw and not T.has(c, kw):
             continue
         if any(T.has(c, k) for k in exclude):
+            continue
+        # No rules text: a fixture must not start firing triggers the day its
+        # card is scripted (Apprentice Smith's move trigger once held up the
+        # Cleanup a Charm test depends on).
+        if not kw and (T.residual_text(c) or T.tags[c] & {"Bird", "Cat",
+                                                          "Dog", "Poro"}):
             continue
         return c
     raise LookupError(f"no unit might={might} kw={kw}")
@@ -181,9 +187,9 @@ s = fresh()
 victim = s.add_permanent(PLAIN[3], 1, bf_loc(0))
 s.perms[victim, P_ALIVE] = 0
 log = resolve.resolve(s, T, CFG, BACK_OFF, 0, [victim], -1, from_hand=True)
-if not log.get("countered"):
-    die("resolution", f"every target illegal must counter the card: {log}")
-ok("losing every target counters the whole card (359.3.e.5/e.6)")
+if log.get("stunned") or OP_DRAW not in log["resolved"]:
+    die("resolution", f"359.3.e.1 -- the stun is skipped, the draw is not: {log}")
+ok("losing every target skips only the instructions on it (359.3.e.1/e.7)")
 
 # Played from hiding: the rider is conditional on having played it from hand.
 s = fresh()
@@ -443,7 +449,7 @@ from rl.engine import actions as A
 from rl.engine import chain
 from rl.engine.state import MAIN
 
-V1 = _replace(Config().at_victory_score(3), units_only=False)
+V1 = _replace(Config().at_victory_score(3).with_solved_damage(), units_only=False)
 BIRD = T.id_of("Bird")                     # 1 Might, [Deflect]
 RUNE_PRISON = T.id_of("Rune Prison")       # [Action] 2e1p: Stun a unit
 
@@ -1539,7 +1545,7 @@ e2 = s.add_permanent(BIG, 1, bf_loc(0))
 friend = s.add_permanent(BIG, 0, bf_loc(0))
 far = s.add_permanent(BIG, 1, bf_loc(1))
 got = rsv.legal_targets(s, T, SPECS["Crescent Strike"], 0, 0, [], -1)
-if got != [bf_loc(i) for i in range(N_BF)]:
+if got != [bf_loc(i) for i in s.live_bfs()]:
     die("bf", f"an unqualified battlefield slot should offer every one: {got}")
 if base_loc(0) in got or base_loc(1) in got:
     die("bf", "a battlefield slot must never offer a base")
@@ -1839,6 +1845,12 @@ if s.perms[u, P_ALIVE] != 1:
                  "this was the opponent's")
 phases.end_turn(s, V1)
 phases.start_turn(s, T, V1)
+# 816 makes the expiry a TRIGGERED ability, so it goes on the Chain and both
+# players get a window before it resolves -- the unit is still standing here.
+if s.perms[u, P_ALIVE] != 1:
+    die("grant", "[Temporary] must not kill before its trigger resolves")
+A._settle(s, T, V1)             # place it on the Chain...
+settle(s)                       # ...and pass it out
 if s.perms[u, P_ALIVE] == 1:
     die("grant", "...but it must die at the start of its own controller's turn")
 ok("a granted [Temporary] survives the opponent's turn and dies on its own")
@@ -1932,5 +1944,291 @@ if int(s.perms[row, P_LOC]) != bf_loc(0) or int(s.n_hand[0]) != 0:
     die("ambush", "the unit should have left the hand and landed there")
 ok("822.1.b's Reaction is CONDITIONAL: in a window, only Ambush spots are legal")
 
+
+# ---------------------------------------------------------------------------
+# Printed play-destination permissions (exceptions to 806.3)
+#
+# 806.3/813.3.a restrict a Unit to its controller's base or a Battlefield they
+# already control. A handful of cards print an exception, and each one ADDS
+# destinations rather than replacing them -- the base is always still legal.
+# "Open" and "occupied" are card vocabulary, not defined rules terms, so the
+# readings live in `effects.PLAY_PERMISSIONS` where a wrong one is visible.
+
+RENGAR_TH = T.id_of("Rengar, Trophy Hunter")
+OCEAN_DRAKE = T.id_of("Ocean Drake")
+PLAIN_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit")
+                  and not T.is_token(c) and not T.has(c, "Ambush")
+                  and T.names[c] not in ("Rengar, Trophy Hunter", "Ocean Drake"))
+
+
+def destinations(card, enemy_bf=None):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    if enemy_bf is not None:
+        s.add_permanent(PLAIN_BODY, 1, bf_loc(enemy_bf))
+    return sorted(A.play_destinations(s, T, CFG, 0, card))
+
+
+if destinations(RENGAR_TH) != [base_loc(0)]:
+    die("perm", "with no enemy anywhere, Rengar has no extra destination")
+if destinations(RENGAR_TH, 0) != sorted([base_loc(0), bf_loc(0)]):
+    die("perm", "Rengar may be played where there ARE enemy units")
+ok("806.3 exception -- 'a battlefield where there are enemy units'")
+
+if destinations(OCEAN_DRAKE) != sorted([base_loc(0), bf_loc(0), bf_loc(1)]):
+    die("perm", "both battlefields are open when nobody is on them")
+if destinations(OCEAN_DRAKE, 0) != sorted([base_loc(0), bf_loc(1)]):
+    die("perm", "a battlefield with a unit on it is no longer OPEN")
+ok("...and 'an open battlefield' means one with no units at all")
+
+if destinations(PLAIN_BODY, 0) != [base_loc(0)]:
+    die("perm", "a card without a printed permission is unaffected")
+ok("...while a card that prints no exception keeps the 806.3 default")
+
+# "I can be played to a battlefield you're ATTACKING" (Rengar - Pouncing) is the
+# first permission scoped to a COMBAT rather than to the board: it depends on
+# holding the Attacker designation (459) at a live Showdown, so the same
+# battlefield is legal or not depending purely on which side of the fight you
+# are on. Outside a Showdown nobody is attacking and the card is an ordinary
+# base play -- which is what stops it being a free "play anywhere".
+RENGAR_P = T.id_of("Rengar - Pouncing")
+
+
+def attacking_destinations(showdown_bf, attacker):
+    st = GameState()
+    st.phase, st.active, st.priority = MAIN, 0, 0
+    st.add_permanent(PLAIN_BODY, 0, bf_loc(0))
+    st.add_permanent(PLAIN_BODY, 1, bf_loc(0))
+    st.showdown_bf, st.attacker = showdown_bf, attacker
+    return sorted(A.play_destinations(st, T, CFG, 0, RENGAR_P))
+
+
+if attacking_destinations(-1, -1) != [base_loc(0)]:
+    die("perm", "outside a Showdown nothing is being attacked")
+if attacking_destinations(0, 0) != sorted([base_loc(0), bf_loc(0)]):
+    die("perm", "the battlefield I am ATTACKING is a legal destination")
+if attacking_destinations(0, 1) != [base_loc(0)]:
+    die("perm", "defending is not attacking -- the same battlefield, the "
+                "other side of the fight, and it must not be offered")
+ok("...and 'a battlefield you're attacking' turns on the Attacker designation")
+
+# ---------------------------------------------------------------------------
+# Printed exceptions to "units enter exhausted" (359.2.c)
+#
+# [Accelerate] is the exception the engine already knew. These two print their
+# own, each with a different condition, so the condition is per card while the
+# hook is shared.
+
+XIN_ZHAO = T.id_of("Xin Zhao - Vigilant")
+SHADOW_WATCHER = T.id_of("Shadow Watcher")
+ER_BODY = next(c for c in range(T.n) if T.is_type(c, "Unit")
+               and not T.is_token(c))
+
+
+def enters_ready(card, others_at_base=0, died_in_beginning=False):
+    s = GameState()
+    s.phase, s.active, s.priority = MAIN, 0, 0
+    for _ in range(others_at_base):
+        s.add_permanent(ER_BODY, 0, base_loc(0))
+    if died_in_beginning:
+        s.died_in_beginning[0] = 1
+    s.n_hand[0] = 1
+    s.hand[0, 0] = card
+    s.runes_ready[0, :] = 8
+    s.n_deck[0] = 10
+    act = next(x for x in A.legal_actions(s, T, CFG, 0) if x.kind == A.A_PLAY)
+    A.apply(s, T, CFG, act)
+    A.apply(s, T, CFG, A.legal_actions(s, T, CFG, 0)[0])
+    return int(s.perms[s.n_perms - 1, P_READY]) == 1
+
+
+# "two or more OTHER units" -- Xin Zhao is not on the board yet when the card
+# asks, so every friendly unit at the base is an "other" one. The boundary is
+# the part worth checking: one is not two.
+if enters_ready(XIN_ZHAO, 0) or enters_ready(XIN_ZHAO, 1):
+    die("enter-ready", "fewer than two others -- Xin Zhao enters exhausted")
+if not enters_ready(XIN_ZHAO, 2):
+    die("enter-ready", "two others at the base is the condition")
+ok("359.2.c exception -- 'two or more other units in your base'")
+
+if enters_ready(SHADOW_WATCHER, died_in_beginning=False):
+    die("enter-ready", "with no death this Beginning Phase it enters exhausted")
+if not enters_ready(SHADOW_WATCHER, died_in_beginning=True):
+    die("enter-ready", "a friendly death in the Beginning Phase readies it")
+ok("...and a PAST-tense one, recorded when the death happened")
+
+# ---------------------------------------------------------------------------
+print("\n[17] Might restrictions on a target slot read EFFECTIVE Might")
+
+# `combat.might` is the single read path for a permanent's Might, and a slot
+# restriction is no exception: "with 3 Might or less" asks what the unit's
+# Might IS. Reading `table.might` let a 2-Might body pumped to 7 stay a legal
+# choice -- and because `_matches` runs again at resolution (359.3.e), it also
+# meant a target pumped during the response window stayed in range.
+
+from rl.engine import combat as _cbt
+from rl.engine.effects import SPECS as _SPECS, TargetSpec as _TS, W_ANY as _WANY
+from rl.engine.state import MAIN as _MAIN, base_loc as _base, bf_loc as _bf
+
+_PLAIN = {m: next(c for c in range(T.n) if T.is_type(c, "Unit")
+                  and T.might[c] == m and not T.is_token(c))
+          for m in (2, 4, 6)}
+
+
+def _board():
+    st = GameState()
+    st.phase, st.active, st.priority = _MAIN, 0, 0
+    return st
+
+
+st = _board()
+victim = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+small = _TS(who=_WANY, at_battlefield=True, max_might=3)
+if not resolve._matches(st, T, small, victim, 0, [], -1):
+    die("max_might", "a 2-Might unit is within '3 Might or less'")
+_cbt.set_might_mod(st, T, victim, +5)
+if resolve._matches(st, T, small, victim, 0, [], -1):
+    die("max_might", "pumped to 7, it is no longer '3 Might or less' -- the "
+                     "restriction must read effective Might, not the corner")
+ok("'3 Might or less' follows a buff out of range (combat.might, not the table)")
+
+# Public Execution: "Choose a friendly unit. Kill an enemy unit with less
+# Might than it." The bar is a unit you picked, so it moves with your board.
+pe = _SPECS["Public Execution"]
+st = _board()
+mine = st.add_permanent(_PLAIN[4], 0, _base(0), is_unit=True)
+weak = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+same = st.add_permanent(_PLAIN[4], 1, _bf(0), is_unit=True)
+big = st.add_permanent(_PLAIN[6], 1, _bf(0), is_unit=True)
+if not resolve._matches(st, T, pe.targets[1], weak, 0, [mine], -1):
+    die("public execution", "2 is less than 4")
+if resolve._matches(st, T, pe.targets[1], same, 0, [mine], -1):
+    die("public execution", "'LESS Might' is strict -- equal must not qualify")
+if resolve._matches(st, T, pe.targets[1], big, 0, [mine], -1):
+    die("public execution", "6 is not less than 4")
+ok("'less Might than it' compares against an earlier slot, strictly")
+
+_cbt.set_might_mod(st, T, mine, +3)          # 4 -> 7
+if not resolve._matches(st, T, pe.targets[1], big, 0, [mine], -1):
+    die("public execution", "pumping the CHOSEN unit widens what it can kill")
+ok("...and both sides of the comparison are effective Might")
+
+# ---------------------------------------------------------------------------
+print("\n[18] 'I can't be chosen by enemy spells and abilities'")
+
+RUIN = T.id_of("Ruin Runner")
+st = _board()
+own = st.add_permanent(RUIN, 0, _bf(0), is_unit=True)
+foe = st.add_permanent(RUIN, 1, _bf(0), is_unit=True)
+bystander = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+any_unit = _TS(who=_WANY)
+
+if resolve._matches(st, T, any_unit, foe, 0, [], -1):
+    die("ruin runner", "an ENEMY Ruin Runner must not be a legal choice")
+if not resolve._matches(st, T, any_unit, own, 0, [], -1):
+    die("ruin runner", "'ENEMY spells' -- its own controller still targets it")
+if not resolve._matches(st, T, any_unit, bystander, 0, [], -1):
+    die("ruin runner", "the protection is its own, not an aura over the board")
+ok("only enemy choices are refused, and only on the card itself")
+
+# The restriction is on CHOOSING (355.10). Damage and sweeps name nobody, so
+# they still land -- which is what keeps the card answerable at all.
+_cbt.mark_damage(st, T, foe, 99)
+_cbt.enforce_lethal(st, T)
+if st.perms[foe, P_ALIVE] == 1:
+    die("ruin runner", "damage does not CHOOSE, so it must still kill")
+ok("...while damage, which chooses nothing, still kills it")
+
+
+# ---------------------------------------------------------------------------
+print("\n[23] a sweep is scoped by its location, its side, and its kin")
+
+# "Deal 2 to all enemy units IN COMBAT" (Cannon Barrage). "In combat" is 459's
+# contested battlefield -- every unit standing there is an Attacker or a
+# Defender -- so the sweep is scoped to `showdown_bf` and reaches defenders
+# too, which the `attacking` designation would have spared.
+BARRAGE = _SPECS["Cannon Barrage"]
+
+st = _board()
+st.showdown_bf = 0
+here_foe = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+here_mine = st.add_permanent(_PLAIN[2], 0, _bf(0), is_unit=True)
+away_foe = st.add_permanent(_PLAIN[2], 1, _bf(1), is_unit=True)
+base_foe = st.add_permanent(_PLAIN[2], 1, _base(1), is_unit=True)
+resolve.resolve(st, T, CFG, BARRAGE, 0, [], -1, from_hand=True)
+if int(st.perms[here_foe, P_DMG]) != 2:
+    die("in combat", "the enemy at the contested battlefield took no damage")
+if int(st.perms[here_mine, P_DMG]):
+    die("in combat", "'enemy units' must not reach your own")
+if int(st.perms[away_foe, P_DMG]) or int(st.perms[base_foe, P_DMG]):
+    die("in combat", "an enemy off the contested battlefield is not in combat")
+ok("'in combat' is the contested battlefield, both sides of it")
+
+# Outside a Showdown there IS no contested battlefield, and a sweep that names
+# a location it cannot find must reach nothing. Falling through to the unscoped
+# branch instead would make this a board wipe -- the one answer never right.
+st = _board()
+st.showdown_bf = -1
+foe = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+mine = st.add_permanent(_PLAIN[2], 0, _base(0), is_unit=True)
+resolve.resolve(st, T, CFG, BARRAGE, 0, [], -1, from_hand=True)
+if int(st.perms[foe, P_DMG]) or int(st.perms[mine, P_DMG]):
+    die("in combat", "with no combat running the sweep must find no units")
+ok("...and with no Showdown it hits nothing rather than everything")
+
+# The same guard, reached the other way: an ability's `at=T_HERE` sweep whose
+# source died in the response window (383.2.c.2). Renekton's "deal 2 to all
+# enemy units here" has no "here" left once he is a corpse.
+from rl.engine.effects import abilities_for as _abils
+RENEKTON = T.id_of("Renekton, Rage Fueled")
+st = _board()
+st.runes_ready[0, :] = 0                       # so COND_FEW_RUNES holds
+src = st.add_permanent(RENEKTON, 0, _bf(0), is_unit=True)
+near = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+far = st.add_permanent(_PLAIN[2], 1, _bf(1), is_unit=True)
+st.perms[src, P_ALIVE] = 0                     # answered before it resolved
+resolve.resolve(st, T, CFG, _abils(T, RENEKTON)[0], 0, [], -1,
+                from_hand=False, source=src)
+if int(st.perms[far, P_DMG]):
+    die("dead source", "a dead source's 'here' swept the whole board")
+if int(st.perms[near, P_DMG]):
+    die("dead source", "383.2.c.2 -- an ability may not reference a source "
+                       "that has left the board")
+ok("a dead source's 'here' sweeps nothing, not everything (383.2.c.2)")
+
+# "Give your MECHS +1 Might this turn" (Danger Zone) -- a kin restriction on a
+# sweep. Still not a target: no count, no choice.
+DANGER = _SPECS["Danger Zone"]
+MECH = next(c for c in range(T.n) if T.is_type(c, "Unit")
+            and "Mech" in T.tags[c] and not T.is_token(c))
+st = _board()
+my_mech = st.add_permanent(MECH, 0, _base(0), is_unit=True)
+my_other = st.add_permanent(_PLAIN[2], 0, _base(0), is_unit=True)
+their_mech = st.add_permanent(MECH, 1, _bf(0), is_unit=True)
+resolve.resolve(st, T, CFG, DANGER, 0, [], -1, from_hand=True)
+if _cbt.might(st, T, my_mech) != int(T.might[MECH]) + 1:
+    die("kin", "your own Mech missed the pump")
+if _cbt.might(st, T, my_other) != int(T.might[_PLAIN[2]]):
+    die("kin", "a non-Mech was pumped; 'your Mechs' is a kin restriction")
+if _cbt.might(st, T, their_mech) != int(T.might[MECH]):
+    die("kin", "'YOUR Mechs' must not reach the opponent's")
+ok("'your Mechs' narrows a sweep by tag as well as by side")
+
+
+# ---------------------------------------------------------------------------
+print("\n[24] two slots, related by location rather than by battlefield")
+
+# Heroic Charge: "Give a friendly unit +1 Might and [Stun] an enemy unit at ITS
+# LOCATION." A base is a location too, so the relation must not require either
+# unit to be standing on a battlefield.
+CHARGE = _SPECS["Heroic Charge"]
+st = _board()
+mine_base = st.add_permanent(_PLAIN[2], 0, _base(0), is_unit=True)
+foe_base = st.add_permanent(_PLAIN[2], 1, _base(0), is_unit=True)
+foe_bf = st.add_permanent(_PLAIN[2], 1, _bf(0), is_unit=True)
+got = resolve.legal_targets(st, T, CHARGE, 1, 0, [mine_base], -1)
+if got != [foe_base]:
+    die("heroic charge", f"'at its location' gave {got}, expected [{foe_base}]")
+ok("'at its location' reaches a shared BASE, not only a battlefield")
 
 print("\n\033[32mall effect tests passed\033[0m")

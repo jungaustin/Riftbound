@@ -26,8 +26,9 @@ from rl.engine import actions as A
 from rl.engine import game
 from rl.engine.cardtable import full_table
 from rl.engine import invariants
-from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, N_BF,
-                             N_SEATS, P_ALIVE, P_CTRL, P_CARD)
+from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, C_OWNER, N_BF,
+                             N_SEATS, P_ALIVE, P_CTRL, P_CARD,
+                             P_OWNER, N_FD)
 
 
 # Recorded v0 replay fingerprints: (deal seed, victory) -> (winner, turns,
@@ -45,6 +46,11 @@ from rl.engine.state import (C_ABIL, C_CARD, C_CTRL, N_BF,
 # longer -- mean steps 20.4 -> 56.9 at victory 3 -- because dropping a unit onto
 # an empty Battlefield was a Conquer that never had to survive a Combat, and it
 # was the fastest line in the game. Measured, not predicted.
+# The same reasoning applies to the printed determinism hash: it moved when
+# `n_attached` was added to `GameState` while every observable stayed put --
+# same winner, same mean and max step counts, same seat-0 rate. A state field
+# moving the digest is the digest working as documented, not a regression; the
+# outcome golden is what would have caught a real one, and it did not fire.
 # Re-pinned twice more, both times because the DEAL changed rather than the
 # play:
 #   - `keyword_mask` stopped crediting keywords a card merely MENTIONED, which
@@ -90,20 +96,67 @@ def v0_pool(table):
             and not table.has(c, "Temporary")]
 
 
+# Seeds that each caught a specific crash. Kept by name so a fix cannot regress
+# quietly behind a game count -- both of these needed the count raised to be
+# reachable at all, and the count is the kind of thing that gets lowered to make
+# a gate faster.
+#
+#   v1 spell 859 -- `state.priority` went stale when a Hard Bargain tax
+#     COUNTERED the Chain's last item, so a unit played on the turn player's own
+#     turn was announced under the opponent's seat and indexed their hand.
+#     `actions._normalize_priority` states 340.2 instead.
+#   real-deck 95 -- an attached Shepherd's Heirloom carrying a granted Exhaust
+#     ability: `activatable` numbered abilities with the card's own suppressed
+#     (721.2) and `_activate` numbered them with its own included, so the two
+#     disagreed and it activated a [Play] trigger.
+#   v1 spell 661 AT VICTORY 8 -- `invariants.check_actions` read Undying
+#     Loyalty's printed cost and called a legal play illegal: with zero ready
+#     runes the 2 Energy is unreachable, but its trash-tag discount takes that
+#     to 0 and the remaining 1 Power is paid by RECYCLING a rune, which needs no
+#     ready one. Keyed on victory 8 because it is a long-game state -- which is
+#     the argument for fuzzing the curriculum's DESTINATION and not only its
+#     current rung.
+#   real-deck 5097 AT VICTORY 8 -- the [Deflect] surcharge was OFFERED against
+#     the printed cost and PAID against the real one. Bellows Breath with a
+#     granted [Repeat]: 820.1.c.1 makes the Repeat's Power part of the same
+#     payment, so the runes the surcharge was promised were already gone.
+#     `actions.play_cost_reservation` is now the one answer every offer site
+#     uses. This one killed the first victory-8 training run at iteration 19,
+#     and needed 5,000 real-deck games to reach by random play.
+REGRESSIONS = {
+    ("v1 spell", 3): (859,),
+    ("real-deck", 3): (95,),
+    ("v1 spell", 8): (661,),
+#   real-deck 55 AT VICTORY 8 -- Heimerdinger's BORROWED-ability offer checked
+#     fewer costs than the permanent one right above it, so an ability with a
+#     Discard cost was offered with an empty hand and asserted as it was paid at
+#     finalization. Same species as 95 and 5097: two code paths disagreeing about
+#     what a play costs.
+    ("real-deck", 8): (5097, 55),
+}
+
+
 def make_game(table, cfg, seed):
     rng = np.random.default_rng(seed)
     pool = v0_pool(table)
     decks = [[int(rng.choice(pool)) for _ in range(30)] for _ in range(2)]
     runes = [[int(rng.integers(6)) for _ in range(12)] for _ in range(2)]
     bfs = [c for c in range(table.n) if table.is_type(c, "Battlefield")][:2]
-    return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
+    # The same match context the env derives -- see `game.deck_knowledge`.
+    return game.new_game(table, cfg, decks, runes, bfs, seed=seed,
+                         deck_known=game.deck_knowledge(cfg, seed))
 
 
 def make_v1_game(table, cfg, seed):
     """A spell game -- real deck size, real spell density, the DSL pool."""
     from rl.ppo import v1_deal            # imported lazily: ppo pulls in torch
-    decks, runes, bfs = v1_deal(table)(seed)
-    return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
+    decks, runes, bfs, legends = v1_deal(table)(seed)
+    # No champions: a random pool is not a decklist, so it has no Chosen
+    # Champion to separate out (112). `deck_known` still applies -- it is match
+    # context, not a property of the list.
+    return game.new_game(table, cfg, decks, runes, bfs, seed=seed,
+                         legends=legends,
+                         deck_known=game.deck_knowledge(cfg, seed))
 
 
 _DECK_DEAL = None
@@ -121,8 +174,14 @@ def make_deck_game(table, cfg, seed):
     if _DECK_DEAL is None:
         from rl.ppo import deck_pool_deal
         _DECK_DEAL = deck_pool_deal(table)
-    decks, runes, bfs = _DECK_DEAL(seed)
-    return game.new_game(table, cfg, decks, runes, bfs, seed=seed)
+    decks, runes, bfs, legends, champions = _DECK_DEAL(seed)
+    # `champions` is not optional here even though `make_v1_game` has none to
+    # pass: `state_hash` digests every slot, so an env that places the Chosen
+    # Champion and an oracle that does not are two different games under one
+    # seed. That is exactly how `deck_known` broke test_env [1].
+    return game.new_game(table, cfg, decks, runes, bfs, seed=seed,
+                         legends=legends, champions=champions,
+                         deck_known=game.deck_knowledge(cfg, seed))
 
 
 
@@ -153,17 +212,34 @@ def cards_owned(state, table, seat: int) -> int:
     n = live(state.hand[seat, :int(state.n_hand[seat])])
     n += live(state.deck[seat, int(state.deck_ptr[seat]):int(state.n_deck[seat])])
     n += live(state.trash[seat, :int(state.n_trash[seat])])
+    # Cards mid-"look at the top N" are off the deck and in no zone at all
+    # until the player picks. They still belong to the seat looking at them.
+    if int(state.pend_look) == seat:
+        n += live(state.look_cards[:int(state.n_look)])
     n += live(state.banished[seat, :int(state.n_banished[seat])])
+    # 108.3 -- the Champion Zone. 103.2 counts the Chosen Champion inside the
+    # 40-card Main Deck, so it is a conserved card like any other, and since
+    # 108.3.d it can LEAVE this zone. While it could not, omitting it here was
+    # self-consistent (the count was simply 39 all game); the moment it became
+    # playable the gate started reading the play as a card being created.
+    n += live([state.champion[seat]])
+    # **P_OWNER, not P_CTRL.** A card is conserved against the player who OWNS
+    # it, and the two come apart the moment one is played out of someone else's
+    # zone -- Kharox digs a unit from the opponent's trash and plays it under
+    # his own control. Counting by controller read that as a card changing
+    # hands, which is exactly the thing this gate exists to refuse, so it fired
+    # on a legal play.
     n += sum(1 for i in range(state.n_perms)
              if state.perms[i, P_ALIVE] == 1
-             and int(state.perms[i, P_CTRL]) == seat
+             and int(state.perms[i, P_OWNER]) == seat
              and not table.is_token(int(state.perms[i, P_CARD])))
-    n += sum(1 for b in range(N_BF)
+    n += sum(1 for b in range(N_FD)
              if int(state.fd_owner[b]) == seat
              and not table.is_token(int(state.fd_card[b])))
     n += sum(1 for i in range(int(state.n_chain))
              if int(state.chain[i, C_ABIL]) < 0
-             and int(state.chain[i, C_CTRL]) == seat
+             and (int(state.chain[i, C_OWNER]) if int(state.chain[i, C_OWNER]) >= 0
+                  else int(state.chain[i, C_CTRL])) == seat
              and int(state.chain[i, C_CARD]) >= 0
              and not table.is_token(int(state.chain[i, C_CARD])))
     return n
@@ -187,6 +263,18 @@ def main(n_games=2000, victory=3, check=True, spells=False,
     build = (make_deck_game if decks else
              make_v1_game if spells else make_game)
     mode = "real-deck" if decks else "v1 spell" if spells else "v0"
+    # Named seeds, run first so a regression is the first thing printed rather
+    # than something to wait 50 seconds for. Both were found only by raising the
+    # game counts, which is the argument for naming them: at 300 v1 games and
+    # 50 real-deck games neither is reachable.
+    regressions = REGRESSIONS.get((mode, victory), ())
+    for seed in regressions:
+        game.play_game(table, cfg, build(table, cfg, seed),
+                       [game.random_agent(np.random.default_rng(seed))] * 2,
+                       check=True)
+    if regressions:
+        print(f"  regressions: {mode} seeds "
+              f"{', '.join(str(s) for s in regressions)} clean", flush=True)
     print(f"fuzzing {n_games} {mode} games at "
           f"victory_score={victory}, invariants={'on' if check else 'off'}",
           flush=True)

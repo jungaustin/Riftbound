@@ -15,9 +15,14 @@ That makes this file the reference for the observation encoder. If the viewer
 shows it at `seat`, the policy may encode it; if it does not, encoding it is an
 information leak. Keeping the rule in one readable place beats rediscovering it
 inside a tensor layout -- a leak there is invisible and inflates every result
-that follows. The value head is the deliberate exception (asymmetric
-actor-critic, PLAN.md §1.5): it may see everything during training, because it
-is discarded at play time.
+that follows.
+
+This used to note the value head as a deliberate exception that saw everything.
+That is no longer the default: `value_sym` sees exactly what this viewer shows
+and drives learning, while the privileged `value_priv` is a detached diagnostic
+(`nets.RiftboundNet.values`). So the rule here now has no exception -- which is
+the point, since a stale spec is how `play.py` came to call a method that no
+longer existed.
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ from rl.engine import game
 from rl.engine.cardtable import CardTable
 from rl.engine.state import (F_STUNNED, N_BF, N_SEATS, P_ALIVE, P_CARD, P_CTRL,
                              P_DMG, P_FLAGS, P_LOC, P_READY, PHASE_NAMES,
-                             GameState, base_loc, bf_index, bf_loc,
+                             GameState, base_loc, bf_index, bf_loc, fd_slots,
                              is_battlefield)
 
 
@@ -98,7 +103,7 @@ def view(state: GameState, table: CardTable, cfg: Config, seat: int,
     P("")
 
     P("--- BATTLEFIELDS ---")
-    for i in range(N_BF):
+    for i in state.live_bfs():
         card = int(state.bf_card[i])
         name = table.names[card] if card >= 0 else "?"
         scored = [s for s in range(N_SEATS) if state.bf_scored[s, i]]
@@ -107,13 +112,14 @@ def view(state: GameState, table: CardTable, cfg: Config, seat: int,
           + (f"  scored: {[_who(s, seat) for s in scored]}" if scored else ""))
         L.extend(_side(state, table, bf_loc(i), seat))
         # 107.3.f: the zone is public, the card is not.
-        owner = int(state.fd_owner[i])
-        if owner < 0:
-            P("       facedown: -")
-        elif owner == seat:
-            P(f"       facedown: yours, {table.names[int(state.fd_card[i])]}")
-        else:
-            P("       facedown: opponent's, face down")
+        shown = []
+        for k in fd_slots(i):
+            owner = int(state.fd_owner[k])
+            if owner < 0:
+                continue
+            shown.append(table.names[int(state.fd_card[k])] if owner == seat
+                         else "opponent's, face down")
+        P(f"       facedown: {', '.join(shown) if shown else '-'}")
     P("")
 
     for s, label in ((seat, "YOUR BASE"), (foe, "OPPONENT BASE")):
@@ -163,6 +169,8 @@ def describe(act, state: GameState, table: CardTable, seat: int) -> str:
     if k == A.A_END_TURN:
         return "end turn"
     if k == A.A_PLAY:
+        if arg == A.CHAMPION_SRC:      # 108.3.d, from the Champion Zone
+            return f"play {table.names[int(state.champion[seat])]} (champion)"
         return f"play {table.names[int(state.hand[seat, arg])]}"
     if k == A.A_PLAY_AT:
         return f"  ...to {_loc_name(arg, seat)}"

@@ -1,0 +1,43 @@
+# Singapore Regional Qualifier -- #2 DSG AwesumRosum
+# https://playriftbound.com/en-us/news/organizedplay/singapores-top-decks/
+# imported 2026-09-25
+# BANNED CARDS: Stacked Deck -- excluded from training
+Legend: Yordle, Kennen - Heart of the Tempest
+Champion: Kennen, Storm of Shuriken
+Main Deck:
+1x Fizz - Trickster
+1x Flash
+2x Gust
+1x Hard Bargain
+2x Last Rites
+3x Lightning Rush
+3x Nocturne - Horrifying
+3x Rhasa the Sunderer
+3x Ride The Wind
+1x Salvage
+3x Seal of Discord
+2x Shadow Order Disciple
+3x Stacked Deck
+1x Star-Crossed
+2x Switcheroo
+1x Tideturner
+3x Traveling Merchant
+3x Treasure Hunter
+1x Up from the Deep
+Battlefields:
+1x Minefield
+1x Sandswept Tomb
+1x Zaun Warrens
+Runes:
+9x Chaos Rune
+3x Order Rune
+Sideboard:
+1x Abandon
+2x Decree of Unity
+1x Divine Judgment
+1x Fizz - Trickster
+1x Ravenbloom Prefect
+1x Rebuke
+1x Salvage
+1x Star-Crossed
+1x Tail-Cloaked Matriarch
