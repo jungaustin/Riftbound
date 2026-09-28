@@ -12,10 +12,10 @@ rewritten and pruned freely, so treat it as *state*, not a log.
 
 | | |
 |---|---|
-| **Running** | **`rl/runs/v7-victory8`** — 500 iterations at victory 8, launched 2026-09-27 on `916e30b`, ~7 hours. `loop=` and `trunc=` are the two new columns to watch |
-| **Committed** | Through `916e30b`. Uncommitted: `decks/renata-gutter-palace/`, `decks/seraphine-not-alone/` (both untracked) |
+| **Running** | **`rl/runs/v7-victory8`** — 500 iters at victory 8 on `0ed3cf7`, ~7h. FOURTH attempt; the first three died at iterations 19, 8 and 8. Watch `ovf=` (board-row overflow) and `loop=` |
+| **Committed** | Through `0ed3cf7`. Uncommitted: `decks/renata-gutter-palace/`, `decks/seraphine-not-alone/` (untracked) |
 | **Branch** | `rl/card-scripting` |
-| **Next** | Austin's judge list, batch 2 — batch 1 is 6/6 green and `harness.KNOWN_BAD` is empty |
+| **Next** | Austin's judge list, batch 2. Scraped batch 84 is in (2159 rulings, corpus caught up to 12724) and found no new bugs |
 
 **The engine is green on everything**: 13/13 suites, five fuzz modes at victory 3
 *and* 8, five named regression seeds, 2023 judge calls, 0 known-bad.
@@ -49,6 +49,14 @@ first in `fuzz.main`, keyed by `(mode, victory)`:
 | 661 | v1 spell, v8 | an invariant read Undying Loyalty's printed cost |
 | 5097 | real-deck, v8 | the **[Deflect] surcharge** offered against the printed cost, paid against the real one — this killed the first v8 run at iteration 19 |
 | 55 | real-deck, v8 | Heimerdinger's **borrowed**-ability offer checked fewer costs than the permanent loop above it |
+
+**`MAX_PERMS` is a capacity limit, not a bug, and now costs one episode.** Rows are
+only reclaimed at end of turn, so the cap is on rows CREATED per turn. Measured at
+victory 8: random peaks at 33 of 48, greedy at 36, one action adds at most 7 — so
+what reaches it is a policy, not the rules. `state.BoardOverflow` is caught by
+`env._apply` (the ONE funnel every `A.apply` goes through — a test scans `env.py`
+to keep it that way) and ends the episode. Observed rate: ~1.3% in one iteration,
+0% in the rest. Raise the cap only if `ovf=` climbs; it widens the board zone.
 
 `actions.play_cost_reservation` is now the single answer to "what will this play
 recycle", used by every offer site. Consistency is the load-bearing part: being
