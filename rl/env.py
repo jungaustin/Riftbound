@@ -39,7 +39,7 @@ from rl.config import Config
 from rl.engine import actions as A
 from rl.engine import game, invariants
 from rl.engine.cardtable import CardTable
-from rl.engine.state import N_SEATS, GameState
+from rl.engine.state import N_SEATS, BoardOverflow, GameState
 from rl.obs import Encoder, Obs
 
 
@@ -91,6 +91,7 @@ class RiftboundEnv:
         # episode, as (state_hash, seat to move) -- see `cfg.loop_watch_after`.
         self._seen: set[tuple[int, int]] = set()
         self.loop_loser = -1      # >= 0 once a seat is caught looping
+        self.board_overflow = False   # this episode hit `MAX_PERMS`
 
     # -- properties ------------------------------------------------------
 
@@ -136,6 +137,7 @@ class RiftboundEnv:
         self.auto_passes = 0
         self._seen.clear()
         self.loop_loser = -1
+        self.board_overflow = False
 
     def step(self, action_index: int) -> StepResult:
         assert self.state is not None, "step before reset"
@@ -145,7 +147,24 @@ class RiftboundEnv:
             f"actions; the policy must sample under the mask")
 
         act = self._legal[action_index]
-        log = A.apply(self.state, self.table, self.cfg, act)
+        # **A board-row overflow ends the episode instead of the run.** Same
+        # philosophy as `decision_cap` below: the cap is on permanent rows
+        # CREATED in one turn (they are only reclaimed at end of turn), and a
+        # policy that assembles a token engine or finds a productive loop can
+        # reach it where the rules alone do not -- measured, random play at
+        # victory 8 peaks at 33 of 48. The first victory-8 run died at iteration
+        # 8 on exactly this. The position is mid-mutation once it raises, so the
+        # episode is discarded; only the point totals are read, and they are
+        # already written.
+        try:
+            log = A.apply(self.state, self.table, self.cfg, act)
+        except BoardOverflow:
+            self.state.truncated = True
+            self.board_overflow = True
+            self._legal, self._obs = [], None
+            return StepResult(
+                obs=None, rewards=self.final_rewards(), done=True,
+                truncated=True, info={"action": act, "board_overflow": True})
         self.steps += 1
         self._advance()
 
@@ -264,6 +283,7 @@ class RiftboundEnv:
             "points": s.points.tolist(),
             "hash": s.state_hash(),
             "loop_loser": self.loop_loser,
+            "board_overflow": self.board_overflow,
         }
 
 

@@ -1074,3 +1074,73 @@ if not _out["truncated"] or _env4.steps > 4:
 ok("`play` returns on a truncation instead of spinning on a live observation")
 
 print("\n\033[32mtruncation and loop tests passed\033[0m")
+
+
+# ---------------------------------------------------------------------------
+print("\n[overflow] MAX_PERMS costs one episode, not the run")
+
+# Permanent rows are only reclaimed by `compact_permanents`, which is safe only
+# at end of turn -- so the cap is really on rows CREATED in one turn. Measured at
+# victory 8: random play peaks at 33 of 48 and greedy at 36, with one action
+# adding at most 7 rows. A POLICY exceeds it, and the first victory-8 run died at
+# iteration 8 doing so. It must end the episode instead.
+from rl.engine.state import MAX_PERMS, BoardOverflow
+
+_env5 = RiftboundEnv(T, CFG, auto_pass=False)
+_env5.reset(*((12,) + deal(12)))
+# Fill the board to the brim by hand, leaving room for exactly one more row.
+_vanilla = v0_pool(T)[0]
+while _env5.state.n_perms < MAX_PERMS - 1:
+    _env5.state.add_permanent(_vanilla, 0, 0, ready=False)
+_env5.state.add_permanent(_vanilla, 0, 0, ready=False)
+if _env5.state.n_perms != MAX_PERMS:
+    die("overflow", "the fixture should have filled every row")
+try:
+    _env5.state.add_permanent(_vanilla, 0, 0, ready=False)
+except BoardOverflow:
+    pass
+else:
+    die("overflow", "add_permanent past the cap must raise BoardOverflow")
+ok(f"add_permanent raises BoardOverflow at {MAX_PERMS} rows")
+
+# ...and it is an AssertionError, so the fuzz -- which does NOT catch it -- still
+# fails loudly. There the overflow is a finding, not something to absorb.
+if not issubclass(BoardOverflow, AssertionError):
+    die("overflow", "the fuzz relies on this being an AssertionError")
+ok("it subclasses AssertionError, so the fuzz still surfaces it as a finding")
+
+# The env absorbs it: a truncated episode, decided on points by 408.2.b, with
+# the reason recorded so `ppo`'s `ovf=` column can show a rising rate.
+#
+# The raise is INJECTED rather than provoked by filling the board, because what
+# is under test is the handler, not the token machinery: a real overflow needs a
+# specific card making a specific number of tokens on a full board, and a
+# fixture built that way would silently stop exercising this the day that card's
+# spec changed.
+_env6 = RiftboundEnv(T, CFG, auto_pass=False)
+_obs6 = _env6.reset(*((13,) + deal(13)))
+_real_apply = A.apply
+def _boom(*a, **k):
+    raise BoardOverflow("injected")
+A.apply = _boom
+try:
+    _r6 = _env6.step(0)
+finally:
+    A.apply = _real_apply
+if not _r6.done or not _r6.truncated:
+    die("overflow", "the episode must end, and end as a truncation")
+if _r6.obs is not None:
+    die("overflow", "a discarded position must not be handed back as an obs")
+if not _env6.summary()["board_overflow"]:
+    die("overflow", "the summary has to say WHY, or the metric cannot rise")
+if _r6.rewards != A.outcome(_env6.state, CFG):
+    die("overflow", "408.2.b decides it, like any other truncation")
+ok("the env ends that episode, records why, and scores it on points")
+
+# A reused env must forget it, or every later episode reports an overflow.
+_env6.reset(*((14,) + deal(14)))
+if _env6.summary()["board_overflow"]:
+    die("overflow", "reset must clear the flag")
+ok("reset clears it, so one bad episode does not tar the rest")
+
+print("\n\033[32mboard-overflow tests passed\033[0m")

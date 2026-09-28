@@ -162,6 +162,12 @@ class Rollout:
     # iteration next to `trunc`: the pair separates "games are running long"
     # from "a policy found a livelock and is sitting in it".
     loops: int = 0
+    # Episodes discarded because the board ran out of permanent ROWS
+    # (`state.BoardOverflow`). Printed with `loop=` because the two are the same
+    # question -- is the policy doing something the engine cannot represent --
+    # and because a rising rate is the signal to raise `MAX_PERMS` or to build
+    # the loop shortcut (BACKLOG item 9) rather than to keep discarding games.
+    overflows: int = 0
 
 
 def finish_episode(pending: list[Step], rewards, hp: HP) -> None:
@@ -293,6 +299,7 @@ class Trainer:
                 out.ep_turns.append(ep["turns"])
                 out.truncated += int(ep["truncated"])
                 out.loops += int(ep.get("loop_loser", -1) >= 0)
+                out.overflows += int(bool(ep.get("board_overflow")))
                 # **From the reward, not from `winner`.** A truncated game is
                 # decided on points by 408.2.b, so `winner` stays -1 on a game
                 # seat 0 genuinely won -- the seat balance diagnostic would have
@@ -776,7 +783,8 @@ def main(argv=None) -> int:
               f"turns={np.mean(roll.ep_turns):4.1f} "
               f"seat0={roll.seat0_wins / max(1, roll.episodes):.0%} "
               f"trunc={roll.truncated / max(1, roll.episodes):.1%} "
-              f"loop={roll.loops / max(1, roll.episodes):.1%} | "
+              f"loop={roll.loops / max(1, roll.episodes):.1%} "
+              f"ovf={roll.overflows / max(1, roll.episodes):.1%} | "
               f"ent={stats['ent']:.3f} kl={stats['kl']:.4f} "
               f"clip={stats['clipfrac']:.2f} ev={stats['explained_var']:+.2f} "
               f"| {tr.global_step / dt:.0f} st/s", flush=True)

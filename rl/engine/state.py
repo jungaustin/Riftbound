@@ -558,6 +558,29 @@ MAX_TARGETS = 6
 SD_NONE, SD_PRIORITY, SD_DAMAGE, SD_CLEANUP, SD_CONQUER = range(5)
 
 
+class BoardOverflow(AssertionError):
+    """More permanent rows in one turn than `MAX_PERMS`.
+
+    **A capacity limit, raised as its own type so a training run can survive
+    it.** Rows are only reclaimed by `compact_permanents`, which is safe only at
+    end of turn (most of the per-row arrays it does NOT remap are either reset
+    there or ply-stamped stale by then), so the cap is really on rows CREATED in
+    one turn rather than on permanents alive at once. Measured at victory 8:
+    random play peaks at 33 rows against a mean of 13, so the cap has headroom
+    for the rules -- what exceeds it is a policy assembling a token engine, or a
+    productive loop the game has no shortcut rule for (see BACKLOG item 9).
+
+    `env.step` catches this and ends the episode as a truncation, the same way
+    `decision_cap` does: a livelock or a runaway should cost one episode, not a
+    seven-hour run. It subclasses `AssertionError` so the fuzz -- which does NOT
+    catch it -- still fails loudly, because there the overflow is a finding.
+
+    The state is left mid-mutation when this is raised, so the only safe thing to
+    do with that episode is discard it. Nothing reads the position afterwards
+    except the point totals, which are already written.
+    """
+
+
 class GameState:
     """Mutable game state. Treat every array as private to the engine."""
 
@@ -1967,10 +1990,11 @@ class GameState:
     def add_permanent(self, card: int, ctrl: int, loc: int,
                       ready: bool = True, is_unit: bool = True,
                       owner: int | None = None) -> int:
-        assert self.n_perms < MAX_PERMS, (
-            f"MAX_PERMS overflow ({MAX_PERMS} rows). Rows are compacted at "
-            f"end of turn, so this is more permanents in ONE turn than the "
-            f"cap, not an accumulation across the game.")
+        if self.n_perms >= MAX_PERMS:
+            raise BoardOverflow(
+                f"MAX_PERMS overflow ({MAX_PERMS} rows). Rows are compacted at "
+                f"end of turn, so this is more permanents in ONE turn than the "
+                f"cap, not an accumulation across the game.")
         i = self.n_perms
         row = self.perms[i]
         row[P_CARD] = card
